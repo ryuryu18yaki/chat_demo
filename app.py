@@ -399,7 +399,7 @@ if user_prompt:
     if st.session_state.rag_collection is not None:
         st.session_state["last_answer_mode"] = "RAG"
         rag_res = generate_answer(
-            system_prompt=prompt,
+            prompt=prompt,
             question=user_prompt,
             collection=st.session_state.rag_collection,
             top_k=4,
