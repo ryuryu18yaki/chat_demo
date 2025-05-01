@@ -1,7 +1,11 @@
 import streamlit as st
+import sys, os
 from openai import OpenAI
 from typing import List, Dict, Any
 import time, functools
+
+import pysqlite3              # ← wheels に新しい SQLite が同梱
+sys.modules['sqlite3'] = pysqlite3
 
 from src.rag_preprocess import preprocess_files
 from src.rag_vector import save_docs_to_chroma

@@ -7,4 +7,4 @@ protobuf==3.20.*
 # 下記は元から入っていればそのまま
 opentelemetry-api
 opentelemetry-exporter-otlp-proto-grpc
-pysqlite3-binary
+pysqlite3-binary>=0.5.2
