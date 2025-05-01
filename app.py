@@ -320,7 +320,7 @@ with st.sidebar:
         st.session_state.rag_files = [
             {"name": f.name, "type": f.type, "size": f.size, "data": f.getvalue()} for f in uploads
         ]
-    if st.button("🔄 インデックス再構築", disabled=not st.session_state.rag_files):
+    if st.button("🔄 アップロードした資料をRAG用に変換", disabled=not st.session_state.rag_files):
         rebuild_rag_collection()
 
     st.divider()
