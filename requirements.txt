@@ -1,7 +1,10 @@
 streamlit
+streamlit-authenticator
+extra-streamlit-components
 openai
 chromadb
 tenacity
+pdfplumber
 pdfminer.six
 protobuf==3.20.*
 # 下記は元から入っていればそのまま

@@ -1,114 +1,121 @@
+# src/rag_vector.py
 from __future__ import annotations
-
-import uuid
+from io import BytesIO
 from typing import List, Dict, Any
+import uuid
 
 import chromadb
 from chromadb.config import Settings
 from openai import OpenAI
 from tenacity import retry, wait_random_exponential, stop_after_attempt
 
+from transformers import CLIPProcessor, CLIPModel
+from PIL import Image
+import torch
+from uuid import uuid4
+
 __all__ = ["save_docs_to_chroma", "query_collection"]
 
 # ---------------------------------------------------------------------------
-# Embedding helper
+# モデル＆クライアント初期化
 # ---------------------------------------------------------------------------
-
-_OPENAI_MODEL = "text-embedding-3-small"
+_OPENAI_MODEL = "text-embedding-ada-002"
 _openai_client = OpenAI()
 
+_clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+_clip_proc  = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
+# ---------------------------------------------------------------------------
+# テキスト埋め込み（バッチ）
+# ---------------------------------------------------------------------------
 @retry(wait=wait_random_exponential(min=1, max=20), stop=stop_after_attempt(6))
 def _embed_text_batch(texts: List[str]) -> List[List[float]]:
-    """OpenAI Embedding API を呼び出し、ベクトルを返す (再試行付き)。"""
-    resp = _openai_client.embeddings.create(
-        model=_OPENAI_MODEL,
-        input=texts,
-    )
-    # API は順序保証
-    return [d.embedding for d in resp.data]
+    resp = _openai_client.embeddings.create(model=_OPENAI_MODEL, input=texts)
+    return [item.embedding for item in resp.data]
 
+# # ---------------------------------------------------------------------------
+# # 画像埋め込み（CLIP）
+# # ---------------------------------------------------------------------------
+# def _embed_image(img_bytes: bytes) -> List[float]:
+#     img = Image.open(BytesIO(img_bytes)).convert("RGB")
+#     inputs = _clip_proc(images=img, return_tensors="pt")
+#     with torch.no_grad():
+#         feats = _clip_model.get_image_features(**inputs)
+#     feats = feats / feats.norm(p=2, dim=-1, keepdim=True)
+#     return feats[0].cpu().tolist()
 
 # ---------------------------------------------------------------------------
-# Chroma helper
+# ドキュメントを ChromaDB に保存
 # ---------------------------------------------------------------------------
-
-def _get_chroma_client(persist_directory: str | None = None) -> chromadb.ClientAPI:
-    if persist_directory is None:
-        return chromadb.Client(Settings())  # in‑memory
-    return chromadb.Client(Settings(chroma_db_impl="duckdb+parquet", persist_directory=persist_directory))
-
-
 def save_docs_to_chroma(
     *,
     docs: List[Dict[str, Any]],
     collection_name: str,
     persist_directory: str | None = None,
-    batch_size: int = 100,
-) -> chromadb.api.models.Collection.Collection:
-    """チャンク済みドキュメントを Chroma に upsert して Collection を返す。
-
-    Args:
-        docs: preprocess_files で得た辞書リスト。
-        collection_name: 保存するコレクション名。
-        persist_directory: `None` ならインメモリ、パス指定で永続化。
-        batch_size: Embedding API 1 呼び出しあたりの件数。
+    batch_size: int = 50,
+) -> chromadb.api.Collection:
     """
-    chroma_client = _get_chroma_client(persist_directory)
-    collection = chroma_client.get_or_create_collection(name=collection_name)
+    1) ChromaDB のコレクションを作成・取得
+    2) preprocess_files 出力 docs をバッチ登録 (ids付き)
+    3) 必要なら永続化し、Collection オブジェクトを返す
+    """
+    # — クライアント作成 —
+    if persist_directory:
+        client = chromadb.Client(Settings(persist_directory=persist_directory))
+    else:
+        client = chromadb.Client()  # インメモリ
 
-    # 既存 ID を取得して重複登録を防ぐ
-    existing_count = collection.count()
+    # — コレクション取得 or 作成 —
+    collection = client.get_or_create_collection(name=collection_name)
 
-    documents, metadatas, ids = [], [], []
-    for doc in docs:
-        doc_id = str(uuid.uuid4())
-        documents.append(doc["content"])
-        metadatas.append(doc["metadata"])
-        ids.append(doc_id)
-
-        # バッチサイズに達したらまとめて送信
-        if len(documents) >= batch_size:
-            _upsert_batch(collection, documents, metadatas, ids)
-            documents, metadatas, ids = [], [], []
-
-    # 端数
-    if documents:
-        _upsert_batch(collection, documents, metadatas, ids)
-
-    # 永続化先がある場合は保存
-    if persist_directory is not None:
-        chroma_client.persist()
-
-    new_total = collection.count()
-    print(f"Chroma collection '{collection_name}': {existing_count} -> {new_total} records")
+    # — docs をバッチ登録 —
+    docs_to_index = [d for d in docs if d["metadata"].get("kind") in ("text", "table")]
+    for start in range(0, len(docs_to_index), batch_size):
+        batch = docs_to_index[start:start+batch_size]
+        embeddings, documents, metadatas, ids = [], [], [], []
+        for doc in batch:
+            emb = _embed_text_batch([doc["content"]])[0]
+            embeddings.append(emb)
+            documents.append(doc["content"])
+            metadata = doc["metadata"]
+            metadatas.append(metadata)
+            key = f"{metadata['source']}-{metadata['kind']}-{metadata.get('chunk_id', metadata.get('table_id',''))}"
+            ids.append(str(uuid.uuid4()))
+        collection.upsert(embeddings=embeddings, documents=documents, metadatas=metadatas, ids=ids)
+        
+    if persist_directory:
+        client.persist()
     return collection
 
-
-def _upsert_batch(collection, documents, metadatas, ids):
-    embeddings = _embed_text_batch(documents)
-    collection.add(documents=documents, metadatas=metadatas, ids=ids, embeddings=embeddings)
-
-
 # ---------------------------------------------------------------------------
-# 検索ユーティリティ
+# コレクション検索ヘルパー
 # ---------------------------------------------------------------------------
-
 def query_collection(
-    *,
-    collection: chromadb.api.models.Collection.Collection,
-    query_text: str,
-    top_k: int = 5,
+    collection: chromadb.api.Collection,
+    query: str,
+    n_results: int = 5,
 ) -> List[Dict[str, Any]]:
-    """コレクションを検索し、上位 `top_k` 件を返す。"""
-    query_embed = _embed_text_batch([query_text])[0]
-    res = collection.query(query_embeddings=[query_embed], n_results=top_k)
 
-    results: List[Dict[str, Any]] = []
-    for doc, meta, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0]):
-        results.append({
+    """
+    テキストクエリを埋め込み検索し、上位 n_results 件を dict のリストで返す。
+    """
+    # 1) クエリを埋め込み
+    q_emb = _embed_text_batch([query])[0]
+    # 2) 検索実行
+    res = collection.query(
+        query_embeddings=[q_emb],
+        n_results=n_results,
+    )
+    # 3) 結果を抽出
+    documents = res["documents"][0]
+    metadatas = res["metadatas"][0]
+    distances = res["distances"][0]
+    # 4) dict リストに整形
+    hits: List[Dict[str, Any]] = []
+    for doc, meta, dist in zip(documents, metadatas, distances):
+        hits.append({
             "content": doc,
             "metadata": meta,
             "distance": dist,
         })
-    return results
+    return hits
