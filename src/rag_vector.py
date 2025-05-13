@@ -15,8 +15,8 @@ from openai import OpenAI
 from tenacity import retry, wait_random_exponential, stop_after_attempt
 
 # from transformers import CLIPProcessor, CLIPModel
-from PIL import Image
-import torch
+# from PIL import Image
+# import torch
 from uuid import uuid4
 
 __all__ = ["save_docs_to_chroma", "query_collection"]
