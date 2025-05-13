@@ -4,6 +4,11 @@ from io import BytesIO
 from typing import List, Dict, Any
 import uuid
 
+# SQLite バージョン強制上書き（pysqlite3でchromadbが使えるようにする）
+import sys
+import pysqlite3
+sys.modules["sqlite3"] = pysqlite3
+
 import chromadb
 from chromadb.config import Settings
 from openai import OpenAI
