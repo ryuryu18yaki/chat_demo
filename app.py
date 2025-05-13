@@ -499,7 +499,7 @@ if st.session_state["authentication_status"]:
                 model_info = f"\n\n---\n*このレスポンスは `{st.session_state.gpt_model}` で生成されました*"
                 full_reply = assistant_reply + model_info
                 # エスケープ表示にして expander 衝突回避（unsafe_allow_html=False）
-                st.markdown(full_reply, unsafe_allow_html=False)
+                st.markdown(full_reply)
 
             # チャットメッセージ外で expander 表示
             if sources:
