@@ -498,20 +498,20 @@ if st.session_state["authentication_status"]:
                 # モデル情報を応答に追加
                 model_info = f"\n\n---\n*このレスポンスは `{st.session_state.gpt_model}` で生成されました*"
                 full_reply = assistant_reply + model_info
-                st.markdown(full_reply)
+                st.markdown(f'<div class="assistant-message">{full_reply}</div>', unsafe_allow_html=True)
 
-            if sources:
-                with st.expander("🔎 RAG が取得したチャンク"):
-                    for idx, s in enumerate(sources, 1):
-                        chunk = s.get("content", "")[:200]
-                        if len(s.get("content", "")) > 200:
-                            chunk += " …"
-                        st.markdown(
-                            f"**Doc {idx}**  \n"
-                            f"`score: {s['distance']:.4f}`  \n"
-                            f"*source:* {s['metadata'].get('source','N/A')}`\n\n"
-                            f"> {chunk}"
-                        )
+                if sources:
+                    with st.expander("🔎 RAG が取得したチャンク"):
+                        for idx, s in enumerate(sources, 1):
+                            chunk = s.get("content", "")[:200]
+                            if len(s.get("content", "")) > 200:
+                                chunk += " …"
+                            st.markdown(
+                                f"**Doc {idx}**  \n"
+                                f"`score: {s['distance']:.4f}`  \n"
+                                f"*source:* {s['metadata'].get('source','N/A')}`\n\n"
+                                f"> {chunk}"
+                            )
 
             # 保存するのは元の応答（モデル情報なし）
             msgs.append({"role": "assistant", "content": assistant_reply})
