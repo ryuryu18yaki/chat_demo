@@ -14,7 +14,7 @@ from chromadb.config import Settings
 from openai import OpenAI
 from tenacity import retry, wait_random_exponential, stop_after_attempt
 
-from transformers import CLIPProcessor, CLIPModel
+# from transformers import CLIPProcessor, CLIPModel
 from PIL import Image
 import torch
 from uuid import uuid4
@@ -27,8 +27,8 @@ __all__ = ["save_docs_to_chroma", "query_collection"]
 _OPENAI_MODEL = "text-embedding-ada-002"
 _openai_client = OpenAI()
 
-_clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-_clip_proc  = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+# _clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+# _clip_proc  = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
 # ---------------------------------------------------------------------------
 # テキスト埋め込み（バッチ）
