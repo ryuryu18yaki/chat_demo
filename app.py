@@ -519,7 +519,7 @@ if st.session_state["authentication_status"]:
                     del st.session_state.chats[old_title]
                     st.session_state.current_chat = new_title
             
-            st.rerun()
+        st.rerun()
 
 elif st.session_state["authentication_status"] is False:
     st.error('ユーザー名またはパスワードが間違っています。')
