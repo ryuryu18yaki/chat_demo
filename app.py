@@ -416,7 +416,7 @@ if st.session_state["authentication_status"]:
     # プロンプト編集モードでない場合のみチャットインターフェースを表示
     if not st.session_state.edit_target:
         # 現在のモデルとモードを表示
-        st.title("💬 GPT + RAG チャットボット")
+        st.title("💬 GPT + RAG チャットボットv2")
         st.subheader(f"🗣️ {st.session_state.current_chat}")
         st.markdown(f"**モデル:** {st.session_state.gpt_model} | **モード:** {st.session_state.design_mode}")
 
@@ -446,7 +446,7 @@ if st.session_state["authentication_status"]:
             st.markdown(f'<div class="user-message">{user_prompt}</div>', unsafe_allow_html=True)
 
         # シンプルなステータス表示 - 折りたたみなし
-        with st.status(f"🤖 {st.session_state.gpt_model} で回答を生成中...", expanded=True):
+        with st.spinner(f"🤖 {st.session_state.gpt_model} で回答を生成中..."):
             # プロンプト取得
             prompt = st.session_state.prompts[st.session_state.design_mode]
 
