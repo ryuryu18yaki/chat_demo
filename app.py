@@ -440,6 +440,7 @@ if st.session_state["authentication_status"]:
         # メッセージリストに現在の質問を追加
         msgs = get_messages()
         msgs.append({"role": "user", "content": user_prompt})
+        print("入力があります")
 
         # ユーザーメッセージを表示
         with st.chat_message("user"):
