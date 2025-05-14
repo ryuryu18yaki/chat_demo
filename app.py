@@ -510,8 +510,6 @@ if st.session_state["authentication_status"]:
             # 保存するのは元の応答（モデル情報なし）
             msgs.append({"role": "assistant", "content": assistant_reply})
 
-            status.update(state="complete")
-
             # チャットタイトル自動生成（初回応答後）
             if len(msgs) == 2 and msgs[0]["role"] == "user" and msgs[1]["role"] == "assistant":
                 new_title = generate_chat_title(msgs)
@@ -520,7 +518,8 @@ if st.session_state["authentication_status"]:
                     st.session_state.chats[new_title] = st.session_state.chats[old_title]
                     del st.session_state.chats[old_title]
                     st.session_state.current_chat = new_title
-                    st.rerun()
+            
+            st.rerun()
 
 elif st.session_state["authentication_status"] is False:
     st.error('ユーザー名またはパスワードが間違っています。')
