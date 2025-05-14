@@ -512,7 +512,6 @@ if st.session_state["authentication_status"]:
 
         # チャットタイトル自動生成（初回応答後）
         if len(msgs) == 2 and msgs[0]["role"] == "user" and msgs[1]["role"] == "assistant":
-            st.write("✅ タイトル条件通過")
             new_title = generate_chat_title(msgs)
             if new_title and new_title != st.session_state.current_chat:
                 old_title = st.session_state.current_chat
@@ -521,7 +520,7 @@ if st.session_state["authentication_status"]:
                 st.session_state.current_chat = new_title
                 st.rerun()
         else:
-            st.write("❌ タイトル条件不成立")
+            pass
 
 elif st.session_state["authentication_status"] is False:
     st.error('ユーザー名またはパスワードが間違っています。')
