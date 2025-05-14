@@ -440,7 +440,6 @@ if st.session_state["authentication_status"]:
         # メッセージリストに現在の質問を追加
         msgs = get_messages()
         msgs.append({"role": "user", "content": user_prompt})
-        print("入力があります")
 
         # ユーザーメッセージを表示
         with st.chat_message("user"):
@@ -511,10 +510,9 @@ if st.session_state["authentication_status"]:
             # 保存するのは元の応答（モデル情報なし）
             msgs.append({"role": "assistant", "content": assistant_reply})
 
-        print("🤖 応答生成完了")
         # チャットタイトル自動生成（初回応答後）
         if len(msgs) == 2 and msgs[0]["role"] == "user" and msgs[1]["role"] == "assistant":
-            print("✅ タイトル条件通過")
+            st.write("✅ タイトル条件通過")
             new_title = generate_chat_title(msgs)
             if new_title and new_title != st.session_state.current_chat:
                 old_title = st.session_state.current_chat
@@ -523,7 +521,7 @@ if st.session_state["authentication_status"]:
                 st.session_state.current_chat = new_title
                 st.rerun()
         else:
-            print("❌ タイトル条件不成立")
+            st.write("❌ タイトル条件不成立")
 
 elif st.session_state["authentication_status"] is False:
     st.error('ユーザー名またはパスワードが間違っています。')
