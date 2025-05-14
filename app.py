@@ -444,9 +444,11 @@ if st.session_state["authentication_status"]:
         # ユーザーメッセージを表示
         with st.chat_message("user"):
             st.markdown(f'<div class="user-message">{user_prompt}</div>', unsafe_allow_html=True)
+        
+        need_rerun = False 
 
         # シンプルなステータス表示 - 折りたたみなし
-        with st.spinner(f"🤖 {st.session_state.gpt_model} で回答を生成中..."):
+        with st.status(f"🤖 {st.session_state.gpt_model} で回答を生成中...", expanded=True):
             # プロンプト取得
             prompt = st.session_state.prompts[st.session_state.design_mode]
 
@@ -510,17 +512,18 @@ if st.session_state["authentication_status"]:
             # 保存するのは元の応答（モデル情報なし）
             msgs.append({"role": "assistant", "content": assistant_reply})
 
-        # チャットタイトル自動生成（初回応答後）
-        if len(msgs) == 2 and msgs[0]["role"] == "user" and msgs[1]["role"] == "assistant":
-            new_title = generate_chat_title(msgs)
-            if new_title and new_title != st.session_state.current_chat:
-                old_title = st.session_state.current_chat
-                st.session_state.chats[new_title] = st.session_state.chats[old_title]
-                del st.session_state.chats[old_title]
-                st.session_state.current_chat = new_title
-                st.rerun()
-        else:
-            st.write("❌ タイトル条件不成立")
+            # チャットタイトル自動生成（初回応答後）
+            if len(msgs) == 2 and msgs[0]["role"] == "user" and msgs[1]["role"] == "assistant":
+                new_title = generate_chat_title(msgs)
+                if new_title and new_title != st.session_state.current_chat:
+                    old_title = st.session_state.current_chat
+                    st.session_state.chats[new_title] = st.session_state.chats[old_title]
+                    del st.session_state.chats[old_title]
+                    st.session_state.current_chat = new_title
+                    need_rerun = True
+            
+        if need_rerun:
+            st.rerun()
 
 elif st.session_state["authentication_status"] is False:
     st.error('ユーザー名またはパスワードが間違っています。')
