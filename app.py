@@ -324,8 +324,12 @@ if st.session_state["authentication_status"]:
     # =====  セッション変数  =======================================================
     if "chats" not in st.session_state:
         st.session_state.chats = {}
+    if "chat_sids"   not in st.session_state:                        # ★ 追加
+        st.session_state.chat_sids = {"New Chat": str(uuid.uuid4())}
     if "current_chat" not in st.session_state:
         st.session_state.current_chat = "New Chat"
+    if "sid"         not in st.session_state:                        # ★ 追加
+        st.session_state.sid = st.session_state.chat_sids["New Chat"]
     if "edit_target" not in st.session_state:
         st.session_state.edit_target = None
     if "rag_files" not in st.session_state:
@@ -359,6 +363,8 @@ if st.session_state["authentication_status"]:
 
     # ★ 既存チャットへ切替
     def switch_chat(title: str):
+        if title not in st.session_state.chat_sids:          # ★ 安全化
+            st.session_state.chat_sids[title] = str(uuid.uuid4())
         st.session_state.current_chat = title
         st.session_state.sid = st.session_state.chat_sids[title]
         st.rerun()
