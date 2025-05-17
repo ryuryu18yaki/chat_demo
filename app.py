@@ -34,6 +34,8 @@ def post_log(role: str, text: str, prompt: str | None = None):
         "session_id": st.session_state["sid"],
         "role": role,
         "text": text,
+        "mode":  st.session_state["design_mode"],      # ★ 追加
+        "title": st.session_state["current_chat"],     # ★ 追加
     }
     if prompt is not None:
         payload["prompt"] = prompt
