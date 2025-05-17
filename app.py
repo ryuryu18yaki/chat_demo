@@ -569,7 +569,7 @@ if st.session_state["authentication_status"]:
     # プロンプト編集モードでない場合のみチャットインターフェースを表示
     if not st.session_state.edit_target:
         # 現在のモデルとモードを表示
-        st.title("💬 GPT + RAG チャットボットv2")
+        st.title("💬 GPT + RAG チャットボット")
         st.subheader(f"🗣️ {st.session_state.current_chat}")
         st.markdown(f"**モデル:** {st.session_state.gpt_model} | **モード:** {st.session_state.design_mode}")
 
