@@ -1,7 +1,7 @@
 import streamlit as st
 from openai import OpenAI
 from typing import List, Dict, Any
-import time, functools
+import time, functools, requests
 
 from src.rag_preprocess import preprocess_files
 from src.rag_vector import save_docs_to_chroma
@@ -23,6 +23,34 @@ authenticator = stauth.Authenticate(
     config['cookie']['key'],
     config['cookie']['expiry_days']
 )
+
+WEBHOOK_URL = st.secrets["WEBHOOK_URL"]
+
+# ログ送信用の関数
+def post_log(role: str, text: str):
+    """Apps Script Webhook へ 1 行 POST する（302 を成功扱い）"""
+    payload = {
+        "session_id": st.session_state["sid"],
+        "role": role,
+        "text": text,
+    }
+
+    for wait in (0, 1, 3):                 # 最大 3 回リトライ
+        try:
+            r = requests.post(
+                WEBHOOK_URL,
+                json=payload,
+                timeout=4,
+                allow_redirects=False,     # ← ここがポイント
+            )
+            # Apps Script 成功時は 302 Found
+            if r.status_code in (200, 302):
+                return
+        except requests.RequestException:
+            pass
+        time.sleep(wait)
+
+    st.warning("⚠️ Sheets へのログ送信に失敗しました")
 
 # =====  基本設定  ============================================================
 client = OpenAI()
@@ -308,6 +336,9 @@ if st.session_state["authentication_status"]:
         st.session_state.prompts = DEFAULT_PROMPTS.copy()  # プロンプトを変更可能に
     if "gpt_model" not in st.session_state:
         st.session_state.gpt_model = "gpt-4.1"  # デフォルトモデルをgpt-4.1に変更
+    if "sid" not in st.session_state:          # 追加
+        import uuid
+        st.session_state.sid = str(uuid.uuid4())
 
 
     # =====  ヘルパー  ============================================================
@@ -567,6 +598,9 @@ if st.session_state["authentication_status"]:
         with st.chat_message("user"):
             st.markdown(f'<div class="user-message">{user_prompt}</div>', unsafe_allow_html=True)
 
+        # ① ユーザーメッセージを Sheets へ記録
+        post_log("user", user_prompt)
+
         # シンプルなステータス表示 - 折りたたみなし
         with st.status(f"🤖 {st.session_state.gpt_model} で回答を生成中...", expanded=True) as status:
             # プロンプト取得
@@ -631,6 +665,9 @@ if st.session_state["authentication_status"]:
 
             # 保存するのは元の応答（モデル情報なし）
             msgs.append({"role": "assistant", "content": assistant_reply})
+
+            # ② アシスタント応答を Sheets へ記録
+            post_log("assistant", assistant_reply)
 
             # チャットタイトル自動生成（初回応答後）
             # if len(msgs) == 2 and msgs[0]["role"] == "user" and msgs[1]["role"] == "assistant":
