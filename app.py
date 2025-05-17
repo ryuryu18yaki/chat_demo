@@ -27,13 +27,15 @@ authenticator = stauth.Authenticate(
 WEBHOOK_URL = st.secrets["WEBHOOK_URL"]
 
 # ログ送信用の関数
-def post_log(role: str, text: str):
+def post_log(role: str, text: str, prompt: str | None = None):
     """Apps Script Webhook へ 1 行 POST する（302 を成功扱い）"""
     payload = {
         "session_id": st.session_state["sid"],
         "role": role,
         "text": text,
     }
+    if prompt is not None:
+        payload["prompt"] = prompt
 
     for wait in (0, 1, 3):                 # 最大 3 回リトライ
         try:
@@ -344,9 +346,22 @@ if st.session_state["authentication_status"]:
     # =====  ヘルパー  ============================================================
     def get_messages() -> List[Dict[str, str]]:
         title = st.session_state.current_chat
-        if title not in st.session_state.chats:
-            st.session_state.chats[title] = []
-        return st.session_state.chats[title]
+        return st.session_state.chats.setdefault(title, [])
+    
+    # ★ 新しいチャットを作成
+    def new_chat():
+        title = f"Chat {len(st.session_state.chats) + 1}"
+        st.session_state.chats[title] = []
+        st.session_state.chat_sids[title] = str(uuid.uuid4())   # 新sid
+        st.session_state.current_chat = title
+        st.session_state.sid = st.session_state.chat_sids[title]
+        st.rerun()
+
+    # ★ 既存チャットへ切替
+    def switch_chat(title: str):
+        st.session_state.current_chat = title
+        st.session_state.sid = st.session_state.chat_sids[title]
+        st.rerun()
 
     def rebuild_rag_collection():
         """アップロードされたファイルを前処理 → Chroma 登録し、セッションに保存"""
@@ -523,14 +538,10 @@ if st.session_state["authentication_status"]:
         st.header("💬 チャット履歴")
         for title in list(st.session_state.chats.keys()):
             if st.button(title, key=f"hist_{title}"):
-                st.session_state.current_chat = title
-                st.rerun()
+                switch_chat(title)
 
         if st.button("➕ 新しいチャット"):
-            base = f"Chat {len(st.session_state.chats) + 1}"
-            st.session_state.current_chat = base
-            st.session_state.chats[st.session_state.current_chat] = []
-            st.rerun()
+            new_chat()
 
     # =====  プロンプト編集画面  =================================================
     if st.session_state.edit_target:
@@ -598,13 +609,13 @@ if st.session_state["authentication_status"]:
         with st.chat_message("user"):
             st.markdown(f'<div class="user-message">{user_prompt}</div>', unsafe_allow_html=True)
 
-        # ① ユーザーメッセージを Sheets へ記録
-        post_log("user", user_prompt)
-
         # シンプルなステータス表示 - 折りたたみなし
         with st.status(f"🤖 {st.session_state.gpt_model} で回答を生成中...", expanded=True) as status:
             # プロンプト取得
             prompt = st.session_state.prompts[st.session_state.design_mode]
+
+            # ① ユーザーメッセージを Sheets へ記録
+            post_log("user", user_prompt, prompt)
 
             # ---------- RAG あり ----------
             if st.session_state.rag_collection is not None:
@@ -667,7 +678,7 @@ if st.session_state["authentication_status"]:
             msgs.append({"role": "assistant", "content": assistant_reply})
 
             # ② アシスタント応答を Sheets へ記録
-            post_log("assistant", assistant_reply)
+            post_log("assistant", assistant_reply, prompt)
 
             # チャットタイトル自動生成（初回応答後）
             # if len(msgs) == 2 and msgs[0]["role"] == "user" and msgs[1]["role"] == "assistant":
