@@ -9,6 +9,7 @@ from src.rag_qa import generate_answer
 
 import yaml
 import streamlit_authenticator as stauth
+import uuid
 
 st.set_page_config(page_title="GPT + RAG Chatbot", page_icon="💬", layout="wide")
 
