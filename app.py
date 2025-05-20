@@ -562,9 +562,15 @@ if st.session_state["authentication_status"]:
 
         st.session_state["use_rag"] = st.checkbox(
             "検索資料（ベクトルDB）を活用する",
-            value=True,
+            value=st.session_state["use_rag"],
             help="OFFにすると、プロンプトと履歴のみで応答を生成します"
         )
+
+        # ✅ 現在のモードを明示表示
+        if st.session_state["use_rag"]:
+            st.success("現在のモード: RAG使用中")
+        else:
+            st.info("現在のモード: GPTのみ（検索なし）")
 
         # ------- RAG アップロード -------
         st.markdown("### 📂 追加RAG 資料アップロード")
