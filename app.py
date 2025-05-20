@@ -481,29 +481,6 @@ if st.session_state["authentication_status"]:
         st.markdown(f"👤 ログインユーザー: `{name}`")
         authenticator.logout('ログアウト', 'sidebar')
 
-        # ------- RAG アップロード -------
-        st.markdown("### 📂 RAG 資料アップロード")
-        uploads = st.file_uploader(
-            "PDF / TXT を選択…",
-            type=["txt", "pdf"],
-            accept_multiple_files=True,
-        )
-        if uploads:
-            st.session_state.rag_files = [
-                {"name": f.name, "type": f.type, "size": f.size, "data": f.getvalue()} for f in uploads
-            ]
-        if st.button("🔄 インデックス再構築", disabled=not st.session_state.rag_files):
-            rebuild_rag_collection()
-
-        # ===== サイドバー（モデル選択などの下が最適） =====
-        st.markdown("### 🧠 RAG 検索の使用設定")
-
-        st.session_state["use_rag"] = st.checkbox(
-            "検索資料（ベクトルDB）を活用する",
-            value=True,
-            help="OFFにすると、プロンプトと履歴のみで応答を生成します"
-        )
-
         st.divider()
 
         # ------- モデル選択 -------
@@ -577,6 +554,31 @@ if st.session_state["authentication_status"]:
 
         if st.button("➕ 新しいチャット"):
             new_chat()
+        
+        st.divider()
+
+        # ------- RAG アップロード -------
+        st.markdown("### 📂 RAG 資料アップロード")
+        uploads = st.file_uploader(
+            "PDF / TXT を選択…",
+            type=["txt", "pdf"],
+            accept_multiple_files=True,
+        )
+        if uploads:
+            st.session_state.rag_files = [
+                {"name": f.name, "type": f.type, "size": f.size, "data": f.getvalue()} for f in uploads
+            ]
+        if st.button("🔄 インデックス再構築", disabled=not st.session_state.rag_files):
+            rebuild_rag_collection()
+
+        # ===== サイドバー（モデル選択などの下が最適） =====
+        st.markdown("### 🧠 RAG 検索の使用設定")
+
+        st.session_state["use_rag"] = st.checkbox(
+            "検索資料（ベクトルDB）を活用する",
+            value=True,
+            help="OFFにすると、プロンプトと履歴のみで応答を生成します"
+        )
 
     # =====  プロンプト編集画面  =================================================
     if st.session_state.edit_target:
