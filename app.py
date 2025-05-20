@@ -495,6 +495,15 @@ if st.session_state["authentication_status"]:
         if st.button("🔄 インデックス再構築", disabled=not st.session_state.rag_files):
             rebuild_rag_collection()
 
+        # ===== サイドバー（モデル選択などの下が最適） =====
+        st.markdown("### 🧠 RAG 検索の使用設定")
+
+        st.session_state["use_rag"] = st.checkbox(
+            "検索資料（ベクトルDB）を活用する",
+            value=True,
+            help="OFFにすると、プロンプトと履歴のみで応答を生成します"
+        )
+
         st.divider()
 
         # ------- モデル選択 -------
@@ -553,16 +562,6 @@ if st.session_state["authentication_status"]:
             key="design_mode_radio",
         )
         st.markdown(f"**🛈 現在のモード:** `{st.session_state.design_mode}`")
-
-        # ===== サイドバー（モデル選択などの下が最適） =====
-        st.divider()
-        st.markdown("### 🧠 RAG 検索の使用設定")
-
-        st.session_state["use_rag"] = st.checkbox(
-            "検索資料（ベクトルDB）を活用する",
-            value=True,
-            help="OFFにすると、プロンプトと履歴のみで応答を生成します"
-        )
 
         # ------- プロンプト編集ボタン -------
         if st.button("✏️ 現在のプロンプトを編集"):
