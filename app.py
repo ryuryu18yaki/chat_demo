@@ -72,7 +72,7 @@ if st.session_state["authentication_status"]:
     if st.session_state.get("rag_collection") is None:
         try:
             res = initialize_chroma_from_input(
-                input_dir="input_data",
+                input_dir="rag_data",
                 persist_dir=None,  # 永続化しない
                 collection_name="session_docs"
             )
