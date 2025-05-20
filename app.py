@@ -6,7 +6,7 @@ import time, functools, requests
 from src.rag_preprocess import preprocess_files
 from src.rag_vector import save_docs_to_chroma
 from src.rag_qa import generate_answer
-from startup_loader import initialize_chroma_from_input
+from src.startup_loader import initialize_chroma_from_input
 
 import yaml
 import streamlit_authenticator as stauth
