@@ -6,6 +6,7 @@ import time, functools, requests
 from src.rag_preprocess import preprocess_files
 from src.rag_vector import save_docs_to_chroma
 from src.rag_qa import generate_answer
+from startup_loader import initialize_chroma_from_input
 
 import yaml
 import streamlit_authenticator as stauth
@@ -66,6 +67,20 @@ authenticator.login()
 if st.session_state["authentication_status"]:
     name = st.session_state["name"]
     username = st.session_state["username"]
+
+    # Chromaコレクションを input_data から自動初期化（persist_directory=None → インメモリ）
+    if st.session_state.get("rag_collection") is None:
+        try:
+            res = initialize_chroma_from_input(
+                input_dir="input_data",
+                persist_dir=None,  # 永続化しない
+                collection_name="session_docs"
+            )
+            st.session_state.rag_collection = res["collection"]
+            st.session_state.rag_files = res["rag_files"]
+        except Exception as e:
+            st.warning(f"RAG初期化中にエラーが発生しました: {e}")
+
     # --------------------------------------------------------------------------- #
     #                         ★ 各モード専用プロンプト ★                           #
     # --------------------------------------------------------------------------- #
@@ -348,6 +363,8 @@ if st.session_state["authentication_status"]:
     if "sid" not in st.session_state:          # 追加
         import uuid
         st.session_state.sid = str(uuid.uuid4())
+    if "use_rag" not in st.session_state:
+        st.session_state["use_rag"] = False  # ← デフォルトでRAGを使わない
 
 
     # =====  ヘルパー  ============================================================
@@ -537,6 +554,16 @@ if st.session_state["authentication_status"]:
         )
         st.markdown(f"**🛈 現在のモード:** `{st.session_state.design_mode}`")
 
+        # ===== サイドバー（モデル選択などの下が最適） =====
+        st.divider()
+        st.markdown("### 🧠 RAG 検索の使用設定")
+
+        st.session_state["use_rag"] = st.checkbox(
+            "検索資料（ベクトルDB）を活用する",
+            value=True,
+            help="OFFにすると、プロンプトと履歴のみで応答を生成します"
+        )
+
         # ------- プロンプト編集ボタン -------
         if st.button("✏️ 現在のプロンプトを編集"):
             st.session_state.edit_target = st.session_state.design_mode
@@ -627,7 +654,7 @@ if st.session_state["authentication_status"]:
             post_log("user", user_prompt, prompt)
 
             # ---------- RAG あり ----------
-            if st.session_state.rag_collection is not None:
+            if st.session_state.get("use_rag", True):
                 st.session_state["last_answer_mode"] = "RAG"
                 rag_res = generate_answer(
                         prompt=prompt,
