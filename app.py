@@ -557,8 +557,17 @@ if st.session_state["authentication_status"]:
         
         st.divider()
 
+        # ===== サイドバー（モデル選択などの下が最適） =====
+        st.markdown("### 🧠 RAG 検索の使用設定")
+
+        st.session_state["use_rag"] = st.checkbox(
+            "検索資料（ベクトルDB）を活用する",
+            value=True,
+            help="OFFにすると、プロンプトと履歴のみで応答を生成します"
+        )
+
         # ------- RAG アップロード -------
-        st.markdown("### 📂 RAG 資料アップロード")
+        st.markdown("### 📂 追加RAG 資料アップロード")
         uploads = st.file_uploader(
             "PDF / TXT を選択…",
             type=["txt", "pdf"],
@@ -570,15 +579,6 @@ if st.session_state["authentication_status"]:
             ]
         if st.button("🔄 インデックス再構築", disabled=not st.session_state.rag_files):
             rebuild_rag_collection()
-
-        # ===== サイドバー（モデル選択などの下が最適） =====
-        st.markdown("### 🧠 RAG 検索の使用設定")
-
-        st.session_state["use_rag"] = st.checkbox(
-            "検索資料（ベクトルDB）を活用する",
-            value=True,
-            help="OFFにすると、プロンプトと履歴のみで応答を生成します"
-        )
 
     # =====  プロンプト編集画面  =================================================
     if st.session_state.edit_target:
