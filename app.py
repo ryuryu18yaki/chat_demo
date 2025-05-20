@@ -572,6 +572,19 @@ if st.session_state["authentication_status"]:
         else:
             st.info("現在のモード: GPTのみ（検索なし）")
 
+        # サイドバー下部など、rag_collection の表示
+        st.markdown("### 🗂 ベクトルDBステータス")
+
+        if st.session_state.get("rag_collection"):
+            st.success("✔️ ベクトルDBは初期化済みです")
+            try:
+                count = st.session_state.rag_collection.count()
+                st.markdown(f"📄 登録チャンク数: `{count}`")
+            except Exception as e:
+                st.warning(f"⚠️ 件数取得失敗: {e}")
+        else:
+            st.error("❌ ベクトルDBがまだ初期化されていません")
+
         # ------- RAG アップロード -------
         st.markdown("### 📂 追加RAG 資料アップロード")
         uploads = st.file_uploader(
@@ -640,7 +653,6 @@ if st.session_state["authentication_status"]:
     else:
         # プロンプト編集モード時は入力欄を無効化
         user_prompt = None
-
 
     # =====  応答生成  ============================================================
     if user_prompt and not st.session_state.edit_target:  # 編集モード時は応答生成をスキップ
