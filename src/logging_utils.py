@@ -3,42 +3,28 @@ import logging, os, tempfile, streamlit as st
 from logging.handlers import RotatingFileHandler
 
 def init_logger() -> logging.Logger:
-    """
-    - Streamlit UI に流すハンドラ (_StHandler)
-    - 書き込み可能なら一時ファイル (/tmp など) へローテーションログ
-    """
     logger = logging.getLogger("app")
-    if logger.handlers:            # 再実行時の重複防止
+    if logger.handlers:          # 再実行時の重複防止
         return logger
 
     logger.setLevel(logging.INFO)
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s",
+                            "%Y-%m-%d %H:%M:%S")
 
-    fmt = logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(message)s", "%Y-%m-%d %H:%M:%S"
-    )
+    # ── ① Cloud Logs 用 (標準出力) ───────────────────────────
+    ch = logging.StreamHandler()     # これが Cloud の Logs ビューに流れる
+    ch.setFormatter(fmt)
+    logger.addHandler(ch)
 
-    # ── A. Streamlit-handler（最新500行を session_state にキープ） ──
-    class _StHandler(logging.Handler):
-        def emit(self, record):
-            logs = st.session_state.setdefault("__logs", [])
-            logs.append(self.format(record))
-            if len(logs) > 500:       # 上限 500 行
-                logs.pop(0)
-
-    sh = _StHandler()
-    sh.setFormatter(fmt)
-    logger.addHandler(sh)
-
-    # ── B. ローカル一時ファイル（書ける環境だけ） ──
+    # ── ② 書ける環境なら一時ファイルにも残す（任意） ────────
     try:
         tmp_path = os.path.join(tempfile.gettempdir(), "app.log")
-        fh = RotatingFileHandler(
-            tmp_path, maxBytes=300_000, backupCount=2, encoding="utf-8"
-        )
+        fh = RotatingFileHandler(tmp_path, maxBytes=300_000, backupCount=2,
+                                 encoding="utf-8")
         fh.setFormatter(fmt)
         logger.addHandler(fh)
-    except (PermissionError, OSError) as e:
-        # ファイル書き込み不可でも UI ログは生きる
-        print("⚠️  File log disabled:", e)
+    except (PermissionError, OSError):
+        # ファイルに書けない環境でも動作を止めない
+        pass
 
     return logger
