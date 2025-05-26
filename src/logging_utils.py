@@ -20,7 +20,9 @@ def init_logger() -> logging.Logger:
     sh = _StHandler(); sh.setFormatter(fmt); logger.addHandler(sh)
 
     # B. /tmp に一時ファイル（デバッグ用・揮発OK）
-    tmp_path = "/tmp/app.log"
+    tmp_dir = pathlib.Path(__file__).resolve().parent.parent / "logs"
+    tmp_dir.mkdir(exist_ok=True)
+    tmp_path = tmp_dir / "app.log"
     os.makedirs("/tmp", exist_ok=True)
     fh = RotatingFileHandler(tmp_path, maxBytes=300_000, backupCount=2,
                              encoding="utf-8")
