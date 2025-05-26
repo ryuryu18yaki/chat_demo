@@ -7,12 +7,15 @@ from src.rag_preprocess import preprocess_files
 from src.rag_vector import save_docs_to_chroma
 from src.rag_qa import generate_answer
 from src.startup_loader import initialize_chroma_from_input
+from src.logging_utils import init_logger
 
 import yaml
 import streamlit_authenticator as stauth
 import uuid
 
 st.set_page_config(page_title="GPT + RAG Chatbot", page_icon="💬", layout="wide")
+
+logger = init_logger()
 
 # =====  認証設定の読み込み ============================================================
 with open('./config.yaml') as file:
@@ -29,31 +32,36 @@ authenticator = stauth.Authenticate(
 WEBHOOK_URL = st.secrets["WEBHOOK_URL"]
 
 # ログ送信用の関数
-def post_log(role: str, text: str, prompt: str | None = None):
+def post_log(
+    input_text: str,
+    output_text: str,
+    prompt: str,
+):
     """Apps Script Webhook へ 1 行 POST する（302 を成功扱い）"""
     payload = {
-        "session_id": st.session_state["sid"],
-        "role": role,
-        "text": text,
-        "mode":  st.session_state["design_mode"],      # ★ 追加
-        "title": st.session_state["current_chat"],     # ★ 追加
+        "mode": st.session_state["design_mode"],       # ex: "chat", "eval"
+        "model": st.session_state['gpt_model'],        # ex: "gpt-4", "gpt-4o"
+        "title": st.session_state["current_chat"],     # 会話タイトル
+        "input": input_text,                           # 入力メッセージ
+        "output": output_text,                         # 出力メッセージ（LLM応答）
+        "prompt": prompt,                              # システムプロンプトなど
     }
-    if prompt is not None:
-        payload["prompt"] = prompt
 
-    for wait in (0, 1, 3):                 # 最大 3 回リトライ
+    for wait in (0, 1, 3):  # 最大3回リトライ
         try:
             r = requests.post(
                 WEBHOOK_URL,
                 json=payload,
                 timeout=4,
-                allow_redirects=False,     # ← ここがポイント
+                allow_redirects=False,  # 302 Found を許容するため
             )
-            # Apps Script 成功時は 302 Found
             if r.status_code in (200, 302):
+                logger.info("✅ post_log ok — status=%s", r.status_code)
                 return
-        except requests.RequestException:
-            pass
+            logger.warning("⚠️ post_log status=%s body=%s",
+                           r.status_code, r.text[:120])
+        except requests.RequestException as e:
+            logger.error("❌ post_log error — %s", e, exc_info=True)
         time.sleep(wait)
 
     st.warning("⚠️ Sheets へのログ送信に失敗しました")
@@ -68,6 +76,8 @@ if st.session_state["authentication_status"]:
     name = st.session_state["name"]
     username = st.session_state["username"]
 
+    logger.info("🔐 login success — user=%s  username=%s", name, username)
+
     # Chromaコレクションを input_data から自動初期化（persist_directory=None → インメモリ）
     if st.session_state.get("rag_collection") is None:
         try:
@@ -78,7 +88,12 @@ if st.session_state["authentication_status"]:
             )
             st.session_state.rag_collection = res["collection"]
             st.session_state.rag_files = res["rag_files"]
+
+            logger.info("📂 Chroma init — chunks=%d  files=%d",
+                    res["collection"].count(), len(res["rag_files"]))
+            
         except Exception as e:
+            logger.exception("❌ Chroma init failed — %s", e)
             st.warning(f"RAG初期化中にエラーが発生しました: {e}")
 
     # --------------------------------------------------------------------------- #
@@ -392,6 +407,9 @@ if st.session_state["authentication_status"]:
         st.session_state.chat_sids[title] = str(uuid.uuid4())   # 新sid
         st.session_state.current_chat = title
         st.session_state.sid = st.session_state.chat_sids[title]
+
+        logger.info("➕ new_chat — sid=%s  title='%s'", st.session_state.sid, title)
+
         st.rerun()
 
     # ★ 既存チャットへ切替
@@ -400,23 +418,46 @@ if st.session_state["authentication_status"]:
             st.session_state.chat_sids[title] = str(uuid.uuid4())
         st.session_state.current_chat = title
         st.session_state.sid = st.session_state.chat_sids[title]
+
+        logger.info("🔀 switch_chat — sid=%s  title='%s'", st.session_state.sid, title)
+
         st.rerun()
 
     def rebuild_rag_collection():
-        """アップロードされたファイルを前処理 → Chroma 登録し、セッションに保存"""
+        """
+        アップロードされたファイルを前処理 → Chroma 登録し、セッションに保持
+        """
         if not st.session_state.rag_files:
             st.warning("まず PDF / TXT をアップロードしてください")
+            logger.warning("📚 RAG rebuild aborted — no files")
             return
 
-        with st.spinner("📚 ファイルを解析し、ベクトル DB に登録中..."):
-            docs = preprocess_files(st.session_state.rag_files)
-            col = save_docs_to_chroma(
-                docs=docs,
-                collection_name="session_docs",
-                persist_directory=None,  # インメモリ
-            )
-            st.session_state.rag_collection = col
-        st.success("🔍 検索インデックスを更新しました！")
+        total_files = len(st.session_state.rag_files)
+        logger.info("📚 RAG rebuild start — files=%d", total_files)
+
+        import time
+        t0 = time.perf_counter()            # 所要時間計測
+
+        try:
+            with st.spinner("📚 ファイルを解析し、ベクトル DB に登録中..."):
+                docs = preprocess_files(st.session_state.rag_files)
+                col = save_docs_to_chroma(
+                    docs=docs,
+                    collection_name="session_docs",
+                    persist_directory=None,   # インメモリ
+                )
+                st.session_state.rag_collection = col
+
+            chunk_count = col.count()
+            elapsed = time.perf_counter() - t0
+            logger.info("✅ RAG rebuild done — chunks=%d  files=%d  elapsed=%.2fs",
+                        chunk_count, total_files, elapsed)
+
+            st.success("🔍 検索インデックスを更新しました！")
+
+        except Exception as e:
+            logger.exception("❌ RAG rebuild failed — %s", e)
+            st.error(f"RAG 初期化中にエラーが発生しました: {e}")
 
     # ----- チャットタイトル自動生成機能 -----
     def generate_chat_title(messages):
@@ -437,6 +478,10 @@ if st.session_state["authentication_status"]:
     def handle_save_prompt(mode_name, edited_text):
         st.session_state.prompts[mode_name] = edited_text
         st.session_state.edit_target = None
+
+        logger.info("✏️ prompt_saved — mode=%s  len=%d",
+                mode_name, len(edited_text))
+        
         st.success(f"「{mode_name}」のプロンプトを更新しました")
         time.sleep(1)
         st.rerun()
@@ -444,6 +489,9 @@ if st.session_state["authentication_status"]:
     def handle_reset_prompt(mode_name):
         if mode_name in DEFAULT_PROMPTS:
             st.session_state.prompts[mode_name] = DEFAULT_PROMPTS[mode_name]
+
+            logger.info("🔄 prompt_reset — mode=%s", mode_name)
+
             st.success(f"「{mode_name}」のプロンプトをデフォルトに戻しました")
             time.sleep(1)
             st.rerun()
@@ -609,6 +657,10 @@ if st.session_state["authentication_status"]:
             st.session_state.rag_files = [
                 {"name": f.name, "type": f.type, "size": f.size, "data": f.getvalue()} for f in uploads
             ]
+
+            logger.info("📥 file_uploaded — files=%d  total_bytes=%d",
+                len(uploads), sum(f.size for f in uploads))
+            
         if st.button("🔄 インデックス再構築", disabled=not st.session_state.rag_files):
             rebuild_rag_collection()
 
@@ -682,48 +734,70 @@ if st.session_state["authentication_status"]:
             # プロンプト取得
             prompt = st.session_state.prompts[st.session_state.design_mode]
 
-            # ① ユーザーメッセージを Sheets へ記録
-            post_log("user", user_prompt, prompt)
+            logger.info("💬 gen_start — mode=%s model=%s use_rag=%s sid=%s",
+                st.session_state.design_mode,
+                st.session_state.gpt_model,
+                st.session_state.get("use_rag", True),
+                st.session_state.sid)
 
-            # ---------- RAG あり ----------
-            if st.session_state.get("use_rag", True):
-                st.session_state["last_answer_mode"] = "RAG"
-                rag_res = generate_answer(
-                        prompt=prompt,
-                        question=user_prompt,
-                        collection=st.session_state.rag_collection,
-                        rag_files=st.session_state.rag_files,  # ← ここを追加
-                        top_k=4,
-                        model=st.session_state.gpt_model,
-                        chat_history=msgs,
-                    )
-                assistant_reply = rag_res["answer"]
-                sources = rag_res["sources"]
+            try:
+                # ---------- RAG あり ----------
+                if st.session_state.get("use_rag", True):
+                    st.session_state["last_answer_mode"] = "RAG"
 
-            # ---------- GPT-only ----------
-            else:
-                st.session_state["last_answer_mode"] = "GPT-only"
-                # API呼び出し部分（条件付き）
-                params = {
-                    "model": st.session_state.gpt_model,
-                    "messages": [
-                        {"role": "system", "content": prompt},
-                        *msgs[:-1],
-                        {"role": "user", "content": user_prompt},
-                    ]
-                }
+                    t_api = time.perf_counter()
+                    rag_res = generate_answer(
+                            prompt=prompt,
+                            question=user_prompt,
+                            collection=st.session_state.rag_collection,
+                            rag_files=st.session_state.rag_files,  # ← ここを追加
+                            top_k=4,
+                            model=st.session_state.gpt_model,
+                            chat_history=msgs,
+                        )
+                    api_elapsed = time.perf_counter() - t_api
+                    assistant_reply = rag_res["answer"]
+                    sources = rag_res["sources"]
 
-                # カスタム設定があれば追加
-                if st.session_state.get("temperature") != 1.0:
-                    params["temperature"] = st.session_state.temperature
-                if st.session_state.get("max_tokens") is not None:
-                    params["max_tokens"] = st.session_state.max_tokens
+                    logger.info("💬 GPT done — tokens≈%d  api_elapsed=%.2fs  sources=%d",
+                                    len(assistant_reply.split()), api_elapsed, len(sources))
 
-                # APIを呼び出し
-                resp = client.chat.completions.create(**params)
+                # ---------- GPT-only ----------
+                else:
+                    st.session_state["last_answer_mode"] = "GPT-only"
+                    # API呼び出し部分（条件付き）
+                    params = {
+                        "model": st.session_state.gpt_model,
+                        "messages": [
+                            {"role": "system", "content": prompt},
+                            *msgs[:-1],
+                            {"role": "user", "content": user_prompt},
+                        ]
+                    }
 
-                assistant_reply = resp.choices[0].message.content
-                sources = []
+                    # カスタム設定があれば追加
+                    if st.session_state.get("temperature") != 1.0:
+                        params["temperature"] = st.session_state.temperature
+                    if st.session_state.get("max_tokens") is not None:
+                        params["max_tokens"] = st.session_state.max_tokens
+
+                    import time
+                    t_api = time.perf_counter()
+
+                    # APIを呼び出し
+                    resp = client.chat.completions.create(**params)
+
+                    api_elapsed = time.perf_counter() - t_api
+
+                    assistant_reply = resp.choices[0].message.content
+                    sources = []
+
+                    logger.info("💬 GPT done — tokens≈%d  api_elapsed=%.2fs",
+                                    len(assistant_reply.split()), api_elapsed)
+                    
+            except Exception as e:
+                logger.exception("❌ answer_gen failed — %s", e)
+                st.error("回答生成時にエラーが発生しました")
 
             # ---------- 画面反映 ----------
             with st.chat_message("assistant"):
@@ -745,8 +819,8 @@ if st.session_state["authentication_status"]:
             # 保存するのは元の応答（モデル情報なし）
             msgs.append({"role": "assistant", "content": assistant_reply})
 
-            # ② アシスタント応答を Sheets へ記録
-            post_log("assistant", assistant_reply, prompt)
+            # 会話内容を Sheets へ記録
+            post_log(user_prompt, assistant_reply, prompt)
 
             # チャットタイトル自動生成（初回応答後）
             # if len(msgs) == 2 and msgs[0]["role"] == "user" and msgs[1]["role"] == "assistant":
