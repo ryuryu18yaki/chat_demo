@@ -1,26 +1,29 @@
+import asyncio
+import threading
 import streamlit as st
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 from typing import List, Dict, Any
-import time, functools, requests
+import time, requests, uuid
 from concurrent.futures import ThreadPoolExecutor
-import copy
-
 from src.rag_preprocess import preprocess_files
 from src.rag_vector import save_docs_to_chroma
 from src.rag_qa import generate_answer
 from src.startup_loader import initialize_chroma_from_input
 from src.logging_utils import init_logger
-
 import yaml
 import streamlit_authenticator as stauth
-import uuid
 
 st.set_page_config(page_title="GPT + RAG Chatbot", page_icon="💬", layout="wide")
 
+# -------------------------------------------------------------------
+# ▶ 共通セットアップ
+# -------------------------------------------------------------------
 logger = init_logger()
-
-# グローバルで使い回す実行基盤（CPU 2core 制限を考慮し 3スレッド程度に抑える）
-EXECUTOR = ThreadPoolExecutor(max_workers=3)
+client        = OpenAI()
+async_client  = AsyncOpenAI()
+MAX_PARALLEL  = 3               # 同時に叩く比較 API 本数
+EXECUTOR      = ThreadPoolExecutor(max_workers=MAX_PARALLEL)
+SEM           = asyncio.Semaphore(MAX_PARALLEL)  # asyncio 用
 
 # =====  認証設定の読み込み ============================================================
 with open('./config.yaml') as file:
@@ -70,9 +73,6 @@ def post_log(
         time.sleep(wait)
 
     st.warning("⚠️ Sheets へのログ送信に失敗しました")
-
-# =====  基本設定  ============================================================
-client = OpenAI()
 
 # =====  ログインUIの表示  ============================================================
 authenticator.login()
@@ -481,73 +481,111 @@ if st.session_state["authentication_status"]:
         return f"Chat {len(st.session_state.chats) + 1}"
     
     # =====  チャット応答生成  =========================================
-    def generate_with_model(model_name: str,
-                        system_prompt: str,
-                        user_text: str,
-                        msgs_history: List[Dict[str, str]],
-                        temperature: float = 1.0) -> str:
+    def stream_main_answer(prompt: str, user_prompt: str, msgs: List[Dict[str, str]]):
+        """メインモデルの回答をストリーミング描画して返す"""
+        # --- RAG / GPT-only は元コードのロジックを援用 ---
         if st.session_state.get("use_rag", True):
+            # RAG は generate_answer 内部でストリーミング不可のため旧方式
             res = generate_answer(
-                prompt=system_prompt,
-                question=user_text,
-                collection=st.session_state.rag_collection,
-                rag_files=st.session_state.rag_files,
-                top_k=4,
-                model=model_name,
-                chat_history=msgs_history,
-                temperature=temperature          # ★ 追加
+                prompt       = prompt,
+                question     = user_prompt,
+                collection   = st.session_state.rag_collection,
+                rag_files    = st.session_state.rag_files,
+                top_k        = 4,
+                model        = st.session_state.gpt_model,
+                chat_history = msgs,
             )
-            return res["answer"]
+            return res["answer"], []
 
-        # --- GPT only ---
-        params = {
-            "model": model_name,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                *msgs_history[:-1],
-                {"role": "user", "content": user_text},
+        # GPT‑only ならストリーミング
+        stream = client.chat.completions.create(
+            model     = st.session_state.gpt_model,
+            stream    = True,
+            messages  = [
+                {"role": "system", "content": prompt},
+                *msgs[:-1],
+                {"role": "user", "content": user_prompt},
             ],
-            "temperature": temperature          # ★ 追加
-        }
-        if st.session_state.get("max_tokens") is not None:
-            params["max_tokens"] = st.session_state.max_tokens
+            temperature = st.session_state.temperature,
+            max_tokens  = st.session_state.get("max_tokens"),
+        )
+        buf = ""
+        with st.chat_message("assistant"):
+            ph = st.empty()
+            for chunk in stream:
+                buf += chunk.choices[0].delta.content or ""
+                ph.markdown(buf + "▌")
+            ph.markdown(buf)
+        return buf, []  # sources は未対応
 
-        return client.chat.completions.create(**params).choices[0].message.content
-    
-    def launch_background_comparisons(prompt, user_text, msgs_history):
-        this_sid = st.session_state.sid
-        turn_no  = len(msgs_history)
-        key      = (this_sid, turn_no)
+    # -------------------------------------------------------------------
+    # ▼ asyncio + gather でモデル比較を真並列実行
+    # -------------------------------------------------------------------
 
-        if key not in st.session_state.comparison_results:
-            st.session_state.comparison_results[key] = {}
+    async def _generate_async(job: Dict[str, Any]) -> str:
+        """非同期版 generate_with_model"""
+        async with SEM:
+            if st.session_state.get("use_rag", True):
+                res = generate_answer(
+                    prompt       = job["prompt"],
+                    question     = job["question"],
+                    collection   = st.session_state.rag_collection,
+                    rag_files    = st.session_state.rag_files,
+                    top_k        = 4,
+                    model        = job["model"],
+                    chat_history = job["hist"],
+                    temperature  = job["temp"],
+                )
+                return res["answer"]
 
-        # フラグを立てる
-        st.session_state["need_refresh"] = False
+            resp = await async_client.chat.completions.create(
+                model      = job["model"],
+                temperature= job["temp"],
+                messages   = [
+                    {"role": "system", "content": job["prompt"]},
+                    *job["hist"][:-1],
+                    {"role": "user", "content": job["question"]},
+                ],
+                max_tokens = st.session_state.get("max_tokens"),
+            )
+            return resp.choices[0].message.content
 
-        def _done_callback(fut):
-            # 1スレッド完了ごとにリロード要求フラグを立てる
-            st.session_state["need_refresh"] = True
+    async def run_comparison_jobs():
+        tasks = []
+        for job in st.session_state._pending_jobs:
+            tasks.append(asyncio.create_task(_generate_async(job)))
+        st.session_state._pending_jobs.clear()
+        for t, job in zip(await asyncio.gather(*tasks), tasks):
+            k = (job["sid"], job["turn"])
+            st.session_state.comparison_results.setdefault(k, {})[(job["model"], job["temp"])] = t
 
-        def _worker(m_name, temp):
-            try:
-                ans = generate_with_model(m_name, prompt, user_text, msgs_history, temp)
-                st.session_state.comparison_results[key][(m_name, temp)] = ans
-            except Exception as e:
-                st.session_state.comparison_results[key][(m_name, temp)] = f"❌ Error: {e}"
+        # 結果が入ったので即 rerun
+        st.session_state["_need_rerun"] = True
 
-        # 投げっぱなし：完了時だけコールバック
-        main_model = st.session_state.gpt_model
-        main_temp  = float(st.session_state.get("temperature", 1.0))
-        temps      = [0.0, 1.0]
-        models     = ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"]
+    # -------------------------------------------------------------------
+    # ▼ launch_background_comparisons 置き換え
+    # -------------------------------------------------------------------
 
-        for m in models:
-            for t in temps:
-                if m == main_model and abs(t - main_temp) < 1e-6:
-                    continue  # すでに主モデルで出力済
-                fut = EXECUTOR.submit(_worker, m, t)
-                fut.add_done_callback(_done_callback)
+    def enqueue_and_launch(prompt: str, question: str, hist: List[Dict[str, str]]):
+        sid, turn = st.session_state.sid, len(hist)
+        if "_pending_jobs" not in st.session_state:
+            st.session_state._pending_jobs = []
+
+        main_m, main_t = st.session_state.gpt_model, float(st.session_state.temperature)
+        MODELS = ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"]
+        for m in MODELS:
+            for t in (0.0, 1.0):
+                if m == main_m and abs(t - main_t) < 1e-6:
+                    continue
+                st.session_state._pending_jobs.append(dict(
+                    sid=sid, turn=turn, model=m, temp=t,
+                    prompt=prompt, question=question, hist=copy.deepcopy(hist)
+                ))
+
+        # 非同期ランを別スレッドで起動し、終わったら UI rerun
+        def _kick():
+            asyncio.run(run_comparison_jobs())
+        threading.Thread(target=_kick, daemon=True).start()
 
     # =====  編集機能用のヘルパー関数  ==============================================
     def handle_save_prompt(mode_name, edited_text):
@@ -831,125 +869,36 @@ if st.session_state["authentication_status"]:
         user_prompt = None
 
     # =====  応答生成  ============================================================
-    if user_prompt and not st.session_state.edit_target:  # 編集モード時は応答生成をスキップ
-        # メッセージリストに現在の質問を追加
+    if user_prompt and not st.session_state.edit_target:       # 編集モード時は応答生成をスキップ
+        # --- 履歴へ追加 & ユーザーメッセージ描画 ------------------------------
         msgs = get_messages()
         msgs.append({"role": "user", "content": user_prompt})
-
-        # ユーザーメッセージを表示
         with st.chat_message("user"):
             st.markdown(f'<div class="user-message">{user_prompt}</div>', unsafe_allow_html=True)
 
-        # シンプルなステータス表示 - 折りたたみなし
-        with st.status(f"🤖 {st.session_state.gpt_model} で回答を生成中...", expanded=True) as status:
-            # プロンプト取得
-            prompt = st.session_state.prompts[st.session_state.design_mode]
+        # --- メイン回答をストリーミング ----------------------------------------
+        prompt = st.session_state.prompts[st.session_state.design_mode]
+        assistant_reply, sources = stream_main_answer(prompt, user_prompt, msgs)
 
-            logger.info("💬 gen_start — mode=%s model=%s use_rag=%s sid=%s",
-                st.session_state.design_mode,
-                st.session_state.gpt_model,
-                st.session_state.get("use_rag", True),
-                st.session_state.sid)
+        # モデル情報フッタを付与して履歴へ保存
+        footer = f"\n\n---\n*このレスポンスは `{st.session_state.gpt_model}` で生成されました*"
+        msgs.append({"role": "assistant", "content": assistant_reply})
 
-            try:
-                # ---------- RAG あり ----------
-                if st.session_state.get("use_rag", True):
-                    st.session_state["last_answer_mode"] = "RAG"
+        # --------- 比較ジョブを投入 -------------------------------------------
+        enqueue_and_launch(prompt, user_prompt, msgs)
 
-                    t_api = time.perf_counter()
-                    rag_res = generate_answer(
-                            prompt=prompt,
-                            question=user_prompt,
-                            collection=st.session_state.rag_collection,
-                            rag_files=st.session_state.rag_files,  # ← ここを追加
-                            top_k=4,
-                            model=st.session_state.gpt_model,
-                            chat_history=msgs,
-                        )
-                    api_elapsed = time.perf_counter() - t_api
-                    assistant_reply = rag_res["answer"]
-                    sources = rag_res["sources"]
+        # --------- ログ送信 & タイトル自動生成 -------------------------------
+        post_log(user_prompt, assistant_reply, prompt)
+        new_title = generate_chat_title(msgs)
+        if new_title and new_title != st.session_state.current_chat:
+            st.session_state.chats[new_title] = st.session_state.chats.pop(st.session_state.current_chat)
+            st.session_state.current_chat = new_title
 
-                    logger.info("💬 GPT done — tokens≈%d  api_elapsed=%.2fs  sources=%d",
-                                    len(assistant_reply.split()), api_elapsed, len(sources))
-
-                # ---------- GPT-only ----------
-                else:
-                    st.session_state["last_answer_mode"] = "GPT-only"
-                    # API呼び出し部分（条件付き）
-                    params = {
-                        "model": st.session_state.gpt_model,
-                        "messages": [
-                            {"role": "system", "content": prompt},
-                            *msgs[:-1],
-                            {"role": "user", "content": user_prompt},
-                        ]
-                    }
-
-                    # カスタム設定があれば追加
-                    if st.session_state.get("temperature") != 1.0:
-                        params["temperature"] = st.session_state.temperature
-                    if st.session_state.get("max_tokens") is not None:
-                        params["max_tokens"] = st.session_state.max_tokens
-
-                    import time
-                    t_api = time.perf_counter()
-
-                    # APIを呼び出し
-                    resp = client.chat.completions.create(**params)
-
-                    api_elapsed = time.perf_counter() - t_api
-
-                    assistant_reply = resp.choices[0].message.content
-                    sources = []
-
-                    logger.info("💬 GPT done — tokens≈%d  api_elapsed=%.2fs",
-                                    len(assistant_reply.split()), api_elapsed)
-                    
-            except Exception as e:
-                logger.exception("❌ answer_gen failed — %s", e)
-                st.error("回答生成時にエラーが発生しました")
-
-            # ---------- 画面反映 ----------
-            with st.chat_message("assistant"):
-                # モデル情報を応答に追加
-                model_info = f"\n\n---\n*このレスポンスは `{st.session_state.gpt_model}` で生成されました*"
-                full_reply = assistant_reply + model_info
-                st.markdown(full_reply)
-
-            # チャットメッセージ外で expander 表示
-            # if sources:
-            #     st.markdown("### 🔎 RAG が取得したチャンク")  # タイトルとして使う
-            #     for idx, s in enumerate(sources, 1):
-            #         chunk = s.get("content", "")[:200]
-            #         if len(s.get("content", "")) > 200:
-            #             chunk += " …"
-            #         with st.expander(f"Doc {idx} - {s['metadata'].get('source','N/A')} (score: {s['distance']:.4f})"):
-            #             st.markdown(f"> {chunk}")
-
-            # 保存するのは元の応答（モデル情報なし）
-            msgs.append({"role": "assistant", "content": assistant_reply})
-
-            # ✅ ここで非同期比較を開始  ---------------------------
-            launch_background_comparisons(prompt, user_prompt, msgs)
-
-            # 会話内容を Sheets へ記録
-            post_log(user_prompt, assistant_reply, prompt)
-
-            # チャットタイトル自動生成（初回応答後）
-            # if len(msgs) == 2 and msgs[0]["role"] == "user" and msgs[1]["role"] == "assistant":
-            new_title = generate_chat_title(msgs)
-            if new_title and new_title != st.session_state.current_chat:
-                old_title = st.session_state.current_chat
-                st.session_state.chats[new_title] = st.session_state.chats[old_title]
-                del st.session_state.chats[old_title]
-                st.session_state.current_chat = new_title
-
-            # 画面最下部 (script の一番最後でOK)
-            if st.session_state.get("need_refresh"):
-                # フラグを消してから再描画（無限ループ防止）
-                st.session_state["need_refresh"] = False
-                st.rerun()
+    # ---------------------------------------------------------------------------
+    # 画面最下部：比較結果が入るたびに再描画
+    # ---------------------------------------------------------------------------
+    if st.session_state.pop("_need_rerun", False):
+        st.experimental_rerun()
 
 elif st.session_state["authentication_status"] is False:
     st.error('ユーザー名またはパスワードが間違っています。')
