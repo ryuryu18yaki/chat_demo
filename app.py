@@ -417,10 +417,7 @@ if st.session_state["authentication_status"]:
                 if job["use_rag"]:
                     # RAG処理（同期のためタイムアウト制御は限定的）
                     # 修正後（安全）
-                    max_tokens = job.get("max_tokens")
-                    if max_tokens is None:
-                        max_tokens = 1000
-                    safe_max_tokens = min(max_tokens, 1000)
+                    safe_max_tokens = job.get("max_tokens", 1000)
                     
                     res = generate_answer(
                         prompt       = job["prompt"],
@@ -482,7 +479,7 @@ if st.session_state["authentication_status"]:
                 use_rag   = st.session_state["use_rag"],
                 rag_col   = st.session_state.get("rag_collection"),
                 rag_files = copy.deepcopy(st.session_state.get("rag_files", [])),
-                max_tokens= st.session_state.get("max_tokens"),
+                max_tokens= st.session_state.get("max_tokens") or 1000,
             ))
 
         logger.info("🔄 比較ジョブ準備完了: %d件", len(jobs))
