@@ -615,7 +615,7 @@ if st.session_state["authentication_status"]:
                         (j["model"], j["temp"])
                     ] = ans
                 # UI を即更新
-                st.experimental_rerun()
+                st.rerun()
 
             asyncio.run(_main())
 
