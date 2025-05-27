@@ -485,47 +485,80 @@ if st.session_state["authentication_status"]:
     # =====  チャット応答生成  =========================================
     def stream_main_answer(prompt: str, user_prompt: str, msgs: List[Dict[str, str]]):
         """メインモデルの回答をストリーミング描画して返す"""
-        # --- RAG / GPT-only は元コードのロジックを援用 ---
-        if st.session_state.get("use_rag", True):
-            # RAG は generate_answer 内部でストリーミング不可のため旧方式
-            res = generate_answer(
-                prompt       = prompt,
-                question     = user_prompt,
-                collection   = st.session_state.rag_collection,
-                rag_files    = st.session_state.rag_files,
-                top_k        = 4,
-                model        = st.session_state.gpt_model,
-                chat_history = msgs,
-            )
-            with st.chat_message("assistant"):
-                st.markdown(res["answer"])
-            return res["answer"], res["sources"]
-
-        # GPT‑only ならストリーミング
         try:
-            stream = client.chat.completions.create(
-                model     = st.session_state.gpt_model,
-                stream    = True,
-                messages  = [
-                    {"role": "system", "content": prompt},
-                    *msgs[:-1],
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature = st.session_state.temperature,
-                max_tokens  = st.session_state.get("max_tokens"),
-            )
-            buf = ""
-            with st.chat_message("assistant"):
-                ph = st.empty()
-                for chunk in stream:
-                    if chunk.choices[0].delta.content:
-                        buf += chunk.choices[0].delta.content
-                        ph.markdown(buf + "▌")
-                ph.markdown(buf)
-            return buf, []  # sources は未対応
+            logger.info("🔍 stream_main_answer開始 - RAG使用: %s", st.session_state.get("use_rag", True))
+            
+            # --- RAG / GPT-only は元コードのロジックを援用 ---
+            if st.session_state.get("use_rag", True):
+                logger.info("🔍 RAG処理開始")
+                # RAG は generate_answer 内部でストリーミング不可のため旧方式
+                try:
+                    res = generate_answer(
+                        prompt       = prompt,
+                        question     = user_prompt,
+                        collection   = st.session_state.rag_collection,
+                        rag_files    = st.session_state.rag_files,
+                        top_k        = 4,
+                        model        = st.session_state.gpt_model,
+                        chat_history = msgs,
+                    )
+                    logger.info("🔍 RAG generate_answer完了")
+                    
+                    with st.chat_message("assistant"):
+                        st.markdown(res["answer"])
+                    logger.info("🔍 RAG応答表示完了")
+                    
+                    return res["answer"], res["sources"]
+                    
+                except Exception as e:
+                    logger.error("❌ RAG処理エラー: %s", e, exc_info=True)
+                    # RAGに失敗した場合はGPTのみにフォールバック
+                    logger.info("🔍 RAG失敗、GPTのみにフォールバック")
+
+            # GPT‑only ならストリーミング
+            logger.info("🔍 GPTのみ処理開始")
+            try:
+                stream = client.chat.completions.create(
+                    model     = st.session_state.gpt_model,
+                    stream    = True,
+                    messages  = [
+                        {"role": "system", "content": prompt},
+                        *msgs[:-1],
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature = st.session_state.temperature,
+                    max_tokens  = st.session_state.get("max_tokens"),
+                )
+                logger.info("🔍 OpenAI stream作成完了")
+                
+                buf = ""
+                with st.chat_message("assistant"):
+                    ph = st.empty()
+                    chunk_count = 0
+                    for chunk in stream:
+                        chunk_count += 1
+                        if chunk.choices[0].delta.content:
+                            buf += chunk.choices[0].delta.content
+                            ph.markdown(buf + "▌")
+                        
+                        # 100チャンクごとにログ出力（進行確認用）
+                        if chunk_count % 100 == 0:
+                            logger.info("🔍 ストリーミング進行中: %d chunks, %d chars", chunk_count, len(buf))
+                    
+                    ph.markdown(buf)
+                    logger.info("🔍 ストリーミング完了: %d chunks, %d chars", chunk_count, len(buf))
+                    
+                return buf, []  # sources は未対応
+                
+            except Exception as e:
+                logger.error("❌ GPTストリーミングエラー: %s", e, exc_info=True)
+                st.error(f"GPT応答生成エラー: {e}")
+                return f"エラーが発生しました: {e}", []
+                
         except Exception as e:
-            st.error(f"応答生成エラー: {e}")
-            return "エラーが発生しました", []
+            logger.error("❌ stream_main_answer全体エラー: %s", e, exc_info=True)
+            st.error(f"応答生成中にエラーが発生しました: {e}")
+            return f"エラーが発生しました: {e}", []
 
     # -------------------------------------------------------------------
     # ▼ 比較モデルを 1 ジョブ実行する async ヘルパー
@@ -566,8 +599,6 @@ if st.session_state["authentication_status"]:
             logger.exception("compare job failed: %s", e)       # Cloud のログで確認可
             # 失敗でも文字列返しに統一（UI 側で表示できるように）
             return f"⚠️ **{type(e).__name__}**: {e}"
-        
-        # 
 
     # -------------------------------------------------------------------
     # ▼ 同期で比較用ジョブをまとめて実行し、結果を保存する
@@ -582,8 +613,8 @@ if st.session_state["authentication_status"]:
 
         jobs: list[dict[str, Any]] = []
         main_m, main_t = st.session_state.gpt_model, float(st.session_state.temperature)
-             # ← 比較対象モデルを必要に応じて増やす
-        MODELS = ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"]
+        # MODELS = ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"]     # ← 比較対象モデルを必要に応じて増やす
+        MODELS = ["gpt-4o-mini"]
         for m in MODELS:
             for t in (0.0, 1.0):
                 if m == main_m and abs(t - main_t) < 1e-6:
