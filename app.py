@@ -834,8 +834,9 @@ if st.session_state["authentication_status"]:
 
     # =====  中央ペイン  ==========================================================
     # プロンプト編集モードでない場合のみチャットインターフェースを表示
+        # =====  メイン画面表示の部分を修正  ==========================================================
     if not st.session_state.edit_target:
-        # 現在のモデルとモードを表示
+        # ... 既存のヘッダー部分はそのまま ...
         st.title("💬 GPT + RAG チャットボット")
         st.subheader(f"🗣️ {st.session_state.current_chat}")
         st.markdown(f"**モデル:** {st.session_state.gpt_model} | **モード:** {st.session_state.design_mode}")
@@ -848,40 +849,43 @@ if st.session_state["authentication_status"]:
                 st.markdown(f'<div class="{message_class}">{m["content"]}</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        msgs = get_messages()  # 現在のメッセージリストを取得
-
-
-        # ==== 比較結果 expander (常時表示) ====
+        # -- 改善された比較結果表示 --
+        msgs = get_messages()
         if msgs and msgs[-1]["role"] == "assistant":
-            last_turn_key = (st.session_state.sid, len(msgs))       # ← 常に最新ターン
-            comp = st.session_state.comparison_results.get(last_turn_key, {})
-            expected = st.session_state.get("compare_expected", {}).get(last_turn_key, 0)
-            if expected and len(comp) >= expected:
-                with st.expander("🧪 他モデル比較（クリックで展開）", expanded=False):
-                    for (mdl, temp), ans in comp.items():
-                        st.markdown(f"#### ⮞ `{mdl}` (temperature={temp})")
-                        st.markdown(ans)
-                        st.divider()
-            elif expected:            # まだ処理中
-                st.info("⏳ 他モデルの回答を集計中です。完了まで少しお待ちください…")
-
-        # ==== ダイアログ的な比較結果表示 ====
-        turn_key_current = st.session_state.get("compare_dialog_open")
-
-        if turn_key_current:
-            comp = st.session_state.comparison_results.get(turn_key_current, {})
-            with st.expander("🧪 モデル比較結果", expanded=True):
-                if not comp:
-                    st.info("⏳ 比較結果を取得中です。数秒後に再表示してください。")
+            turn_key = (st.session_state.sid, len(msgs))
+            
+            # 比較処理の状態をチェック
+            pending_data = st.session_state.get("pending_comparisons", {}).get(turn_key, {})
+            comparison_results = st.session_state.comparison_results.get(turn_key, {})
+            expected_count = st.session_state.get("compare_expected", {}).get(turn_key, 0)
+            
+            if pending_data.get("status") == "pending":
+                # 比較処理待ち
+                st.info("🧪 他モデルでの比較を準備中...")
+                
+            elif pending_data.get("status") == "failed":
+                # 比較処理失敗
+                with st.expander("🧪 他モデル比較", expanded=False):
+                    st.warning("⚠️ 比較処理でエラーが発生しました")
+                    
+            elif comparison_results:
+                # 比較結果の表示
+                if len(comparison_results) >= expected_count and expected_count > 0:
+                    # 全て完了
+                    with st.expander(f"🧪 他モデル比較結果 ({len(comparison_results)}モデル)", expanded=False):
+                        for (model, temp), answer in comparison_results.items():
+                            st.markdown(f"#### ⮞ `{model}` (temperature={temp})")
+                            st.markdown(answer)
+                            st.divider()
                 else:
-                    for (mdl, temp), ans in comp.items():
-                        st.markdown(f"#### ⮞ `{mdl}` (temperature={temp})")
-                        st.markdown(ans)
-                        st.divider()
-
-            if st.button("❌ 閉じる", key=f"close_{turn_key_current}"):
-                del st.session_state["compare_dialog_open"]
-                st.rerun()
+                    # 部分的に完了
+                    with st.expander(f"🧪 他モデル比較結果 (進行中: {len(comparison_results)}/{expected_count})", expanded=False):
+                        if comparison_results:
+                            for (model, temp), answer in comparison_results.items():
+                                st.markdown(f"#### ⮞ `{model}` (temperature={temp})")
+                                st.markdown(answer)
+                                st.divider()
+                        st.info("⏳ 残りのモデルの回答を生成中...")
 
         # -- 入力欄 --
         user_prompt = st.chat_input("メッセージを入力…")
@@ -963,62 +967,6 @@ if st.session_state["authentication_status"]:
                     except Exception as e:
                         logger.error("❌ 比較処理エラー: %s", e)
                         comparison_data["status"] = "failed"
-
-    # =====  メイン画面表示の部分を修正  ==========================================================
-    if not st.session_state.edit_target:
-        # ... 既存のヘッダー部分はそのまま ...
-        st.title("💬 GPT + RAG チャットボット")
-        st.subheader(f"🗣️ {st.session_state.current_chat}")
-        st.markdown(f"**モデル:** {st.session_state.gpt_model} | **モード:** {st.session_state.design_mode}")
-
-        # -- メッセージ表示 --
-        st.markdown('<div class="chat-body">', unsafe_allow_html=True)
-        for m in get_messages():
-            message_class = "user-message" if m["role"] == "user" else "assistant-message"
-            with st.chat_message(m["role"]):
-                st.markdown(f'<div class="{message_class}">{m["content"]}</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        # -- 改善された比較結果表示 --
-        msgs = get_messages()
-        if msgs and msgs[-1]["role"] == "assistant":
-            turn_key = (st.session_state.sid, len(msgs))
-            
-            # 比較処理の状態をチェック
-            pending_data = st.session_state.get("pending_comparisons", {}).get(turn_key, {})
-            comparison_results = st.session_state.comparison_results.get(turn_key, {})
-            expected_count = st.session_state.get("compare_expected", {}).get(turn_key, 0)
-            
-            if pending_data.get("status") == "pending":
-                # 比較処理待ち
-                st.info("🧪 他モデルでの比較を準備中...")
-                
-            elif pending_data.get("status") == "failed":
-                # 比較処理失敗
-                with st.expander("🧪 他モデル比較", expanded=False):
-                    st.warning("⚠️ 比較処理でエラーが発生しました")
-                    
-            elif comparison_results:
-                # 比較結果の表示
-                if len(comparison_results) >= expected_count and expected_count > 0:
-                    # 全て完了
-                    with st.expander(f"🧪 他モデル比較結果 ({len(comparison_results)}モデル)", expanded=False):
-                        for (model, temp), answer in comparison_results.items():
-                            st.markdown(f"#### ⮞ `{model}` (temperature={temp})")
-                            st.markdown(answer)
-                            st.divider()
-                else:
-                    # 部分的に完了
-                    with st.expander(f"🧪 他モデル比較結果 (進行中: {len(comparison_results)}/{expected_count})", expanded=False):
-                        if comparison_results:
-                            for (model, temp), answer in comparison_results.items():
-                                st.markdown(f"#### ⮞ `{model}` (temperature={temp})")
-                                st.markdown(answer)
-                                st.divider()
-                        st.info("⏳ 残りのモデルの回答を生成中...")
-
-        # -- 入力欄 --
-        user_prompt = st.chat_input("メッセージを入力…")
 
 elif st.session_state["authentication_status"] is False:
     st.error('ユーザー名またはパスワードが間違っています。')
