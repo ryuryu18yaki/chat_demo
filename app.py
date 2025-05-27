@@ -797,6 +797,15 @@ if st.session_state["authentication_status"]:
                 st.markdown(f'<div class="{message_class}">{m["content"]}</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
+        msgs = get_messages()  # 現在のメッセージリストを取得
+
+        # --- ボタン常設ロジック ---
+        if msgs and msgs[-1]["role"] == "assistant":
+            last_turn_key = (st.session_state.sid, len(msgs))
+            if st.button("🧪 他モデルと比較する", key=f"compare_{last_turn_key}"):
+                st.session_state["compare_dialog_open"] = last_turn_key
+                st.rerun()
+
         # ==== ダイアログ的な比較結果表示 ====
         turn_key_current = st.session_state.get("compare_dialog_open")
 
@@ -908,11 +917,6 @@ if st.session_state["authentication_status"]:
                 model_info = f"\n\n---\n*このレスポンスは `{st.session_state.gpt_model}` で生成されました*"
                 full_reply = assistant_reply + model_info
                 st.markdown(full_reply)
-
-                turn_key = (st.session_state.sid, len(get_messages()) + 1)
-                if st.button("🧪 他モデルと比較する", key=f"compare_{turn_key}"):
-                    st.session_state["compare_dialog_open"] = turn_key
-                    st.rerun()
 
             # チャットメッセージ外で expander 表示
             # if sources:
