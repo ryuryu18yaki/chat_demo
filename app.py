@@ -399,6 +399,8 @@ if st.session_state["authentication_status"]:
     if "comparison_results" not in st.session_state:
         # {(chat_sid, turn_no): {model_name: answer_text}}
         st.session_state.comparison_results = {}
+    if "_pending_jobs" not in st.session_state:
+        st.session_state._pending_jobs = []
 
 
     # =====  ヘルパー  ============================================================
