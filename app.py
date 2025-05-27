@@ -566,6 +566,8 @@ if st.session_state["authentication_status"]:
             logger.exception("compare job failed: %s", e)       # Cloud のログで確認可
             # 失敗でも文字列返しに統一（UI 側で表示できるように）
             return f"⚠️ **{type(e).__name__}**: {e}"
+        
+        # MODELS = ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"]
 
     # -------------------------------------------------------------------
     # ▼ 同期で比較用ジョブをまとめて実行し、結果を保存する
@@ -580,20 +582,23 @@ if st.session_state["authentication_status"]:
 
         jobs: list[dict[str, Any]] = []
         main_m, main_t = st.session_state.gpt_model, float(st.session_state.temperature)
-        # MODELS = ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"]     # ← 比較対象モデルを必要に応じて増やす
-        MODELS = ["gpt-4o-mini"]
+        
+        # 比較対象モデルリスト
+        MODELS = ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"]  # 必要に応じて他のモデルも追加
+        
         for m in MODELS:
-            for t in (0.0, 1.0):
-                if m == main_m and abs(t - main_t) < 1e-6:
-                    continue
-                jobs.append(dict(
-                    sid=sid, turn=turn, model=m, temp=t,
-                    prompt=prompt, question=question, hist=copy.deepcopy(hist),
-                    use_rag   = st.session_state["use_rag"],
-                    rag_col   = st.session_state.get("rag_collection"),
-                    rag_files = copy.deepcopy(st.session_state.get("rag_files", [])),
-                    max_tokens= st.session_state.get("max_tokens"),
-                ))
+            # メインモデルと同じ場合はスキップ
+            if m == main_m:
+                continue
+                
+            jobs.append(dict(
+                sid=sid, turn=turn, model=m, temp=main_t,  # 現在の温度設定を使用
+                prompt=prompt, question=question, hist=copy.deepcopy(hist),
+                use_rag   = st.session_state["use_rag"],
+                rag_col   = st.session_state.get("rag_collection"),
+                rag_files = copy.deepcopy(st.session_state.get("rag_files", [])),
+                max_tokens= st.session_state.get("max_tokens"),
+            ))
 
         async def _go():
             # return_exceptions=True で 1 つ失敗しても他は継続
@@ -612,6 +617,7 @@ if st.session_state["authentication_status"]:
         for j, ans in zip(jobs, answers):
             if isinstance(ans, Exception):          # 取りこぼし保険
                 ans = f"⚠️ **{type(ans).__name__}**: {ans}"
+            # temperatureも表示用キーに含める（現在の温度設定と同じになる）
             st.session_state.comparison_results[turn_key][(j["model"], j["temp"])] = ans
 
     # =====  編集機能用のヘルパー関数  ==============================================
