@@ -406,15 +406,18 @@ if st.session_state["authentication_status"]:
         # 比較処理実行フラグ
         st.session_state.should_run_comparison = None
 
-    # =====  比較機能の関数定義（まだ実行しない）  =======================================================
+    # =====  比較機能の関数定義（ステップ2: 有効化）  =======================================================
     async def _generate_async(job: Dict[str, Any]) -> str:
         """
-        単一比較ジョブを実行する関数（基盤のみ、まだ呼ばれない）
+        単一比較ジョブを実行する関数（安全対策付き）
         """
         try:
             async with SEM:
-                # RAG使用の場合
+                # タイムアウト付きで実行
                 if job["use_rag"]:
+                    # RAG処理（同期のためタイムアウト制御は限定的）
+                    job["max_tokens"] = min(job.get("max_tokens", 1000), 1000)  # 安全制限
+                    
                     res = generate_answer(
                         prompt       = job["prompt"],
                         question     = job["question"],
@@ -427,34 +430,41 @@ if st.session_state["authentication_status"]:
                     )
                     return res["answer"]
 
-                # GPTのみの場合
-                resp = await async_client.chat.completions.create(
-                    model       = job["model"],
-                    temperature = job["temp"],
-                    messages    = [
-                        {"role": "system", "content": job["prompt"]},
-                        *job["hist"][:-1],
-                        {"role": "user", "content": job["question"]},
-                    ],
-                    max_tokens  = job.get("max_tokens"),
+                # GPTのみの場合（タイムアウト付き）
+                resp = await asyncio.wait_for(
+                    async_client.chat.completions.create(
+                        model       = job["model"],
+                        temperature = job["temp"],
+                        messages    = [
+                            {"role": "system", "content": job["prompt"]},
+                            *job["hist"][:-1],
+                            {"role": "user", "content": job["question"]},
+                        ],
+                        max_tokens  = min(job.get("max_tokens", 1000), 1000),  # 安全制限
+                    ),
+                    timeout=30.0  # 30秒でタイムアウト
                 )
                 return resp.choices[0].message.content
 
+        except asyncio.TimeoutError:
+            logger.error("❌ 比較ジョブがタイムアウト: model=%s", job.get("model", "unknown"))
+            return f"⚠️ **TimeoutError**: {job.get('model', 'unknown')}の応答がタイムアウトしました"
         except Exception as e:
-            logger.exception("❌ 比較ジョブ失敗: %s", e)
+            logger.exception("❌ 比較ジョブ失敗: model=%s error=%s", job.get("model", "unknown"), e)
             return f"⚠️ **{type(e).__name__}**: {e}"
 
     def run_compare_sync(prompt: str, question: str, hist: List[Dict[str, str]]):
         """
-        比較処理を実行する関数（基盤のみ、まだ呼ばれない）
+        比較処理を実行する関数（ステップ2: 実際に実行）
         """
-        logger.info("🔄 比較処理開始（基盤のみ）")
+        logger.info("🔄 比較処理開始")
         
         sid, turn = st.session_state.sid, len(hist)
         main_m, main_t = st.session_state.gpt_model, float(st.session_state.temperature)
         
-        # 比較対象モデルリスト（まだ実行しない）
-        MODELS = ["gpt-4o-mini"]
+        # 比較対象モデルリスト（1つから開始）
+        MODELS = ["gpt-4o-mini"]  # まず1つでテスト
+        # MODELS = ["gpt-4o-mini", "gpt-4.1-mini"]  # 安定したら増やす
         
         jobs = []
         for m in MODELS:
@@ -463,7 +473,7 @@ if st.session_state["authentication_status"]:
                 continue
                 
             jobs.append(dict(
-                sid=sid, turn=turn, model=m, temp=main_t,
+                sid=sid, turn=turn, model=m, temp=main_t,  # 現在の温度設定を使用
                 prompt=prompt, question=question, hist=copy.deepcopy(hist),
                 use_rag   = st.session_state["use_rag"],
                 rag_col   = st.session_state.get("rag_collection"),
@@ -471,11 +481,44 @@ if st.session_state["authentication_status"]:
                 max_tokens= st.session_state.get("max_tokens"),
             ))
 
-        logger.info("🔄 比較ジョブ準備完了: %d件（まだ実行しない）", len(jobs))
+        logger.info("🔄 比較ジョブ準備完了: %d件", len(jobs))
         
-        # まだ実際の比較処理は行わない
+        # ジョブが0件の場合は早期リターン
+        if not jobs:
+            logger.info("🔄 比較対象がないため処理をスキップ")
+            st.session_state.compare_expected[(sid, turn)] = 0
+            return
+
+        # 実際の比較処理を実行
+        async def _go():
+            try:
+                tasks = [_generate_async(j) for j in jobs]
+                return await asyncio.wait_for(
+                    asyncio.gather(*tasks, return_exceptions=True),
+                    timeout=60.0  # 全体で60秒のタイムアウト
+                )
+            except asyncio.TimeoutError:
+                logger.error("❌ 比較処理全体がタイムアウトしました")
+                return [f"⚠️ **TimeoutError**: 全体処理がタイムアウトしました"] * len(jobs)
+
+        try:
+            answers = asyncio.run(_go())
+            logger.info("🔄 非同期処理完了: %d件の回答取得", len(answers))
+        except Exception as e:
+            logger.error("❌ 非同期処理でエラー: %s", e, exc_info=True)
+            answers = [f"⚠️ **{type(e).__name__}**: {e}"] * len(jobs)
+
+        # 結果を保存
         st.session_state.compare_expected[(sid, turn)] = len(jobs)
-        logger.info("🔄 比較処理は基盤のみで実行しません")
+        turn_key = (sid, turn)
+        st.session_state.comparison_results.setdefault(turn_key, {})
+        
+        for j, ans in zip(jobs, answers):
+            if isinstance(ans, Exception):
+                ans = f"⚠️ **{type(ans).__name__}**: {ans}"
+            st.session_state.comparison_results[turn_key][(j["model"], j["temp"])] = ans
+        
+        logger.info("🔄 比較結果保存完了: %d件", len(st.session_state.comparison_results[turn_key]))
 
     # =====  ヘルパー  ============================================================
     def get_messages() -> List[Dict[str, str]]:
@@ -778,31 +821,77 @@ if st.session_state["authentication_status"]:
                 st.markdown(f'<div class="{message_class}">{m["content"]}</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # =====  比較結果表示（基盤のみ）  =================================================
+        # =====  比較結果表示（ステップ2: 改善版）  =================================================
         msgs = get_messages()
         if msgs and msgs[-1]["role"] == "assistant":
             turn_key = (st.session_state.sid, len(msgs))
             
             comparison_results = st.session_state.comparison_results.get(turn_key, {})
             expected_count = st.session_state.get("compare_expected", {}).get(turn_key, 0)
+            should_run = st.session_state.get("should_run_comparison") == turn_key
             
-            # 比較結果がある場合のみ表示（まだ結果はないはず）
-            if comparison_results:
+            if should_run:
+                # 比較処理がこれから実行される
+                st.info("🧪 他モデルでの比較を準備中...")
+            elif expected_count > 0 and len(comparison_results) < expected_count:
+                # 比較処理実行中
+                st.info(f"🧪 他モデルでの比較実行中... ({len(comparison_results)}/{expected_count})")
+            elif comparison_results:
+                # 比較結果表示
                 with st.expander(f"🧪 他モデル比較結果 ({len(comparison_results)}モデル)", expanded=False):
                     for (model, temp), answer in comparison_results.items():
                         st.markdown(f"#### ⮞ `{model}` (temperature={temp})")
                         st.markdown(answer)
                         st.divider()
             elif expected_count > 0:
-                # 比較処理が予定されているが結果がない場合
-                st.info("🧪 比較機能の基盤が準備されています（まだ実行されません）")
+                # 比較処理が完了したが結果がない場合
+                st.warning("🧪 比較処理は完了しましたが、結果を取得できませんでした")
 
         # -- 入力欄 --
         user_prompt = st.chat_input("メッセージを入力…", key="main_chat_input")
     else:
         user_prompt = None
 
-    # =====  応答生成（比較処理フラグ設定のみ追加）  ============================================================
+    # =====  比較処理の実行部分（ステップ2: 追加）  ==============================================
+    # 待機中の比較処理を実行
+    if st.session_state.get("should_run_comparison") and not user_prompt:
+        logger.info("🔍 比較処理チェック開始")
+        logger.info("🔍 should_run_comparison: %s", st.session_state.get("should_run_comparison"))
+        
+        turn_key = st.session_state.pop("should_run_comparison")
+        logger.info("🔍 turn_key: %s", turn_key)
+        
+        # 比較処理を実行
+        with st.spinner("🧪 他モデルで比較回答を生成中..."):
+            try:
+                logger.info("🔍 スピナー内部に入りました")
+                
+                msgs = get_messages()
+                logger.info("🔍 メッセージ取得: %d件", len(msgs) if msgs else 0)
+                
+                if msgs and len(msgs) >= 2:
+                    logger.info("🔍 メッセージ条件OK、比較処理開始")
+                    
+                    prompt = st.session_state.prompts[st.session_state.design_mode]
+                    user_input = msgs[-2]["content"]  # 最後から2番目がユーザー入力
+                    
+                    logger.info("🔍 比較処理パラメータ準備完了")
+                    logger.info("🔍 user_input: %s", user_input[:50] + "..." if len(user_input) > 50 else user_input)
+                    
+                    # 実際の比較処理を実行
+                    run_compare_sync(prompt, user_input, msgs)
+                    
+                    logger.info("✅ 遅延比較処理完了: %s", turn_key)
+                    st.success("🧪 比較処理が完了しました")
+                    
+                else:
+                    logger.warning("⚠️ メッセージ履歴が不足: len=%d", len(msgs) if msgs else 0)
+                    
+            except Exception as e:
+                logger.error("❌ 比較処理エラー: %s", e, exc_info=True)
+                st.error(f"比較処理中にエラーが発生しました: {e}")
+
+    # =====  応答生成（比較処理フラグ設定）  ============================================================
     if user_prompt and not st.session_state.edit_target:
         # メッセージリストに現在の質問を追加
         msgs = get_messages()
@@ -890,10 +979,10 @@ if st.session_state["authentication_status"]:
             # 保存するのは元の応答（モデル情報なし）
             msgs.append({"role": "assistant", "content": assistant_reply})
 
-            # =====  比較処理フラグ設定（基盤のみ）  =====
+            # =====  比較処理フラグ設定（ステップ2: 実際に実行）  =====
             turn_key = (st.session_state.sid, len(msgs))
             st.session_state.should_run_comparison = turn_key
-            logger.info("🧪 比較処理フラグ設定（基盤のみ）: %s", turn_key)
+            logger.info("🧪 比較処理フラグ設定: %s", turn_key)
 
             # 会話内容を Sheets へ記録
             post_log(user_prompt, assistant_reply, prompt)
