@@ -1,7 +1,8 @@
+import asyncio  # 追加
 import streamlit as st
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI  # AsyncOpenAI追加
 from typing import List, Dict, Any
-import time, functools, requests
+import time, functools, requests, copy  # copy追加
 
 from src.rag_preprocess import preprocess_files
 from src.rag_vector import save_docs_to_chroma
@@ -16,6 +17,12 @@ import uuid
 st.set_page_config(page_title="GPT + RAG Chatbot", page_icon="💬", layout="wide")
 
 logger = init_logger()
+
+# =====  比較機能用セットアップ  ============================================================
+client = OpenAI()
+async_client = AsyncOpenAI()  # 追加
+MAX_PARALLEL = 1  # 比較処理の同時実行数制限
+SEM = asyncio.Semaphore(MAX_PARALLEL)  # 追加
 
 # =====  認証設定の読み込み ============================================================
 with open('./config.yaml') as file:
@@ -65,9 +72,6 @@ def post_log(
         time.sleep(wait)
 
     st.warning("⚠️ Sheets へのログ送信に失敗しました")
-
-# =====  基本設定  ============================================================
-client = OpenAI()
 
 # =====  ログインUIの表示  ============================================================
 authenticator.login()
@@ -370,57 +374,131 @@ if st.session_state["authentication_status"]:
     # =====  セッション変数  =======================================================
     if "chats" not in st.session_state:
         st.session_state.chats = {}
-    if "chat_sids"   not in st.session_state:                        # ★ 追加
+    if "chat_sids"   not in st.session_state:
         st.session_state.chat_sids = {"New Chat": str(uuid.uuid4())}
     if "current_chat" not in st.session_state:
         st.session_state.current_chat = "New Chat"
-    if "sid"         not in st.session_state:                        # ★ 追加
+    if "sid"         not in st.session_state:
         st.session_state.sid = st.session_state.chat_sids["New Chat"]
     if "edit_target" not in st.session_state:
         st.session_state.edit_target = None
     if "rag_files" not in st.session_state:
         st.session_state.rag_files: List[Dict[str, Any]] = []
     if "rag_collection" not in st.session_state:
-        st.session_state.rag_collection = None  # Chroma collection
+        st.session_state.rag_collection = None
     if "design_mode" not in st.session_state:
-        st.session_state.design_mode = list(DEFAULT_PROMPTS.keys())[0]  # デフォルトは「全設備モード」
+        st.session_state.design_mode = list(DEFAULT_PROMPTS.keys())[0]
     if "prompts" not in st.session_state:
-        st.session_state.prompts = DEFAULT_PROMPTS.copy()  # プロンプトを変更可能に
+        st.session_state.prompts = DEFAULT_PROMPTS.copy()
     if "gpt_model" not in st.session_state:
-        st.session_state.gpt_model = "gpt-4.1"  # デフォルトモデルをgpt-4.1に変更
-    if "sid" not in st.session_state:          # 追加
-        import uuid
-        st.session_state.sid = str(uuid.uuid4())
+        st.session_state.gpt_model = "gpt-4.1"
     if "use_rag" not in st.session_state:
-        st.session_state["use_rag"] = False  # ← デフォルトでRAGを使わない
+        st.session_state["use_rag"] = False
 
+    # =====  比較機能用セッション変数（追加）  =======================================================
+    if "comparison_results" not in st.session_state:
+        # {(chat_sid, turn_no): {(model_name, temperature): answer_text}}
+        st.session_state.comparison_results = {}
+    if "compare_expected" not in st.session_state:
+        # 期待される比較回答数 {(sid, turn): int}
+        st.session_state.compare_expected = {}
+    if "should_run_comparison" not in st.session_state:
+        # 比較処理実行フラグ
+        st.session_state.should_run_comparison = None
+
+    # =====  比較機能の関数定義（まだ実行しない）  =======================================================
+    async def _generate_async(job: Dict[str, Any]) -> str:
+        """
+        単一比較ジョブを実行する関数（基盤のみ、まだ呼ばれない）
+        """
+        try:
+            async with SEM:
+                # RAG使用の場合
+                if job["use_rag"]:
+                    res = generate_answer(
+                        prompt       = job["prompt"],
+                        question     = job["question"],
+                        collection   = job["rag_col"],
+                        rag_files    = job["rag_files"],
+                        top_k        = 4,
+                        model        = job["model"],
+                        chat_history = job["hist"],
+                        temperature  = job["temp"],
+                    )
+                    return res["answer"]
+
+                # GPTのみの場合
+                resp = await async_client.chat.completions.create(
+                    model       = job["model"],
+                    temperature = job["temp"],
+                    messages    = [
+                        {"role": "system", "content": job["prompt"]},
+                        *job["hist"][:-1],
+                        {"role": "user", "content": job["question"]},
+                    ],
+                    max_tokens  = job.get("max_tokens"),
+                )
+                return resp.choices[0].message.content
+
+        except Exception as e:
+            logger.exception("❌ 比較ジョブ失敗: %s", e)
+            return f"⚠️ **{type(e).__name__}**: {e}"
+
+    def run_compare_sync(prompt: str, question: str, hist: List[Dict[str, str]]):
+        """
+        比較処理を実行する関数（基盤のみ、まだ呼ばれない）
+        """
+        logger.info("🔄 比較処理開始（基盤のみ）")
+        
+        sid, turn = st.session_state.sid, len(hist)
+        main_m, main_t = st.session_state.gpt_model, float(st.session_state.temperature)
+        
+        # 比較対象モデルリスト（まだ実行しない）
+        MODELS = ["gpt-4o-mini"]
+        
+        jobs = []
+        for m in MODELS:
+            if m == main_m:
+                logger.info("🔄 メインモデル(%s)と同じためスキップ", m)
+                continue
+                
+            jobs.append(dict(
+                sid=sid, turn=turn, model=m, temp=main_t,
+                prompt=prompt, question=question, hist=copy.deepcopy(hist),
+                use_rag   = st.session_state["use_rag"],
+                rag_col   = st.session_state.get("rag_collection"),
+                rag_files = copy.deepcopy(st.session_state.get("rag_files", [])),
+                max_tokens= st.session_state.get("max_tokens"),
+            ))
+
+        logger.info("🔄 比較ジョブ準備完了: %d件（まだ実行しない）", len(jobs))
+        
+        # まだ実際の比較処理は行わない
+        st.session_state.compare_expected[(sid, turn)] = len(jobs)
+        logger.info("🔄 比較処理は基盤のみで実行しません")
 
     # =====  ヘルパー  ============================================================
     def get_messages() -> List[Dict[str, str]]:
         title = st.session_state.current_chat
         return st.session_state.chats.setdefault(title, [])
     
-    # ★ 新しいチャットを作成
     def new_chat():
         title = f"Chat {len(st.session_state.chats) + 1}"
         st.session_state.chats[title] = []
-        st.session_state.chat_sids[title] = str(uuid.uuid4())   # 新sid
+        st.session_state.chat_sids[title] = str(uuid.uuid4())
         st.session_state.current_chat = title
         st.session_state.sid = st.session_state.chat_sids[title]
 
         logger.info("➕ new_chat — sid=%s  title='%s'", st.session_state.sid, title)
-
         st.rerun()
 
-    # ★ 既存チャットへ切替
     def switch_chat(title: str):
-        if title not in st.session_state.chat_sids:          # ★ 安全化
+        if title not in st.session_state.chat_sids:
             st.session_state.chat_sids[title] = str(uuid.uuid4())
         st.session_state.current_chat = title
         st.session_state.sid = st.session_state.chat_sids[title]
 
         logger.info("🔀 switch_chat — sid=%s  title='%s'", st.session_state.sid, title)
-
         st.rerun()
 
     def rebuild_rag_collection():
@@ -435,8 +513,7 @@ if st.session_state["authentication_status"]:
         total_files = len(st.session_state.rag_files)
         logger.info("📚 RAG rebuild start — files=%d", total_files)
 
-        import time
-        t0 = time.perf_counter()            # 所要時間計測
+        t0 = time.perf_counter()
 
         try:
             with st.spinner("📚 ファイルを解析し、ベクトル DB に登録中..."):
@@ -444,7 +521,7 @@ if st.session_state["authentication_status"]:
                 col = save_docs_to_chroma(
                     docs=docs,
                     collection_name="session_docs",
-                    persist_directory=None,   # インメモリ
+                    persist_directory=None,
                 )
                 st.session_state.rag_collection = col
 
@@ -459,13 +536,12 @@ if st.session_state["authentication_status"]:
             logger.exception("❌ RAG rebuild failed — %s", e)
             st.error(f"RAG 初期化中にエラーが発生しました: {e}")
 
-    # ----- チャットタイトル自動生成機能 -----
     def generate_chat_title(messages):
-        if len(messages) >= 2:  # ユーザー質問と回答が1往復以上ある場合
+        if len(messages) >= 2:
             prompt = f"以下の会話の内容を25文字以内の簡潔なタイトルにしてください:\n{messages[0]['content'][:200]}"
             try:
                 resp = client.chat.completions.create(
-                    model="gpt-4.1-nano",  # 軽量モデルで十分
+                    model="gpt-4.1-nano",
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=30,
                 )
@@ -479,8 +555,7 @@ if st.session_state["authentication_status"]:
         st.session_state.prompts[mode_name] = edited_text
         st.session_state.edit_target = None
 
-        logger.info("✏️ prompt_saved — mode=%s  len=%d",
-                mode_name, len(edited_text))
+        logger.info("✏️ prompt_saved — mode=%s  len=%d", mode_name, len(edited_text))
         
         st.success(f"「{mode_name}」のプロンプトを更新しました")
         time.sleep(1)
@@ -503,7 +578,6 @@ if st.session_state["authentication_status"]:
         st.rerun()
 
     # =====  CSS  ================================================================
-    # CSSを改善してダークモード対応
     st.markdown(
         """
         <style>
@@ -519,7 +593,7 @@ if st.session_state["authentication_status"]:
             .stButton button {font-size: 14px; padding: 6px 12px;}
         }
 
-        /* ダークモード対応メッセージスタイル - カスタム背景色は削除 */
+        /* ダークモード対応メッセージスタイル */
         .user-message, .assistant-message {
             border-radius: 10px;
             padding: 8px 12px;
@@ -566,7 +640,7 @@ if st.session_state["authentication_status"]:
             st.slider("応答の多様性",
                     min_value=0.0,
                     max_value=2.0,
-                    value=1.0,  # OpenAIのデフォルト値
+                    value=1.0,
                     step=0.1,
                     key="temperature",
                     help="値が高いほど創造的、低いほど一貫した回答になります（OpenAIデフォルト: 1.0）")
@@ -582,11 +656,10 @@ if st.session_state["authentication_status"]:
             selected_max_tokens = st.selectbox(
                 "最大応答長",
                 options=list(max_tokens_options.keys()),
-                index=0,  # デフォルトは「未設定（モデル上限）」
+                index=0,
                 key="max_tokens_select",
                 help="生成される回答の最大トークン数（OpenAIデフォルト: モデル上限）"
             )
-            # sessionの値を更新
             st.session_state["max_tokens"] = max_tokens_options[selected_max_tokens]
 
         st.divider()
@@ -596,7 +669,7 @@ if st.session_state["authentication_status"]:
         st.session_state.design_mode = st.radio(
             "対象設備を選択",
             options=list(st.session_state.prompts.keys()),
-            index=0,  # デフォルトは「全設備モード」
+            index=0,
             key="design_mode_radio",
         )
         st.markdown(f"**🛈 現在のモード:** `{st.session_state.design_mode}`")
@@ -618,7 +691,7 @@ if st.session_state["authentication_status"]:
         
         st.divider()
 
-        # ===== サイドバー（モデル選択などの下が最適） =====
+        # ===== RAG 検索の使用設定 =====
         st.markdown("### 🧠 RAG 検索の使用設定")
 
         st.session_state["use_rag"] = st.checkbox(
@@ -627,13 +700,12 @@ if st.session_state["authentication_status"]:
             help="OFFにすると、プロンプトと履歴のみで応答を生成します"
         )
 
-        # ✅ 現在のモードを明示表示
         if st.session_state["use_rag"]:
             st.success("現在のモード: RAG使用中")
         else:
             st.info("現在のモード: GPTのみ（検索なし）")
 
-        # サイドバー下部など、rag_collection の表示
+        # ベクトルDBステータス
         st.markdown("### 🗂 ベクトルDBステータス")
 
         if st.session_state.get("rag_collection"):
@@ -668,19 +740,15 @@ if st.session_state["authentication_status"]:
     if st.session_state.edit_target:
         mode_name = st.session_state.edit_target
 
-        # 完全にクリーンなコンテナでプロンプト編集UI
         st.title(f"✏️ プロンプト編集: {mode_name}")
 
-        # 編集用フォーム - フォームを使うことで確実に入力を受け付ける
         with st.form(key=f"prompt_edit_form_{mode_name}"):
-            # テキストエリア
             prompt_text = st.text_area(
                 "プロンプトを編集してください",
                 value=st.session_state.prompts[mode_name],
                 height=400
             )
 
-            # フォーム内のボタン
             col1, col2, col3 = st.columns(3)
             with col1:
                 save_button = st.form_submit_button(label="✅ 保存")
@@ -689,7 +757,6 @@ if st.session_state["authentication_status"]:
             with col3:
                 cancel_button = st.form_submit_button(label="❌ キャンセル")
 
-        # フォーム送信後の処理
         if save_button:
             handle_save_prompt(mode_name, prompt_text)
         elif reset_button:
@@ -697,10 +764,8 @@ if st.session_state["authentication_status"]:
         elif cancel_button:
             handle_cancel_edit()
 
-    # =====  中央ペイン  ==========================================================
-    # プロンプト編集モードでない場合のみチャットインターフェースを表示
+    # =====  メイン画面表示  ==========================================================
     if not st.session_state.edit_target:
-        # 現在のモデルとモードを表示
         st.title("💬 GPT + RAG チャットボット")
         st.subheader(f"🗣️ {st.session_state.current_chat}")
         st.markdown(f"**モデル:** {st.session_state.gpt_model} | **モード:** {st.session_state.design_mode}")
@@ -713,14 +778,32 @@ if st.session_state["authentication_status"]:
                 st.markdown(f'<div class="{message_class}">{m["content"]}</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
+        # =====  比較結果表示（基盤のみ）  =================================================
+        msgs = get_messages()
+        if msgs and msgs[-1]["role"] == "assistant":
+            turn_key = (st.session_state.sid, len(msgs))
+            
+            comparison_results = st.session_state.comparison_results.get(turn_key, {})
+            expected_count = st.session_state.get("compare_expected", {}).get(turn_key, 0)
+            
+            # 比較結果がある場合のみ表示（まだ結果はないはず）
+            if comparison_results:
+                with st.expander(f"🧪 他モデル比較結果 ({len(comparison_results)}モデル)", expanded=False):
+                    for (model, temp), answer in comparison_results.items():
+                        st.markdown(f"#### ⮞ `{model}` (temperature={temp})")
+                        st.markdown(answer)
+                        st.divider()
+            elif expected_count > 0:
+                # 比較処理が予定されているが結果がない場合
+                st.info("🧪 比較機能の基盤が準備されています（まだ実行されません）")
+
         # -- 入力欄 --
-        user_prompt = st.chat_input("メッセージを入力…")
+        user_prompt = st.chat_input("メッセージを入力…", key="main_chat_input")
     else:
-        # プロンプト編集モード時は入力欄を無効化
         user_prompt = None
 
-    # =====  応答生成  ============================================================
-    if user_prompt and not st.session_state.edit_target:  # 編集モード時は応答生成をスキップ
+    # =====  応答生成（比較処理フラグ設定のみ追加）  ============================================================
+    if user_prompt and not st.session_state.edit_target:
         # メッセージリストに現在の質問を追加
         msgs = get_messages()
         msgs.append({"role": "user", "content": user_prompt})
@@ -750,7 +833,7 @@ if st.session_state["authentication_status"]:
                             prompt=prompt,
                             question=user_prompt,
                             collection=st.session_state.rag_collection,
-                            rag_files=st.session_state.rag_files,  # ← ここを追加
+                            rag_files=st.session_state.rag_files,
                             top_k=4,
                             model=st.session_state.gpt_model,
                             chat_history=msgs,
@@ -765,7 +848,6 @@ if st.session_state["authentication_status"]:
                 # ---------- GPT-only ----------
                 else:
                     st.session_state["last_answer_mode"] = "GPT-only"
-                    # API呼び出し部分（条件付き）
                     params = {
                         "model": st.session_state.gpt_model,
                         "messages": [
@@ -781,7 +863,6 @@ if st.session_state["authentication_status"]:
                     if st.session_state.get("max_tokens") is not None:
                         params["max_tokens"] = st.session_state.max_tokens
 
-                    import time
                     t_api = time.perf_counter()
 
                     # APIを呼び出し
@@ -806,24 +887,18 @@ if st.session_state["authentication_status"]:
                 full_reply = assistant_reply + model_info
                 st.markdown(full_reply)
 
-            # チャットメッセージ外で expander 表示
-            # if sources:
-            #     st.markdown("### 🔎 RAG が取得したチャンク")  # タイトルとして使う
-            #     for idx, s in enumerate(sources, 1):
-            #         chunk = s.get("content", "")[:200]
-            #         if len(s.get("content", "")) > 200:
-            #             chunk += " …"
-            #         with st.expander(f"Doc {idx} - {s['metadata'].get('source','N/A')} (score: {s['distance']:.4f})"):
-            #             st.markdown(f"> {chunk}")
-
             # 保存するのは元の応答（モデル情報なし）
             msgs.append({"role": "assistant", "content": assistant_reply})
+
+            # =====  比較処理フラグ設定（基盤のみ）  =====
+            turn_key = (st.session_state.sid, len(msgs))
+            st.session_state.should_run_comparison = turn_key
+            logger.info("🧪 比較処理フラグ設定（基盤のみ）: %s", turn_key)
 
             # 会話内容を Sheets へ記録
             post_log(user_prompt, assistant_reply, prompt)
 
-            # チャットタイトル自動生成（初回応答後）
-            # if len(msgs) == 2 and msgs[0]["role"] == "user" and msgs[1]["role"] == "assistant":
+            # チャットタイトル自動生成
             new_title = generate_chat_title(msgs)
             if new_title and new_title != st.session_state.current_chat:
                 old_title = st.session_state.current_chat
