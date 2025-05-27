@@ -3,7 +3,7 @@ import threading
 import streamlit as st
 from openai import OpenAI, AsyncOpenAI
 from typing import List, Dict, Any
-import time, requests, uuid
+import time, requests, uuid, copy 
 from concurrent.futures import ThreadPoolExecutor
 from src.rag_preprocess import preprocess_files
 from src.rag_vector import save_docs_to_chroma
