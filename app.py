@@ -521,6 +521,41 @@ if st.session_state["authentication_status"]:
         return buf, []  # sources は未対応
 
     # -------------------------------------------------------------------
+    # ▼ 比較モデルを 1 ジョブ実行する async ヘルパー
+    # -------------------------------------------------------------------
+    async def _generate_async(job: Dict[str, Any]) -> str:
+        """
+        単一の比較ジョブを実行し、回答テキストを返す。
+        RAG 使用有無で generate_answer / OpenAI API を切替。
+        """
+        async with SEM:
+            if job["use_rag"]:
+                res = generate_answer(
+                    prompt       = job["prompt"],
+                    question     = job["question"],
+                    collection   = job["rag_col"],
+                    rag_files    = job["rag_files"],
+                    top_k        = 4,
+                    model        = job["model"],
+                    chat_history = job["hist"],
+                    temperature  = job["temp"],
+                )
+                return res["answer"]
+
+            # GPT‑only
+            resp = await async_client.chat.completions.create(
+                model       = job["model"],
+                temperature = job["temp"],
+                messages = [
+                    {"role": "system", "content": job["prompt"]},
+                    *job["hist"][:-1],
+                    {"role": "user", "content": job["question"]},
+                ],
+                max_tokens  = job["max_tokens"],
+            )
+            return resp.choices[0].message.content
+
+    # -------------------------------------------------------------------
     # ▼ 同期で比較用ジョブをまとめて実行し、結果を保存する
     # -------------------------------------------------------------------
     def run_compare_sync(prompt: str, question: str, hist: List[Dict[str, str]]):
