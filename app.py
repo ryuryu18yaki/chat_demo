@@ -599,9 +599,13 @@ if st.session_state["authentication_status"]:
 
                 res = await asyncio.gather(*(one(j) for j in local_jobs))
                 # ここだけメイン state に戻す
+                # comparison_results が無い場合でも確実に用意してから書き込む
+                if "comparison_results" not in st.session_state:
+                    st.session_state["comparison_results"] = {}
+
                 for j, ans in res:
                     key = (j["sid"], j["turn"])
-                    st.session_state.comparison_results.setdefault(key, {})[
+                    st.session_state["comparison_results"].setdefault(key, {})[
                         (j["model"], j["temp"])
                     ] = ans
                 # UI を更新
