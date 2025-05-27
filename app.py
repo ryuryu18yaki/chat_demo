@@ -399,8 +399,6 @@ if st.session_state["authentication_status"]:
     if "comparison_results" not in st.session_state:
         # {(chat_sid, turn_no): {model_name: answer_text}}
         st.session_state.comparison_results = {}
-    if "_pending_jobs" not in st.session_state:
-        st.session_state._pending_jobs = []
 
 
     # =====  ヘルパー  ============================================================
@@ -570,24 +568,42 @@ if st.session_state["authentication_status"]:
 
     def enqueue_and_launch(prompt: str, question: str, hist: List[Dict[str, str]]):
         sid, turn = st.session_state.sid, len(hist)
-        if "_pending_jobs" not in st.session_state:
-            st.session_state._pending_jobs = []
 
+        # ---- 比較対象モデルのジョブをローカルリストに作成 ------------
+        jobs: list[dict[str, Any]] = []
         main_m, main_t = st.session_state.gpt_model, float(st.session_state.temperature)
         MODELS = ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"]
+
         for m in MODELS:
             for t in (0.0, 1.0):
                 if m == main_m and abs(t - main_t) < 1e-6:
                     continue
-                st.session_state._pending_jobs.append(dict(
+                jobs.append(dict(
                     sid=sid, turn=turn, model=m, temp=t,
-                    prompt=prompt, question=question, hist=copy.deepcopy(hist)
+                    prompt=prompt, question=question, hist=hist.copy()
                 ))
 
-        # 非同期ランを別スレッドで起動し、終わったら UI rerun
-        def _kick():
-            asyncio.run(run_comparison_jobs())
-        threading.Thread(target=_kick, daemon=True).start()
+        # ---- 非同期ランをバックグラウンドで起動 ---------------------
+        def _runner(local_jobs: list[dict[str, Any]]):
+            """バックグラウンドで走る関数"""
+            async def _main():
+                async def one(j):
+                    ans = await _generate_async(j)
+                    return j, ans
+
+                res = await asyncio.gather(*(one(j) for j in local_jobs))
+                # ここだけメイン state に戻す
+                for j, ans in res:
+                    key = (j["sid"], j["turn"])
+                    st.session_state.comparison_results.setdefault(key, {})[
+                        (j["model"], j["temp"])
+                    ] = ans
+                # UI を更新
+                st.experimental_rerun()
+
+            asyncio.run(_main())
+
+        threading.Thread(target=_runner, args=(jobs,), daemon=True).start()
 
     # =====  編集機能用のヘルパー関数  ==============================================
     def handle_save_prompt(mode_name, edited_text):
