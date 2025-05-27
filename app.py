@@ -495,7 +495,9 @@ if st.session_state["authentication_status"]:
                 model        = st.session_state.gpt_model,
                 chat_history = msgs,
             )
-            return res["answer"], []
+            with st.chat_message("assistant"):
+                st.markdown(res["answer"])
+            return res["answer"], res["sources"]
 
         # GPT‑only ならストリーミング
         stream = client.chat.completions.create(
@@ -525,12 +527,12 @@ if st.session_state["authentication_status"]:
     async def _generate_async(job: Dict[str, Any]) -> str:
         """非同期版 generate_with_model"""
         async with SEM:
-            if st.session_state.get("use_rag", True):
+            if job["use_rag"]:
                 res = generate_answer(
                     prompt       = job["prompt"],
                     question     = job["question"],
-                    collection   = st.session_state.rag_collection,
-                    rag_files    = st.session_state.rag_files,
+                    collection   = job["rag_col"],
+                    rag_files    = job["rag_files"],
                     top_k        = 4,
                     model        = job["model"],
                     chat_history = job["hist"],
@@ -546,7 +548,7 @@ if st.session_state["authentication_status"]:
                     *job["hist"][:-1],
                     {"role": "user", "content": job["question"]},
                 ],
-                max_tokens = st.session_state.get("max_tokens"),
+                max_tokens = job["max_tokens"],
             )
             return resp.choices[0].message.content
 
@@ -580,7 +582,11 @@ if st.session_state["authentication_status"]:
                     continue
                 jobs.append(dict(
                     sid=sid, turn=turn, model=m, temp=t,
-                    prompt=prompt, question=question, hist=hist.copy()
+                    prompt=prompt, question=question, hist=copy.deepcopy(hist),
+                    use_rag   = st.session_state["use_rag"],
+                    rag_col   = st.session_state.get("rag_collection"),
+                    rag_files = copy.deepcopy(st.session_state.get("rag_files", [])),
+                    max_tokens= st.session_state.get("max_tokens"),
                 ))
 
         # ---- 非同期ランをバックグラウンドで起動 ---------------------
@@ -599,7 +605,7 @@ if st.session_state["authentication_status"]:
                         (j["model"], j["temp"])
                     ] = ans
                 # UI を更新
-                st.experimental_rerun()
+                st.session_state["_need_rerun"] = True
 
             asyncio.run(_main())
 
