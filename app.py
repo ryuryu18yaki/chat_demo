@@ -486,12 +486,13 @@ if st.session_state["authentication_status"]:
     def generate_with_model(model_name: str,
                             system_prompt: str,
                             user_text: str,
-                            msgs_history: List[Dict[str, str]]) -> str:
+                            msgs_history: List[Dict[str, str]],
+                            temperature: float = 1.0) -> str:   # ← 追加
         """
         指定モデルで回答を生成し、プレーンテキストを返す。
-        RAG利用フラグは session_state['use_rag'] に従う。
         """
-        # RAG あり
+
+        # ----- RAG あり -----
         if st.session_state.get("use_rag", True):
             res = generate_answer(
                 prompt=system_prompt,
@@ -501,21 +502,23 @@ if st.session_state["authentication_status"]:
                 top_k=4,
                 model=model_name,
                 chat_history=msgs_history,
+                temperature=temperature          # ← ここを追加
             )
             return res["answer"]
-        # GPT-only
+
+        # ----- GPT only -----
         params = {
             "model": model_name,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                *msgs_history[:-1],                       # 過去履歴
-                {"role": "user", "content": user_text},   # 今回質問
+                *msgs_history[:-1],
+                {"role": "user", "content": user_text},
             ],
+            "temperature": temperature          # ← ここを追加
         }
-        if st.session_state.get("temperature") != 1.0:
-            params["temperature"] = st.session_state.temperature
         if st.session_state.get("max_tokens") is not None:
             params["max_tokens"] = st.session_state.max_tokens
+
         resp = client.chat.completions.create(**params)
         return resp.choices[0].message.content
     
@@ -794,23 +797,30 @@ if st.session_state["authentication_status"]:
                 st.markdown(f'<div class="{message_class}">{m["content"]}</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
+        # ==== ダイアログ的な比較結果表示 ====
+        turn_key_current = st.session_state.get("compare_dialog_open")
+
+        if turn_key_current:
+            comp = st.session_state.comparison_results.get(turn_key_current, {})
+            with st.expander("🧪 モデル比較結果", expanded=True):
+                if not comp:
+                    st.info("⏳ 比較結果を取得中です。数秒後に再表示してください。")
+                else:
+                    for (mdl, temp), ans in comp.items():
+                        st.markdown(f"#### ⮞ `{mdl}` (temperature={temp})")
+                        st.markdown(ans)
+                        st.divider()
+
+            if st.button("❌ 閉じる", key=f"close_{turn_key_current}"):
+                del st.session_state["compare_dialog_open"]
+                st.rerun()
+
         # -- 入力欄 --
         user_prompt = st.chat_input("メッセージを入力…")
 
-        turn_key = (st.session_state.sid, len(get_messages()))  # 現在ターン
-        if st.button("🧪 他モデルと比較する"):
-            comp = st.session_state.comparison_results.get(turn_key, {})
-            if not comp:
-                st.info("🔄 比較用の応答を計算中です。数秒後にもう一度押してください。")
-            else:
-                st.markdown("### 🔍 モデル比較結果")
-                for mdl, ans in comp.items():
-                    st.markdown(f"#### ⮞ `{mdl}` での回答")
-                    st.markdown(ans)
-                    st.divider()
-        else:
-            # プロンプト編集モード時は入力欄を無効化
-            user_prompt = None
+    else:
+        # プロンプト編集モード時は入力欄を無効化
+        user_prompt = None
 
     # =====  応答生成  ============================================================
     if user_prompt and not st.session_state.edit_target:  # 編集モード時は応答生成をスキップ
@@ -898,6 +908,11 @@ if st.session_state["authentication_status"]:
                 model_info = f"\n\n---\n*このレスポンスは `{st.session_state.gpt_model}` で生成されました*"
                 full_reply = assistant_reply + model_info
                 st.markdown(full_reply)
+
+                turn_key = (st.session_state.sid, len(get_messages()) + 1)
+                if st.button("🧪 他モデルと比較する", key=f"compare_{turn_key}"):
+                    st.session_state["compare_dialog_open"] = turn_key
+                    st.rerun()
 
             # チャットメッセージ外で expander 表示
             # if sources:
