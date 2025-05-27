@@ -949,7 +949,7 @@ if st.session_state["authentication_status"]:
             if st.session_state.get("need_refresh"):
                 # フラグを消してから再描画（無限ループ防止）
                 st.session_state["need_refresh"] = False
-                st.experimental_rerun()
+                st.rerun()
 
 elif st.session_state["authentication_status"] is False:
     st.error('ユーザー名またはパスワードが間違っています。')
