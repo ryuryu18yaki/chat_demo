@@ -81,8 +81,6 @@ if st.session_state["authentication_status"]:
     name = st.session_state["name"]
     username = st.session_state["username"]
 
-    logger.info("🔐 login success — user=%s  username=%s", name, username)
-
     # Chromaコレクションを input_data から自動初期化（persist_directory=None → インメモリ）
     if st.session_state.get("rag_collection") is None:
         try:
@@ -484,15 +482,10 @@ if st.session_state["authentication_status"]:
     
     # =====  チャット応答生成  =========================================
     def generate_with_model(model_name: str,
-                            system_prompt: str,
-                            user_text: str,
-                            msgs_history: List[Dict[str, str]],
-                            temperature: float = 1.0) -> str:   # ← 追加
-        """
-        指定モデルで回答を生成し、プレーンテキストを返す。
-        """
-
-        # ----- RAG あり -----
+                        system_prompt: str,
+                        user_text: str,
+                        msgs_history: List[Dict[str, str]],
+                        temperature: float = 1.0) -> str:
         if st.session_state.get("use_rag", True):
             res = generate_answer(
                 prompt=system_prompt,
@@ -502,11 +495,11 @@ if st.session_state["authentication_status"]:
                 top_k=4,
                 model=model_name,
                 chat_history=msgs_history,
-                temperature=temperature          # ← ここを追加
+                temperature=temperature          # ★ 追加
             )
             return res["answer"]
 
-        # ----- GPT only -----
+        # --- GPT only ---
         params = {
             "model": model_name,
             "messages": [
@@ -514,49 +507,47 @@ if st.session_state["authentication_status"]:
                 *msgs_history[:-1],
                 {"role": "user", "content": user_text},
             ],
-            "temperature": temperature          # ← ここを追加
+            "temperature": temperature          # ★ 追加
         }
         if st.session_state.get("max_tokens") is not None:
             params["max_tokens"] = st.session_state.max_tokens
 
-        resp = client.chat.completions.create(**params)
-        return resp.choices[0].message.content
+        return client.chat.completions.create(**params).choices[0].message.content
     
-    def launch_background_comparisons(prompt: str,
-                                    user_text: str,
-                                    msgs_history: List[Dict[str, str]]):
-        """比較対象を温度に応じて自動決定して非同期実行する"""
-        this_sid   = st.session_state.sid
-        turn_no    = len(msgs_history)
-        key        = (this_sid, turn_no)
+    def launch_background_comparisons(prompt, user_text, msgs_history):
+        this_sid = st.session_state.sid
+        turn_no  = len(msgs_history)
+        key      = (this_sid, turn_no)
 
         if key not in st.session_state.comparison_results:
             st.session_state.comparison_results[key] = {}
 
-        main_model     = st.session_state.gpt_model
-        main_temp_used = float(st.session_state.get("temperature", 1.0))
-        compare_models = ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"]
+        # フラグを立てる
+        st.session_state["need_refresh"] = False
 
-        # 温度候補
-        temperature_set = [0.0, 1.0]
+        def _done_callback(fut):
+            # 1スレッド完了ごとにリロード要求フラグを立てる
+            st.session_state["need_refresh"] = True
 
         def _worker(m_name, temp):
             try:
-                answer = generate_with_model(m_name, prompt, user_text, msgs_history, temp)
-                st.session_state.comparison_results[key][(m_name, temp)] = answer
-                st.experimental_rerun()
+                ans = generate_with_model(m_name, prompt, user_text, msgs_history, temp)
+                st.session_state.comparison_results[key][(m_name, temp)] = ans
             except Exception as e:
                 st.session_state.comparison_results[key][(m_name, temp)] = f"❌ Error: {e}"
 
-        for model in compare_models:
-            if model == main_model:
-                for temp in temperature_set:
-                    # 自分の出力済み温度と「異なる」ものだけ実行
-                    if abs(temp - main_temp_used) > 1e-6:
-                        EXECUTOR.submit(_worker, model, temp)
-            else:
-                for temp in temperature_set:
-                    EXECUTOR.submit(_worker, model, temp)
+        # 投げっぱなし：完了時だけコールバック
+        main_model = st.session_state.gpt_model
+        main_temp  = float(st.session_state.get("temperature", 1.0))
+        temps      = [0.0, 1.0]
+        models     = ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"]
+
+        for m in models:
+            for t in temps:
+                if m == main_model and abs(t - main_temp) < 1e-6:
+                    continue  # すでに主モデルで出力済
+                fut = EXECUTOR.submit(_worker, m, t)
+                fut.add_done_callback(_done_callback)
 
     # =====  編集機能用のヘルパー関数  ==============================================
     def handle_save_prompt(mode_name, edited_text):
@@ -799,12 +790,20 @@ if st.session_state["authentication_status"]:
 
         msgs = get_messages()  # 現在のメッセージリストを取得
 
-        # --- ボタン常設ロジック ---
+
+        # ==== 比較結果 expander (常時表示) ====
         if msgs and msgs[-1]["role"] == "assistant":
-            last_turn_key = (st.session_state.sid, len(msgs))
-            if st.button("🧪 他モデルと比較する", key=f"compare_{last_turn_key}"):
-                st.session_state["compare_dialog_open"] = last_turn_key
-                st.rerun()
+            last_turn_key = (st.session_state.sid, len(msgs))       # ← 常に最新ターン
+            comp = st.session_state.comparison_results.get(last_turn_key, {})
+
+            with st.expander("🧪 他モデル比較（クリックで展開）", expanded=False):
+                if not comp:
+                    st.info("⏳ 比較結果を取得中です。数秒後にページを更新すると表示されます。")
+                else:
+                    for (mdl, temp), ans in comp.items():
+                        st.markdown(f"#### ⮞ `{mdl}` (temperature={temp})")
+                        st.markdown(ans)
+                        st.divider()
 
         # ==== ダイアログ的な比較結果表示 ====
         turn_key_current = st.session_state.get("compare_dialog_open")
@@ -945,8 +944,12 @@ if st.session_state["authentication_status"]:
                 st.session_state.chats[new_title] = st.session_state.chats[old_title]
                 del st.session_state.chats[old_title]
                 st.session_state.current_chat = new_title
-            
-            st.rerun()
+
+            # 画面最下部 (script の一番最後でOK)
+            if st.session_state.get("need_refresh"):
+                # フラグを消してから再描画（無限ループ防止）
+                st.session_state["need_refresh"] = False
+                st.experimental_rerun()
 
 elif st.session_state["authentication_status"] is False:
     st.error('ユーザー名またはパスワードが間違っています。')
