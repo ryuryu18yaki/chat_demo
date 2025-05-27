@@ -1,10 +1,8 @@
 import asyncio
-import threading
 import streamlit as st
 from openai import OpenAI, AsyncOpenAI
 from typing import List, Dict, Any
 import time, requests, uuid, copy 
-from concurrent.futures import ThreadPoolExecutor
 from src.rag_preprocess import preprocess_files
 from src.rag_vector import save_docs_to_chroma
 from src.rag_qa import generate_answer
@@ -22,7 +20,6 @@ logger = init_logger()
 client        = OpenAI()
 async_client  = AsyncOpenAI()
 MAX_PARALLEL  = 3               # 同時に叩く比較 API 本数
-EXECUTOR      = ThreadPoolExecutor(max_workers=MAX_PARALLEL)
 SEM           = asyncio.Semaphore(MAX_PARALLEL)  # asyncio 用
 
 # =====  認証設定の読み込み ============================================================
@@ -524,60 +521,19 @@ if st.session_state["authentication_status"]:
         return buf, []  # sources は未対応
 
     # -------------------------------------------------------------------
-    # ▼ asyncio + gather でモデル比較を真並列実行
+    # ▼ 同期で比較用ジョブをまとめて実行し、結果を保存する
     # -------------------------------------------------------------------
-
-    async def _generate_async(job: Dict[str, Any]) -> str:
-        """非同期版 generate_with_model"""
-        async with SEM:
-            if job["use_rag"]:
-                res = generate_answer(
-                    prompt       = job["prompt"],
-                    question     = job["question"],
-                    collection   = job["rag_col"],
-                    rag_files    = job["rag_files"],
-                    top_k        = 4,
-                    model        = job["model"],
-                    chat_history = job["hist"],
-                    temperature  = job["temp"],
-                )
-                return res["answer"]
-
-            resp = await async_client.chat.completions.create(
-                model      = job["model"],
-                temperature= job["temp"],
-                messages   = [
-                    {"role": "system", "content": job["prompt"]},
-                    *job["hist"][:-1],
-                    {"role": "user", "content": job["question"]},
-                ],
-                max_tokens = job["max_tokens"],
-            )
-            return resp.choices[0].message.content
-
-    async def run_comparison_jobs():
-        tasks = []
-        for job in st.session_state._pending_jobs:
-            tasks.append(asyncio.create_task(_generate_async(job)))
-        st.session_state._pending_jobs.clear()
-        for t, job in zip(await asyncio.gather(*tasks), tasks):
-            k = (job["sid"], job["turn"])
-            st.session_state.comparison_results.setdefault(k, {})[(job["model"], job["temp"])] = t
-
-        # 結果が入ったので即 rerun
-        st.session_state["_need_rerun"] = True
-
-    # -------------------------------------------------------------------
-    # ▼ launch_background_comparisons 置き換え
-    # -------------------------------------------------------------------
-
-    def enqueue_and_launch(prompt: str, question: str, hist: List[Dict[str, str]]):
+    def run_compare_sync(prompt: str, question: str, hist: List[Dict[str, str]]):
+        """
+        メイン回答後に呼び出し。
+        指定した比較モデルを asyncio.gather で並列実行し、
+        終了後 comparison_results にまとめて格納する。
+        """
         sid, turn = st.session_state.sid, len(hist)
 
-        # ---- 比較対象モデルのジョブをローカルリストに作成 ------------
         jobs: list[dict[str, Any]] = []
         main_m, main_t = st.session_state.gpt_model, float(st.session_state.temperature)
-        MODELS = ["gpt-4o-mini"]
+        MODELS = ["gpt-4o-mini"]     # ← 比較対象モデルを必要に応じて増やす
 
         for m in MODELS:
             for t in (0.0, 1.0):
@@ -592,34 +548,18 @@ if st.session_state["authentication_status"]:
                     max_tokens= st.session_state.get("max_tokens"),
                 ))
 
-        # このターンで期待される回答数を記録
+        async def _go():
+            return await asyncio.gather(*(_generate_async(j) for j in jobs))
+
+        answers = asyncio.run(_go()) if jobs else []
+
+        # 期待個数を記録（UI側の expander 判定用）
         st.session_state.compare_expected[(sid, turn)] = len(jobs)
 
-        # ---- 非同期ランをバックグラウンドで起動 ---------------------
-        def _runner(local_jobs: list[dict[str, Any]]):
-            """バックグラウンドで走る関数"""
-            async def _main():
-                async def one(j):
-                    ans = await _generate_async(j)
-                    return j, ans
-
-                res = await asyncio.gather(*(one(j) for j in local_jobs))
-                # ここだけメイン state に戻す
-                # comparison_results が無い場合でも確実に用意してから書き込む
-                if "comparison_results" not in st.session_state:
-                    st.session_state["comparison_results"] = {}
-
-                for j, ans in res:
-                    key = (j["sid"], j["turn"])
-                    st.session_state["comparison_results"].setdefault(key, {})[
-                        (j["model"], j["temp"])
-                    ] = ans
-                # UI を即更新
-                st.rerun()
-
-            asyncio.run(_main())
-
-        threading.Thread(target=_runner, args=(jobs,), daemon=True).start()
+        turn_key = (sid, turn)
+        st.session_state.comparison_results.setdefault(turn_key, {})
+        for j, ans in zip(jobs, answers):
+            st.session_state.comparison_results[turn_key][(j["model"], j["temp"])] = ans
 
     # =====  編集機能用のヘルパー関数  ==============================================
     def handle_save_prompt(mode_name, edited_text):
@@ -921,8 +861,9 @@ if st.session_state["authentication_status"]:
         # ページを即再描画させて比較用エクスパンダを表示
         st.session_state["_need_rerun"] = True
 
-        # --------- 比較ジョブを投入 -------------------------------------------
-        enqueue_and_launch(prompt, user_prompt, msgs)
+        # --------- 比較ジョブを同期実行 --------------------------------------
+        with st.spinner("🧪 他モデルを実行中…"):
+            run_compare_sync(prompt, user_prompt, msgs)
 
         # --------- ログ送信 & タイトル自動生成 -------------------------------
         post_log(user_prompt, assistant_reply, prompt)
