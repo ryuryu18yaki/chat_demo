@@ -893,12 +893,12 @@ if st.session_state["authentication_status"]:
         footer = f"\n\n---\n*このレスポンスは `{st.session_state.gpt_model}` で生成されました*"
         msgs.append({"role": "assistant", "content": assistant_reply})
 
-        # ページを即再描画させて比較用エクスパンダを表示
-        st.session_state["_need_rerun"] = True
 
         # --------- 比較ジョブを同期実行 --------------------------------------
         with st.spinner("🧪 他モデルを実行中…"):
             run_compare_sync(prompt, user_prompt, msgs)
+        # 比較結果を反映するためにリロードをトリガー
+        st.session_state["_need_rerun"] = True
 
         # --------- ログ送信 & タイトル自動生成 -------------------------------
         post_log(user_prompt, assistant_reply, prompt)
@@ -908,6 +908,10 @@ if st.session_state["authentication_status"]:
             st.session_state.current_chat = new_title
 
     # （_need_rerun チェックは不要になりました）
+
+    # ---- 比較結果が揃ったら自動で再描画 ----
+    if st.session_state.pop("_need_rerun", False):
+        st.rerun()
 
 elif st.session_state["authentication_status"] is False:
     st.error('ユーザー名またはパスワードが間違っています。')
