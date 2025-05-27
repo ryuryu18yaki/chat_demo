@@ -568,7 +568,7 @@ if st.session_state["authentication_status"]:
 
         jobs: list[dict[str, Any]] = []
         main_m, main_t = st.session_state.gpt_model, float(st.session_state.temperature)
-        MODELS = ["gpt-4o-mini"]     # ← 比較対象モデルを必要に応じて増やす
+        MODELS = ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"]     # ← 比較対象モデルを必要に応じて増やす
 
         for m in MODELS:
             for t in (0.0, 1.0):
