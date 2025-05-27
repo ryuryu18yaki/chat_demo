@@ -399,6 +399,9 @@ if st.session_state["authentication_status"]:
     if "comparison_results" not in st.session_state:
         # {(chat_sid, turn_no): {model_name: answer_text}}
         st.session_state.comparison_results = {}
+    # 期待される比較回答数 {(sid, turn): int}
+    if "compare_expected" not in st.session_state:
+        st.session_state.compare_expected = {}
 
 
     # =====  ヘルパー  ============================================================
@@ -589,6 +592,9 @@ if st.session_state["authentication_status"]:
                     max_tokens= st.session_state.get("max_tokens"),
                 ))
 
+        # このターンで期待される回答数を記録
+        st.session_state.compare_expected[(sid, turn)] = len(jobs)
+
         # ---- 非同期ランをバックグラウンドで起動 ---------------------
         def _runner(local_jobs: list[dict[str, Any]]):
             """バックグラウンドで走る関数"""
@@ -608,8 +614,8 @@ if st.session_state["authentication_status"]:
                     st.session_state["comparison_results"].setdefault(key, {})[
                         (j["model"], j["temp"])
                     ] = ans
-                # UI を更新
-                st.session_state["_need_rerun"] = True
+                # UI を即更新
+                st.experimental_rerun()
 
             asyncio.run(_main())
 
@@ -861,15 +867,15 @@ if st.session_state["authentication_status"]:
         if msgs and msgs[-1]["role"] == "assistant":
             last_turn_key = (st.session_state.sid, len(msgs))       # ← 常に最新ターン
             comp = st.session_state.comparison_results.get(last_turn_key, {})
-
-            with st.expander("🧪 他モデル比較（クリックで展開）", expanded=False):
-                if not comp:
-                    st.info("⏳ 比較結果を取得中です。数秒後にページを更新すると表示されます。")
-                else:
+            expected = st.session_state.get("compare_expected", {}).get(last_turn_key, 0)
+            if expected and len(comp) >= expected:
+                with st.expander("🧪 他モデル比較（クリックで展開）", expanded=False):
                     for (mdl, temp), ans in comp.items():
                         st.markdown(f"#### ⮞ `{mdl}` (temperature={temp})")
                         st.markdown(ans)
                         st.divider()
+            elif expected:            # まだ処理中
+                st.info("⏳ 他モデルの回答を集計中です。完了まで少しお待ちください…")
 
         # ==== ダイアログ的な比較結果表示 ====
         turn_key_current = st.session_state.get("compare_dialog_open")
@@ -925,11 +931,7 @@ if st.session_state["authentication_status"]:
             st.session_state.chats[new_title] = st.session_state.chats.pop(st.session_state.current_chat)
             st.session_state.current_chat = new_title
 
-    # ---------------------------------------------------------------------------
-    # 画面最下部：比較結果が入るたびに再描画
-    # ---------------------------------------------------------------------------
-    if st.session_state.pop("_need_rerun", False):
-        st.rerun()
+    # （_need_rerun チェックは不要になりました）
 
 elif st.session_state["authentication_status"] is False:
     st.error('ユーザー名またはパスワードが間違っています。')
