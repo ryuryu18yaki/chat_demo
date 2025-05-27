@@ -2,6 +2,8 @@ import streamlit as st
 from openai import OpenAI
 from typing import List, Dict, Any
 import time, functools, requests
+from concurrent.futures import ThreadPoolExecutor
+import copy
 
 from src.rag_preprocess import preprocess_files
 from src.rag_vector import save_docs_to_chroma
@@ -16,6 +18,9 @@ import uuid
 st.set_page_config(page_title="GPT + RAG Chatbot", page_icon="💬", layout="wide")
 
 logger = init_logger()
+
+# グローバルで使い回す実行基盤（CPU 2core 制限を考慮し 3スレッド程度に抑える）
+EXECUTOR = ThreadPoolExecutor(max_workers=3)
 
 # =====  認証設定の読み込み ============================================================
 with open('./config.yaml') as file:
@@ -393,6 +398,9 @@ if st.session_state["authentication_status"]:
         st.session_state.sid = str(uuid.uuid4())
     if "use_rag" not in st.session_state:
         st.session_state["use_rag"] = False  # ← デフォルトでRAGを使わない
+    if "comparison_results" not in st.session_state:
+        # {(chat_sid, turn_no): {model_name: answer_text}}
+        st.session_state.comparison_results = {}
 
 
     # =====  ヘルパー  ============================================================
@@ -473,6 +481,79 @@ if st.session_state["authentication_status"]:
             except:
                 return f"Chat {len(st.session_state.chats) + 1}"
         return f"Chat {len(st.session_state.chats) + 1}"
+    
+    # =====  チャット応答生成  =========================================
+    def generate_with_model(model_name: str,
+                            system_prompt: str,
+                            user_text: str,
+                            msgs_history: List[Dict[str, str]]) -> str:
+        """
+        指定モデルで回答を生成し、プレーンテキストを返す。
+        RAG利用フラグは session_state['use_rag'] に従う。
+        """
+        # RAG あり
+        if st.session_state.get("use_rag", True):
+            res = generate_answer(
+                prompt=system_prompt,
+                question=user_text,
+                collection=st.session_state.rag_collection,
+                rag_files=st.session_state.rag_files,
+                top_k=4,
+                model=model_name,
+                chat_history=msgs_history,
+            )
+            return res["answer"]
+        # GPT-only
+        params = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                *msgs_history[:-1],                       # 過去履歴
+                {"role": "user", "content": user_text},   # 今回質問
+            ],
+        }
+        if st.session_state.get("temperature") != 1.0:
+            params["temperature"] = st.session_state.temperature
+        if st.session_state.get("max_tokens") is not None:
+            params["max_tokens"] = st.session_state.max_tokens
+        resp = client.chat.completions.create(**params)
+        return resp.choices[0].message.content
+    
+    def launch_background_comparisons(prompt: str,
+                                    user_text: str,
+                                    msgs_history: List[Dict[str, str]]):
+        """比較対象を温度に応じて自動決定して非同期実行する"""
+        this_sid   = st.session_state.sid
+        turn_no    = len(msgs_history)
+        key        = (this_sid, turn_no)
+
+        if key not in st.session_state.comparison_results:
+            st.session_state.comparison_results[key] = {}
+
+        main_model     = st.session_state.gpt_model
+        main_temp_used = float(st.session_state.get("temperature", 1.0))
+        compare_models = ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"]
+
+        # 温度候補
+        temperature_set = [0.0, 1.0]
+
+        def _worker(m_name, temp):
+            try:
+                answer = generate_with_model(m_name, prompt, user_text, msgs_history, temp)
+                st.session_state.comparison_results[key][(m_name, temp)] = answer
+                st.experimental_rerun()
+            except Exception as e:
+                st.session_state.comparison_results[key][(m_name, temp)] = f"❌ Error: {e}"
+
+        for model in compare_models:
+            if model == main_model:
+                for temp in temperature_set:
+                    # 自分の出力済み温度と「異なる」ものだけ実行
+                    if abs(temp - main_temp_used) > 1e-6:
+                        EXECUTOR.submit(_worker, model, temp)
+            else:
+                for temp in temperature_set:
+                    EXECUTOR.submit(_worker, model, temp)
 
     # =====  編集機能用のヘルパー関数  ==============================================
     def handle_save_prompt(mode_name, edited_text):
@@ -715,9 +796,21 @@ if st.session_state["authentication_status"]:
 
         # -- 入力欄 --
         user_prompt = st.chat_input("メッセージを入力…")
-    else:
-        # プロンプト編集モード時は入力欄を無効化
-        user_prompt = None
+
+        turn_key = (st.session_state.sid, len(get_messages()))  # 現在ターン
+        if st.button("🧪 他モデルと比較する"):
+            comp = st.session_state.comparison_results.get(turn_key, {})
+            if not comp:
+                st.info("🔄 比較用の応答を計算中です。数秒後にもう一度押してください。")
+            else:
+                st.markdown("### 🔍 モデル比較結果")
+                for mdl, ans in comp.items():
+                    st.markdown(f"#### ⮞ `{mdl}` での回答")
+                    st.markdown(ans)
+                    st.divider()
+        else:
+            # プロンプト編集モード時は入力欄を無効化
+            user_prompt = None
 
     # =====  応答生成  ============================================================
     if user_prompt and not st.session_state.edit_target:  # 編集モード時は応答生成をスキップ
@@ -818,6 +911,9 @@ if st.session_state["authentication_status"]:
 
             # 保存するのは元の応答（モデル情報なし）
             msgs.append({"role": "assistant", "content": assistant_reply})
+
+            # ✅ ここで非同期比較を開始  ---------------------------
+            launch_background_comparisons(prompt, user_prompt, msgs)
 
             # 会話内容を Sheets へ記録
             post_log(user_prompt, assistant_reply, prompt)
