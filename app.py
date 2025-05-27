@@ -884,6 +884,10 @@ if st.session_state["authentication_status"]:
                     
                     logger.info("✅ 遅延比較処理完了: %s", turn_key)
                     st.success("🧪 比較処理が完了しました")
+
+                    # 比較結果を表示するために画面を更新
+                    time.sleep(0.5)  # 成功メッセージを少し表示
+                    st.rerun()
                     
                 else:
                     logger.warning("⚠️ メッセージ履歴が不足: len=%d", len(msgs) if msgs else 0)
