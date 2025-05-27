@@ -10,12 +10,20 @@ from src.startup_loader import initialize_chroma_from_input
 from src.logging_utils import init_logger
 import yaml
 import streamlit_authenticator as stauth
+import logging
 
 st.set_page_config(page_title="GPT + RAG Chatbot", page_icon="💬", layout="wide")
 
 # -------------------------------------------------------------------
 # ▶ 共通セットアップ
 # -------------------------------------------------------------------
+
+logging.basicConfig(   # root も DEBUG にしておく場合
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    force=True,        # 先に何か設定されていても上書き
+)
+
 logger = init_logger()
 client        = OpenAI()
 async_client  = AsyncOpenAI()
@@ -525,35 +533,40 @@ if st.session_state["authentication_status"]:
     # -------------------------------------------------------------------
     async def _generate_async(job: Dict[str, Any]) -> str:
         """
-        単一の比較ジョブを実行し、回答テキストを返す。
-        RAG 使用有無で generate_answer / OpenAI API を切替。
+        単一比較ジョブを実行。
+        失敗しても RuntimeError 文字列を返して呼び出し元に例外を伝播させない。
         """
-        async with SEM:
-            if job["use_rag"]:
-                res = generate_answer(
-                    prompt       = job["prompt"],
-                    question     = job["question"],
-                    collection   = job["rag_col"],
-                    rag_files    = job["rag_files"],
-                    top_k        = 4,
-                    model        = job["model"],
-                    chat_history = job["hist"],
-                    temperature  = job["temp"],
-                )
-                return res["answer"]
+        try:
+            async with SEM:       # ← 例外が出ても finally で release される
+                if job["use_rag"]:
+                    res = generate_answer(
+                        prompt       = job["prompt"],
+                        question     = job["question"],
+                        collection   = job["rag_col"],
+                        rag_files    = job["rag_files"],
+                        top_k        = 4,
+                        model        = job["model"],
+                        chat_history = job["hist"],
+                        temperature  = job["temp"],
+                    )
+                    return res["answer"]
 
-            # GPT‑only
-            resp = await async_client.chat.completions.create(
-                model       = job["model"],
-                temperature = job["temp"],
-                messages = [
-                    {"role": "system", "content": job["prompt"]},
-                    *job["hist"][:-1],
-                    {"role": "user", "content": job["question"]},
-                ],
-                max_tokens  = job["max_tokens"],
-            )
-            return resp.choices[0].message.content
+                resp = await async_client.chat.completions.create(
+                    model       = job["model"],
+                    temperature = job["temp"],
+                    messages    = [
+                        {"role": "system", "content": job["prompt"]},
+                        *job["hist"][:-1],
+                        {"role": "user", "content": job["question"]},
+                    ],
+                    max_tokens  = job["max_tokens"],
+                )
+                return resp.choices[0].message.content
+
+        except Exception as e:
+            logger.exception("compare job failed: %s", e)       # Cloud のログで確認可
+            # 失敗でも文字列返しに統一（UI 側で表示できるように）
+            return f"⚠️ **{type(e).__name__}**: {e}"
 
     # -------------------------------------------------------------------
     # ▼ 同期で比較用ジョブをまとめて実行し、結果を保存する
@@ -584,7 +597,11 @@ if st.session_state["authentication_status"]:
                 ))
 
         async def _go():
-            return await asyncio.gather(*(_generate_async(j) for j in jobs))
+            # return_exceptions=True で 1 つ失敗しても他は継続
+            return await asyncio.gather(
+                *(_generate_async(j) for j in jobs),
+                return_exceptions=True
+            )
 
         answers = asyncio.run(_go()) if jobs else []
 
@@ -594,6 +611,8 @@ if st.session_state["authentication_status"]:
         turn_key = (sid, turn)
         st.session_state.comparison_results.setdefault(turn_key, {})
         for j, ans in zip(jobs, answers):
+            if isinstance(ans, Exception):          # 取りこぼし保険
+                ans = f"⚠️ **{type(ans).__name__}**: {ans}"
             st.session_state.comparison_results[turn_key][(j["model"], j["temp"])] = ans
 
     # =====  編集機能用のヘルパー関数  ==============================================
