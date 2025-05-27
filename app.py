@@ -912,6 +912,9 @@ if st.session_state["authentication_status"]:
         footer = f"\n\n---\n*このレスポンスは `{st.session_state.gpt_model}` で生成されました*"
         msgs.append({"role": "assistant", "content": assistant_reply})
 
+        # ページを即再描画させて比較用エクスパンダを表示
+        st.session_state["_need_rerun"] = True
+
         # --------- 比較ジョブを投入 -------------------------------------------
         enqueue_and_launch(prompt, user_prompt, msgs)
 
