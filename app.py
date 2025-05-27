@@ -858,8 +858,16 @@ if st.session_state["authentication_status"]:
             
             # 比較結果の状態をチェック
             comparison_results = st.session_state.comparison_results.get(turn_key, {})
+            expected_count = st.session_state.get("compare_expected", {}).get(turn_key, 0)
+            should_run = st.session_state.get("should_run_comparison") == turn_key
             
-            if comparison_results:
+            if should_run:
+                # 比較処理がこれから実行される
+                st.info("🧪 他モデルでの比較を準備中...")
+            elif expected_count > 0 and len(comparison_results) < expected_count:
+                # 比較処理実行中
+                st.info(f"🧪 他モデルでの比較実行中... ({len(comparison_results)}/{expected_count})")
+            elif comparison_results:
                 # 比較結果表示
                 with st.expander(f"🧪 他モデル比較結果 ({len(comparison_results)}モデル)", expanded=False):
                     for (model, temp), answer in comparison_results.items():
@@ -872,6 +880,24 @@ if st.session_state["authentication_status"]:
     else:
         # プロンプト編集モード時は入力欄を無効化
         user_prompt = None
+
+    # --------- 待機中の比較処理を実行 ----------------------------------------
+    # user_prompt定義後に実行
+    if st.session_state.get("should_run_comparison") and not user_prompt:
+        turn_key = st.session_state.pop("should_run_comparison")
+        
+        # 比較処理を実行
+        with st.spinner("🧪 他モデルで比較回答を生成中..."):
+            try:
+                msgs = get_messages()
+                if msgs and len(msgs) >= 2:
+                    prompt = st.session_state.prompts[st.session_state.design_mode]
+                    user_input = msgs[-2]["content"]  # 最後から2番目がユーザー入力
+                    
+                    run_compare_sync(prompt, user_input, msgs)
+                    logger.info("✅ 遅延比較処理完了: %s", turn_key)
+            except Exception as e:
+                logger.error("❌ 比較処理エラー: %s", e)
 
     # =====  応答生成  ============================================================
     if user_prompt and not st.session_state.edit_target:
@@ -888,6 +914,12 @@ if st.session_state["authentication_status"]:
         # 履歴へ保存
         msgs.append({"role": "assistant", "content": assistant_reply})
 
+        # --------- 比較処理を次回実行に延期 --------------------------------------
+        turn_key = (st.session_state.sid, len(msgs))
+        
+        # 次回の描画で比較を実行するフラグを設定
+        st.session_state["should_run_comparison"] = turn_key
+
         # --------- ログ送信 & タイトル自動生成（エラー処理付き） -----------
         try:
             post_log(user_prompt, assistant_reply, prompt)
@@ -902,22 +934,6 @@ if st.session_state["authentication_status"]:
                 st.session_state.current_chat = new_title
         except Exception as e:
             logger.warning("タイトル生成失敗: %s", e)
-
-        # --------- 比較処理を即座に実行 --------------------------------------
-        turn_key = (st.session_state.sid, len(msgs))
-        
-        try:
-            with st.spinner("🧪 他モデルで比較回答を生成中..."):
-                logger.info("🔄 比較処理開始: user_prompt='%s'", user_prompt[:50])
-                run_compare_sync(prompt, user_prompt, msgs)
-                logger.info("✅ 比較処理完了: %s", turn_key)
-            
-            # 比較完了後に画面を更新して結果を表示
-            st.rerun()
-            
-        except Exception as e:
-            logger.error("❌ 比較処理エラー: %s", e)
-            st.error(f"比較処理でエラーが発生しました: {e}")
 
 elif st.session_state["authentication_status"] is False:
     st.error('ユーザー名またはパスワードが間違っています。')
