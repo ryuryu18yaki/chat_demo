@@ -926,7 +926,7 @@ if st.session_state["authentication_status"]:
     # 画面最下部：比較結果が入るたびに再描画
     # ---------------------------------------------------------------------------
     if st.session_state.pop("_need_rerun", False):
-        st.experimental_rerun()
+        st.rerun()
 
 elif st.session_state["authentication_status"] is False:
     st.error('ユーザー名またはパスワードが間違っています。')
