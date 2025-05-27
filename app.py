@@ -1,28 +1,21 @@
-import asyncio
 import streamlit as st
-from openai import OpenAI, AsyncOpenAI
+from openai import OpenAI
 from typing import List, Dict, Any
-import time, requests, uuid, copy 
+import time, functools, requests
+
 from src.rag_preprocess import preprocess_files
 from src.rag_vector import save_docs_to_chroma
 from src.rag_qa import generate_answer
 from src.startup_loader import initialize_chroma_from_input
 from src.logging_utils import init_logger
+
 import yaml
 import streamlit_authenticator as stauth
-import logging
+import uuid
 
 st.set_page_config(page_title="GPT + RAG Chatbot", page_icon="💬", layout="wide")
 
-# -------------------------------------------------------------------
-# ▶ 共通セットアップ
-# -------------------------------------------------------------------
-
 logger = init_logger()
-client        = OpenAI()
-async_client  = AsyncOpenAI()
-MAX_PARALLEL  = 1               # 同時に叩く比較 API 本数（安全のため1に制限）
-SEM           = asyncio.Semaphore(MAX_PARALLEL)  # asyncio 用
 
 # =====  認証設定の読み込み ============================================================
 with open('./config.yaml') as file:
@@ -73,12 +66,17 @@ def post_log(
 
     st.warning("⚠️ Sheets へのログ送信に失敗しました")
 
+# =====  基本設定  ============================================================
+client = OpenAI()
+
 # =====  ログインUIの表示  ============================================================
 authenticator.login()
 
 if st.session_state["authentication_status"]:
     name = st.session_state["name"]
     username = st.session_state["username"]
+
+    logger.info("🔐 login success — user=%s  username=%s", name, username)
 
     # Chromaコレクションを input_data から自動初期化（persist_directory=None → インメモリ）
     if st.session_state.get("rag_collection") is None:
@@ -372,53 +370,57 @@ if st.session_state["authentication_status"]:
     # =====  セッション変数  =======================================================
     if "chats" not in st.session_state:
         st.session_state.chats = {}
-    if "chat_sids"   not in st.session_state:
+    if "chat_sids"   not in st.session_state:                        # ★ 追加
         st.session_state.chat_sids = {"New Chat": str(uuid.uuid4())}
     if "current_chat" not in st.session_state:
         st.session_state.current_chat = "New Chat"
-    if "sid"         not in st.session_state:
+    if "sid"         not in st.session_state:                        # ★ 追加
         st.session_state.sid = st.session_state.chat_sids["New Chat"]
     if "edit_target" not in st.session_state:
         st.session_state.edit_target = None
     if "rag_files" not in st.session_state:
         st.session_state.rag_files: List[Dict[str, Any]] = []
     if "rag_collection" not in st.session_state:
-        st.session_state.rag_collection = None
+        st.session_state.rag_collection = None  # Chroma collection
     if "design_mode" not in st.session_state:
-        st.session_state.design_mode = list(DEFAULT_PROMPTS.keys())[0]
+        st.session_state.design_mode = list(DEFAULT_PROMPTS.keys())[0]  # デフォルトは「全設備モード」
     if "prompts" not in st.session_state:
-        st.session_state.prompts = DEFAULT_PROMPTS.copy()
+        st.session_state.prompts = DEFAULT_PROMPTS.copy()  # プロンプトを変更可能に
     if "gpt_model" not in st.session_state:
-        st.session_state.gpt_model = "gpt-4.1"
+        st.session_state.gpt_model = "gpt-4.1"  # デフォルトモデルをgpt-4.1に変更
+    if "sid" not in st.session_state:          # 追加
+        import uuid
+        st.session_state.sid = str(uuid.uuid4())
     if "use_rag" not in st.session_state:
-        st.session_state["use_rag"] = False
-    if "comparison_results" not in st.session_state:
-        st.session_state.comparison_results = {}
-    if "compare_expected" not in st.session_state:
-        st.session_state.compare_expected = {}
+        st.session_state["use_rag"] = False  # ← デフォルトでRAGを使わない
+
 
     # =====  ヘルパー  ============================================================
     def get_messages() -> List[Dict[str, str]]:
         title = st.session_state.current_chat
         return st.session_state.chats.setdefault(title, [])
     
+    # ★ 新しいチャットを作成
     def new_chat():
         title = f"Chat {len(st.session_state.chats) + 1}"
         st.session_state.chats[title] = []
-        st.session_state.chat_sids[title] = str(uuid.uuid4())
+        st.session_state.chat_sids[title] = str(uuid.uuid4())   # 新sid
         st.session_state.current_chat = title
         st.session_state.sid = st.session_state.chat_sids[title]
 
         logger.info("➕ new_chat — sid=%s  title='%s'", st.session_state.sid, title)
+
         st.rerun()
 
+    # ★ 既存チャットへ切替
     def switch_chat(title: str):
-        if title not in st.session_state.chat_sids:
+        if title not in st.session_state.chat_sids:          # ★ 安全化
             st.session_state.chat_sids[title] = str(uuid.uuid4())
         st.session_state.current_chat = title
         st.session_state.sid = st.session_state.chat_sids[title]
 
         logger.info("🔀 switch_chat — sid=%s  title='%s'", st.session_state.sid, title)
+
         st.rerun()
 
     def rebuild_rag_collection():
@@ -433,7 +435,8 @@ if st.session_state["authentication_status"]:
         total_files = len(st.session_state.rag_files)
         logger.info("📚 RAG rebuild start — files=%d", total_files)
 
-        t0 = time.perf_counter()
+        import time
+        t0 = time.perf_counter()            # 所要時間計測
 
         try:
             with st.spinner("📚 ファイルを解析し、ベクトル DB に登録中..."):
@@ -441,7 +444,7 @@ if st.session_state["authentication_status"]:
                 col = save_docs_to_chroma(
                     docs=docs,
                     collection_name="session_docs",
-                    persist_directory=None,
+                    persist_directory=None,   # インメモリ
                 )
                 st.session_state.rag_collection = col
 
@@ -456,12 +459,13 @@ if st.session_state["authentication_status"]:
             logger.exception("❌ RAG rebuild failed — %s", e)
             st.error(f"RAG 初期化中にエラーが発生しました: {e}")
 
+    # ----- チャットタイトル自動生成機能 -----
     def generate_chat_title(messages):
-        if len(messages) >= 2:
+        if len(messages) >= 2:  # ユーザー質問と回答が1往復以上ある場合
             prompt = f"以下の会話の内容を25文字以内の簡潔なタイトルにしてください:\n{messages[0]['content'][:200]}"
             try:
                 resp = client.chat.completions.create(
-                    model="gpt-4.1-nano",
+                    model="gpt-4.1-nano",  # 軽量モデルで十分
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=30,
                 )
@@ -469,250 +473,14 @@ if st.session_state["authentication_status"]:
             except:
                 return f"Chat {len(st.session_state.chats) + 1}"
         return f"Chat {len(st.session_state.chats) + 1}"
-    
-    # =====  チャット応答生成  =========================================
-    def stream_main_answer(prompt: str, user_prompt: str, msgs: List[Dict[str, str]]):
-        """メインモデルの回答をストリーミング描画して返す"""
-        try:
-            logger.info("🔍 stream_main_answer開始 - RAG使用: %s", st.session_state.get("use_rag", True))
-            
-            # --- RAG / GPT-only は元コードのロジックを援用 ---
-            if st.session_state.get("use_rag", True):
-                logger.info("🔍 RAG処理開始")
-                try:
-                    res = generate_answer(
-                        prompt       = prompt,
-                        question     = user_prompt,
-                        collection   = st.session_state.rag_collection,
-                        rag_files    = st.session_state.rag_files,
-                        top_k        = 4,
-                        model        = st.session_state.gpt_model,
-                        chat_history = msgs,
-                    )
-                    logger.info("🔍 RAG generate_answer完了")
-                    
-                    with st.chat_message("assistant"):
-                        st.markdown(res["answer"])
-                    logger.info("🔍 RAG応答表示完了")
-                    
-                    return res["answer"], res["sources"]
-                    
-                except Exception as e:
-                    logger.error("❌ RAG処理エラー: %s", e, exc_info=True)
-                    logger.info("🔍 RAG失敗、GPTのみにフォールバック")
-
-            # GPT‑only ならストリーミング
-            logger.info("🔍 GPTのみ処理開始")
-            try:
-                # 安全のため最大トークン数を制限
-                max_tokens = st.session_state.get("max_tokens")
-                if max_tokens is None:
-                    max_tokens = 2000  # デフォルトで制限を設ける
-                    logger.info("🔍 max_tokens未設定のため2000に制限")
-                
-                stream = client.chat.completions.create(
-                    model     = st.session_state.gpt_model,
-                    stream    = True,
-                    messages  = [
-                        {"role": "system", "content": prompt},
-                        *msgs[:-1],
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    temperature = st.session_state.temperature,
-                    max_tokens  = max_tokens,
-                )
-                logger.info("🔍 OpenAI stream作成完了")
-                
-                buf = ""
-                with st.chat_message("assistant"):
-                    ph = st.empty()
-                    chunk_count = 0
-                    
-                    try:
-                        for chunk in stream:
-                            chunk_count += 1
-                            
-                            # エラーチェック
-                            if not chunk.choices:
-                                logger.warning("🔍 空のchunk.choicesを受信: chunk_count=%d", chunk_count)
-                                continue
-                                
-                            if chunk.choices[0].delta.content:
-                                new_content = chunk.choices[0].delta.content
-                                buf += new_content
-                                
-                                # バッファサイズチェック（メモリ保護）
-                                if len(buf) > 10000:  # 10KB制限
-                                    logger.warning("🔍 応答が長すぎるため切り詰めます: %d chars", len(buf))
-                                    buf = buf[:10000] + "\n\n[応答が長すぎるため切り詰められました]"
-                                    ph.markdown(buf)
-                                    break
-                                    
-                                ph.markdown(buf + "▌")
-                            
-                            # 定期的な進行ログ（頻度を下げる）
-                            if chunk_count % 50 == 0:
-                                logger.info("🔍 ストリーミング進行中: %d chunks, %d chars", chunk_count, len(buf))
-                            
-                            # 異常に多いチャンク数の検出
-                            if chunk_count > 1000:
-                                logger.error("🔍 異常に多いチャンク数を検出、停止: %d", chunk_count)
-                                buf += "\n\n[応答生成を安全のため停止しました]"
-                                break
-                        
-                        ph.markdown(buf)
-                        logger.info("🔍 ストリーミング完了: %d chunks, %d chars", chunk_count, len(buf))
-                        
-                    except Exception as stream_error:
-                        logger.error("❌ ストリーミング中エラー: %s", stream_error, exc_info=True)
-                        if not buf:
-                            buf = f"ストリーミング中にエラーが発生しました: {stream_error}"
-                        ph.markdown(buf)
-                        
-                return buf, []  # sources は未対応
-                
-            except Exception as e:
-                logger.error("❌ GPTストリーミングエラー: %s", e, exc_info=True)
-                st.error(f"GPT応答生成エラー: {e}")
-                return f"エラーが発生しました: {e}", []
-                
-        except Exception as e:
-            logger.error("❌ stream_main_answer全体エラー: %s", e, exc_info=True)
-            st.error(f"応答生成中にエラーが発生しました: {e}")
-            return f"エラーが発生しました: {e}", []
-
-    # -------------------------------------------------------------------
-    # ▼ 比較モデルを 1 ジョブ実行する async ヘルパー（修正版）
-    # -------------------------------------------------------------------
-    async def _generate_async(job: Dict[str, Any]) -> str:
-        """
-        単一比較ジョブを実行。
-        タイムアウトとリソース制限を追加。
-        """
-        try:
-            async with SEM:
-                # タイムアウト付きで実行
-                if job["use_rag"]:
-                    # RAGは同期処理のためタイムアウト制御が困難
-                    # 安全のため最大トークン数を制限
-                    job["max_tokens"] = min(job.get("max_tokens", 1000), 1000)
-                    
-                    res = generate_answer(
-                        prompt       = job["prompt"],
-                        question     = job["question"],
-                        collection   = job["rag_col"],
-                        rag_files    = job["rag_files"],
-                        top_k        = 4,
-                        model        = job["model"],
-                        chat_history = job["hist"],
-                        temperature  = job["temp"],
-                    )
-                    return res["answer"]
-
-                # GPTのみの場合
-                resp = await asyncio.wait_for(
-                    async_client.chat.completions.create(
-                        model       = job["model"],
-                        temperature = job["temp"],
-                        messages    = [
-                            {"role": "system", "content": job["prompt"]},
-                            *job["hist"][:-1],
-                            {"role": "user", "content": job["question"]},
-                        ],
-                        max_tokens  = job["max_tokens"],
-                    ),
-                    timeout=30.0  # 30秒でタイムアウト
-                )
-                return resp.choices[0].message.content
-
-        except asyncio.TimeoutError:
-            logger.error("❌ 比較ジョブがタイムアウト: model=%s", job.get("model", "unknown"))
-            return f"⚠️ **TimeoutError**: {job.get('model', 'unknown')}の応答がタイムアウトしました"
-        except Exception as e:
-            logger.exception("❌ 比較ジョブ失敗: model=%s error=%s", job.get("model", "unknown"), e)
-            return f"⚠️ **{type(e).__name__}**: {e}"
-
-    # -------------------------------------------------------------------
-    # ▼ 同期で比較用ジョブをまとめて実行し、結果を保存する（修正版）
-    # -------------------------------------------------------------------
-    def run_compare_sync(prompt: str, question: str, hist: List[Dict[str, str]]):
-        """
-        メイン回答後に呼び出し。
-        安全な設定で比較モデルを実行し、結果を保存する。
-        """
-        logger.info("🔄 比較処理開始")
-        
-        sid, turn = st.session_state.sid, len(hist)
-
-        jobs: list[dict[str, Any]] = []
-        main_m, main_t = st.session_state.gpt_model, float(st.session_state.temperature)
-        
-        # 比較対象モデルリスト（段階的に増やす）
-        MODELS = ["gpt-4o-mini"]  # まず1つだけでテスト
-        # MODELS = ["gpt-4o-mini", "gpt-4.1-mini"]  # 安定したら2つに
-        # MODELS = ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4.1-nano"]  # さらに安定したら3つに
-        
-        for m in MODELS:
-            # メインモデルと同じ場合はスキップ
-            if m == main_m:
-                logger.info("🔄 メインモデル(%s)と同じためスキップ", m)
-                continue
-                
-            jobs.append(dict(
-                sid=sid, turn=turn, model=m, temp=main_t,  # 現在の温度設定を使用
-                prompt=prompt, question=question, hist=copy.deepcopy(hist),
-                use_rag   = st.session_state["use_rag"],
-                rag_col   = st.session_state.get("rag_collection"),
-                rag_files = copy.deepcopy(st.session_state.get("rag_files", [])),
-                max_tokens= min(st.session_state.get("max_tokens") or 2000, 2000),  # 安全のため上限設定
-            ))
-
-        logger.info("🔄 比較ジョブ準備完了: %d件", len(jobs))
-        
-        # ジョブが0件の場合は早期リターン
-        if not jobs:
-            logger.info("🔄 比較対象がないため処理をスキップ")
-            st.session_state.compare_expected[(sid, turn)] = 0
-            return
-
-        async def _go():
-            # タイムアウト付きで実行
-            try:
-                # 各ジョブにタイムアウトを設定
-                tasks = [_generate_async(j) for j in jobs]
-                return await asyncio.wait_for(
-                    asyncio.gather(*tasks, return_exceptions=True),
-                    timeout=60.0  # 60秒でタイムアウト
-                )
-            except asyncio.TimeoutError:
-                logger.error("❌ 比較処理がタイムアウトしました")
-                return [f"⚠️ **TimeoutError**: 処理がタイムアウトしました"] * len(jobs)
-
-        try:
-            answers = asyncio.run(_go())
-            logger.info("🔄 非同期処理完了: %d件の回答取得", len(answers))
-        except Exception as e:
-            logger.error("❌ 非同期処理でエラー: %s", e, exc_info=True)
-            answers = [f"⚠️ **{type(e).__name__}**: {e}"] * len(jobs)
-
-        # 期待個数を記録（UI側の expander 判定用）
-        st.session_state.compare_expected[(sid, turn)] = len(jobs)
-
-        turn_key = (sid, turn)
-        st.session_state.comparison_results.setdefault(turn_key, {})
-        for j, ans in zip(jobs, answers):
-            if isinstance(ans, Exception):
-                ans = f"⚠️ **{type(ans).__name__}**: {ans}"
-            st.session_state.comparison_results[turn_key][(j["model"], j["temp"])] = ans
-        
-        logger.info("🔄 比較結果保存完了: %d件", len(st.session_state.comparison_results[turn_key]))
 
     # =====  編集機能用のヘルパー関数  ==============================================
     def handle_save_prompt(mode_name, edited_text):
         st.session_state.prompts[mode_name] = edited_text
         st.session_state.edit_target = None
 
-        logger.info("✏️ prompt_saved — mode=%s  len=%d", mode_name, len(edited_text))
+        logger.info("✏️ prompt_saved — mode=%s  len=%d",
+                mode_name, len(edited_text))
         
         st.success(f"「{mode_name}」のプロンプトを更新しました")
         time.sleep(1)
@@ -735,6 +503,7 @@ if st.session_state["authentication_status"]:
         st.rerun()
 
     # =====  CSS  ================================================================
+    # CSSを改善してダークモード対応
     st.markdown(
         """
         <style>
@@ -750,7 +519,7 @@ if st.session_state["authentication_status"]:
             .stButton button {font-size: 14px; padding: 6px 12px;}
         }
 
-        /* ダークモード対応メッセージスタイル */
+        /* ダークモード対応メッセージスタイル - カスタム背景色は削除 */
         .user-message, .assistant-message {
             border-radius: 10px;
             padding: 8px 12px;
@@ -797,7 +566,7 @@ if st.session_state["authentication_status"]:
             st.slider("応答の多様性",
                     min_value=0.0,
                     max_value=2.0,
-                    value=1.0,
+                    value=1.0,  # OpenAIのデフォルト値
                     step=0.1,
                     key="temperature",
                     help="値が高いほど創造的、低いほど一貫した回答になります（OpenAIデフォルト: 1.0）")
@@ -813,10 +582,11 @@ if st.session_state["authentication_status"]:
             selected_max_tokens = st.selectbox(
                 "最大応答長",
                 options=list(max_tokens_options.keys()),
-                index=0,
+                index=0,  # デフォルトは「未設定（モデル上限）」
                 key="max_tokens_select",
                 help="生成される回答の最大トークン数（OpenAIデフォルト: モデル上限）"
             )
+            # sessionの値を更新
             st.session_state["max_tokens"] = max_tokens_options[selected_max_tokens]
 
         st.divider()
@@ -826,7 +596,7 @@ if st.session_state["authentication_status"]:
         st.session_state.design_mode = st.radio(
             "対象設備を選択",
             options=list(st.session_state.prompts.keys()),
-            index=0,
+            index=0,  # デフォルトは「全設備モード」
             key="design_mode_radio",
         )
         st.markdown(f"**🛈 現在のモード:** `{st.session_state.design_mode}`")
@@ -848,7 +618,7 @@ if st.session_state["authentication_status"]:
         
         st.divider()
 
-        # ===== RAG 検索の使用設定 =====
+        # ===== サイドバー（モデル選択などの下が最適） =====
         st.markdown("### 🧠 RAG 検索の使用設定")
 
         st.session_state["use_rag"] = st.checkbox(
@@ -857,12 +627,13 @@ if st.session_state["authentication_status"]:
             help="OFFにすると、プロンプトと履歴のみで応答を生成します"
         )
 
+        # ✅ 現在のモードを明示表示
         if st.session_state["use_rag"]:
             st.success("現在のモード: RAG使用中")
         else:
             st.info("現在のモード: GPTのみ（検索なし）")
 
-        # ベクトルDBステータス
+        # サイドバー下部など、rag_collection の表示
         st.markdown("### 🗂 ベクトルDBステータス")
 
         if st.session_state.get("rag_collection"):
@@ -897,15 +668,19 @@ if st.session_state["authentication_status"]:
     if st.session_state.edit_target:
         mode_name = st.session_state.edit_target
 
+        # 完全にクリーンなコンテナでプロンプト編集UI
         st.title(f"✏️ プロンプト編集: {mode_name}")
 
+        # 編集用フォーム - フォームを使うことで確実に入力を受け付ける
         with st.form(key=f"prompt_edit_form_{mode_name}"):
+            # テキストエリア
             prompt_text = st.text_area(
                 "プロンプトを編集してください",
                 value=st.session_state.prompts[mode_name],
                 height=400
             )
 
+            # フォーム内のボタン
             col1, col2, col3 = st.columns(3)
             with col1:
                 save_button = st.form_submit_button(label="✅ 保存")
@@ -914,6 +689,7 @@ if st.session_state["authentication_status"]:
             with col3:
                 cancel_button = st.form_submit_button(label="❌ キャンセル")
 
+        # フォーム送信後の処理
         if save_button:
             handle_save_prompt(mode_name, prompt_text)
         elif reset_button:
@@ -921,8 +697,10 @@ if st.session_state["authentication_status"]:
         elif cancel_button:
             handle_cancel_edit()
 
-    # =====  メイン画面表示  ==========================================================
+    # =====  中央ペイン  ==========================================================
+    # プロンプト編集モードでない場合のみチャットインターフェースを表示
     if not st.session_state.edit_target:
+        # 現在のモデルとモードを表示
         st.title("💬 GPT + RAG チャットボット")
         st.subheader(f"🗣️ {st.session_state.current_chat}")
         st.markdown(f"**モデル:** {st.session_state.gpt_model} | **モード:** {st.session_state.design_mode}")
@@ -935,120 +713,125 @@ if st.session_state["authentication_status"]:
                 st.markdown(f'<div class="{message_class}">{m["content"]}</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # -- 比較結果表示 --
-        msgs = get_messages()
-        if msgs and msgs[-1]["role"] == "assistant":
-            turn_key = (st.session_state.sid, len(msgs))
-            
-            comparison_results = st.session_state.comparison_results.get(turn_key, {})
-            expected_count = st.session_state.get("compare_expected", {}).get(turn_key, 0)
-            should_run = st.session_state.get("should_run_comparison") == turn_key
-            
-            if should_run:
-                st.info("🧪 他モデルでの比較を準備中...")
-            elif expected_count > 0 and len(comparison_results) < expected_count:
-                st.info(f"🧪 他モデルでの比較実行中... ({len(comparison_results)}/{expected_count})")
-            elif comparison_results:
-                with st.expander(f"🧪 他モデル比較結果 ({len(comparison_results)}モデル)", expanded=False):
-                    for (model, temp), answer in comparison_results.items():
-                        st.markdown(f"#### ⮞ `{model}` (temperature={temp})")
-                        st.markdown(answer)
-                        st.divider()
-
         # -- 入力欄 --
-        user_prompt = st.chat_input("メッセージを入力…", key="main_chat_input")
+        user_prompt = st.chat_input("メッセージを入力…")
     else:
+        # プロンプト編集モード時は入力欄を無効化
         user_prompt = None
 
-    # --------- 待機中の比較処理を実行 ----------------------------------------
-    if st.session_state.get("should_run_comparison") and not user_prompt:
-        logger.info("🔍 比較処理チェック開始")
-        logger.info("🔍 should_run_comparison: %s", st.session_state.get("should_run_comparison"))
-        
-        turn_key = st.session_state.pop("should_run_comparison")
-        logger.info("🔍 turn_key: %s", turn_key)
-        
-        with st.spinner("🧪 他モデルで比較回答を生成中..."):
-            try:
-                logger.info("🔍 スピナー内部に入りました")
-                
-                msgs = get_messages()
-                logger.info("🔍 メッセージ取得: %d件", len(msgs) if msgs else 0)
-                
-                if msgs and len(msgs) >= 2:
-                    logger.info("🔍 メッセージ条件OK、比較処理開始")
-                    
-                    prompt = st.session_state.prompts[st.session_state.design_mode]
-                    user_input = msgs[-2]["content"]
-                    
-                    logger.info("🔍 比較処理パラメータ準備完了")
-                    logger.info("🔍 user_input: %s", user_input[:50] + "..." if len(user_input) > 50 else user_input)
-                    
-                    run_compare_sync(prompt, user_input, msgs)
-                    
-                    logger.info("✅ 遅延比較処理完了: %s", turn_key)
-                    st.success("🧪 比較処理が完了しました")
-                    
-                else:
-                    logger.warning("⚠️ メッセージ履歴が不足: len=%d", len(msgs) if msgs else 0)
-                    
-            except Exception as e:
-                logger.error("❌ 比較処理エラー: %s", e, exc_info=True)
-                st.error(f"比較処理中にエラーが発生しました: {e}")
-
     # =====  応答生成  ============================================================
-    if user_prompt and not st.session_state.edit_target:
-        try:
-            logger.info("🔍 メイン応答生成開始")
-            
-            # --- 履歴へ追加 & ユーザーメッセージ描画 ------------------------------
-            msgs = get_messages()
-            msgs.append({"role": "user", "content": user_prompt})
-            with st.chat_message("user"):
-                st.markdown(f'<div class="user-message">{user_prompt}</div>', unsafe_allow_html=True)
+    if user_prompt and not st.session_state.edit_target:  # 編集モード時は応答生成をスキップ
+        # メッセージリストに現在の質問を追加
+        msgs = get_messages()
+        msgs.append({"role": "user", "content": user_prompt})
 
-            # --- メイン回答をストリーミング ----------------------------------------
+        # ユーザーメッセージを表示
+        with st.chat_message("user"):
+            st.markdown(f'<div class="user-message">{user_prompt}</div>', unsafe_allow_html=True)
+
+        # シンプルなステータス表示 - 折りたたみなし
+        with st.status(f"🤖 {st.session_state.gpt_model} で回答を生成中...", expanded=True) as status:
+            # プロンプト取得
             prompt = st.session_state.prompts[st.session_state.design_mode]
-            
-            logger.info("🔍 stream_main_answer呼び出し前")
-            assistant_reply, sources = stream_main_answer(prompt, user_prompt, msgs)
-            logger.info("🔍 stream_main_answer完了")
 
-            # 履歴へ保存
+            logger.info("💬 gen_start — mode=%s model=%s use_rag=%s sid=%s",
+                st.session_state.design_mode,
+                st.session_state.gpt_model,
+                st.session_state.get("use_rag", True),
+                st.session_state.sid)
+
+            try:
+                # ---------- RAG あり ----------
+                if st.session_state.get("use_rag", True):
+                    st.session_state["last_answer_mode"] = "RAG"
+
+                    t_api = time.perf_counter()
+                    rag_res = generate_answer(
+                            prompt=prompt,
+                            question=user_prompt,
+                            collection=st.session_state.rag_collection,
+                            rag_files=st.session_state.rag_files,  # ← ここを追加
+                            top_k=4,
+                            model=st.session_state.gpt_model,
+                            chat_history=msgs,
+                        )
+                    api_elapsed = time.perf_counter() - t_api
+                    assistant_reply = rag_res["answer"]
+                    sources = rag_res["sources"]
+
+                    logger.info("💬 GPT done — tokens≈%d  api_elapsed=%.2fs  sources=%d",
+                                    len(assistant_reply.split()), api_elapsed, len(sources))
+
+                # ---------- GPT-only ----------
+                else:
+                    st.session_state["last_answer_mode"] = "GPT-only"
+                    # API呼び出し部分（条件付き）
+                    params = {
+                        "model": st.session_state.gpt_model,
+                        "messages": [
+                            {"role": "system", "content": prompt},
+                            *msgs[:-1],
+                            {"role": "user", "content": user_prompt},
+                        ]
+                    }
+
+                    # カスタム設定があれば追加
+                    if st.session_state.get("temperature") != 1.0:
+                        params["temperature"] = st.session_state.temperature
+                    if st.session_state.get("max_tokens") is not None:
+                        params["max_tokens"] = st.session_state.max_tokens
+
+                    import time
+                    t_api = time.perf_counter()
+
+                    # APIを呼び出し
+                    resp = client.chat.completions.create(**params)
+
+                    api_elapsed = time.perf_counter() - t_api
+
+                    assistant_reply = resp.choices[0].message.content
+                    sources = []
+
+                    logger.info("💬 GPT done — tokens≈%d  api_elapsed=%.2fs",
+                                    len(assistant_reply.split()), api_elapsed)
+                    
+            except Exception as e:
+                logger.exception("❌ answer_gen failed — %s", e)
+                st.error("回答生成時にエラーが発生しました")
+
+            # ---------- 画面反映 ----------
+            with st.chat_message("assistant"):
+                # モデル情報を応答に追加
+                model_info = f"\n\n---\n*このレスポンスは `{st.session_state.gpt_model}` で生成されました*"
+                full_reply = assistant_reply + model_info
+                st.markdown(full_reply)
+
+            # チャットメッセージ外で expander 表示
+            # if sources:
+            #     st.markdown("### 🔎 RAG が取得したチャンク")  # タイトルとして使う
+            #     for idx, s in enumerate(sources, 1):
+            #         chunk = s.get("content", "")[:200]
+            #         if len(s.get("content", "")) > 200:
+            #             chunk += " …"
+            #         with st.expander(f"Doc {idx} - {s['metadata'].get('source','N/A')} (score: {s['distance']:.4f})"):
+            #             st.markdown(f"> {chunk}")
+
+            # 保存するのは元の応答（モデル情報なし）
             msgs.append({"role": "assistant", "content": assistant_reply})
-            logger.info("🔍 履歴保存完了")
 
-            # --------- 比較処理を次回実行に延期 --------------------------------------
-            turn_key = (st.session_state.sid, len(msgs))
-            logger.info("🔍 比較フラグ設定: turn_key=%s", turn_key)
-            
-            st.session_state["should_run_comparison"] = turn_key
-            logger.info("🔍 should_run_comparison設定完了: %s", st.session_state["should_run_comparison"])
+            # 会話内容を Sheets へ記録
+            post_log(user_prompt, assistant_reply, prompt)
 
-            # --------- ログ送信 & タイトル自動生成（エラー処理付き） -----------
-            try:
-                logger.info("🔍 ログ送信開始")
-                post_log(user_prompt, assistant_reply, prompt)
-                logger.info("🔍 ログ送信完了")
-            except Exception as e:
-                logger.warning("ログ送信失敗: %s", e)
+            # チャットタイトル自動生成（初回応答後）
+            # if len(msgs) == 2 and msgs[0]["role"] == "user" and msgs[1]["role"] == "assistant":
+            new_title = generate_chat_title(msgs)
+            if new_title and new_title != st.session_state.current_chat:
+                old_title = st.session_state.current_chat
+                st.session_state.chats[new_title] = st.session_state.chats[old_title]
+                del st.session_state.chats[old_title]
+                st.session_state.current_chat = new_title
             
-            try:
-                logger.info("🔍 タイトル生成開始")
-                new_title = generate_chat_title(msgs)
-                if new_title and new_title != st.session_state.current_chat:
-                    st.session_state.chats[new_title] = st.session_state.chats.pop(st.session_state.current_chat)
-                    st.session_state.chat_sids[new_title] = st.session_state.chat_sids.pop(st.session_state.current_chat)
-                    st.session_state.current_chat = new_title
-                logger.info("🔍 タイトル生成完了")
-            except Exception as e:
-                logger.warning("タイトル生成失敗: %s", e)
-            
-            logger.info("🔍 メイン応答処理完了")
-            
-        except Exception as e:
-            logger.error("❌ メイン応答生成でエラー: %s", e, exc_info=True)
-            st.error(f"応答生成中にエラーが発生しました: {e}")
+            st.rerun()
 
 elif st.session_state["authentication_status"] is False:
     st.error('ユーザー名またはパスワードが間違っています。')
