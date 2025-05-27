@@ -21,7 +21,7 @@ st.set_page_config(page_title="GPT + RAG Chatbot", page_icon="💬", layout="wid
 logger = init_logger()
 client        = OpenAI()
 async_client  = AsyncOpenAI()
-MAX_PARALLEL  = 1               # 同時に叩く比較 API 本数
+MAX_PARALLEL  = 3               # 同時に叩く比較 API 本数
 SEM           = asyncio.Semaphore(MAX_PARALLEL)  # asyncio 用
 
 # =====  認証設定の読み込み ============================================================
@@ -485,80 +485,47 @@ if st.session_state["authentication_status"]:
     # =====  チャット応答生成  =========================================
     def stream_main_answer(prompt: str, user_prompt: str, msgs: List[Dict[str, str]]):
         """メインモデルの回答をストリーミング描画して返す"""
-        try:
-            logger.info("🔍 stream_main_answer開始 - RAG使用: %s", st.session_state.get("use_rag", True))
-            
-            # --- RAG / GPT-only は元コードのロジックを援用 ---
-            if st.session_state.get("use_rag", True):
-                logger.info("🔍 RAG処理開始")
-                # RAG は generate_answer 内部でストリーミング不可のため旧方式
-                try:
-                    res = generate_answer(
-                        prompt       = prompt,
-                        question     = user_prompt,
-                        collection   = st.session_state.rag_collection,
-                        rag_files    = st.session_state.rag_files,
-                        top_k        = 4,
-                        model        = st.session_state.gpt_model,
-                        chat_history = msgs,
-                    )
-                    logger.info("🔍 RAG generate_answer完了")
-                    
-                    with st.chat_message("assistant"):
-                        st.markdown(res["answer"])
-                    logger.info("🔍 RAG応答表示完了")
-                    
-                    return res["answer"], res["sources"]
-                    
-                except Exception as e:
-                    logger.error("❌ RAG処理エラー: %s", e, exc_info=True)
-                    # RAGに失敗した場合はGPTのみにフォールバック
-                    logger.info("🔍 RAG失敗、GPTのみにフォールバック")
+        # --- RAG / GPT-only は元コードのロジックを援用 ---
+        if st.session_state.get("use_rag", True):
+            # RAG は generate_answer 内部でストリーミング不可のため旧方式
+            res = generate_answer(
+                prompt       = prompt,
+                question     = user_prompt,
+                collection   = st.session_state.rag_collection,
+                rag_files    = st.session_state.rag_files,
+                top_k        = 4,
+                model        = st.session_state.gpt_model,
+                chat_history = msgs,
+            )
+            with st.chat_message("assistant"):
+                st.markdown(res["answer"])
+            return res["answer"], res["sources"]
 
-            # GPT‑only ならストリーミング
-            logger.info("🔍 GPTのみ処理開始")
-            try:
-                stream = client.chat.completions.create(
-                    model     = st.session_state.gpt_model,
-                    stream    = True,
-                    messages  = [
-                        {"role": "system", "content": prompt},
-                        *msgs[:-1],
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    temperature = st.session_state.temperature,
-                    max_tokens  = st.session_state.get("max_tokens"),
-                )
-                logger.info("🔍 OpenAI stream作成完了")
-                
-                buf = ""
-                with st.chat_message("assistant"):
-                    ph = st.empty()
-                    chunk_count = 0
-                    for chunk in stream:
-                        chunk_count += 1
-                        if chunk.choices[0].delta.content:
-                            buf += chunk.choices[0].delta.content
-                            ph.markdown(buf + "▌")
-                        
-                        # 100チャンクごとにログ出力（進行確認用）
-                        if chunk_count % 100 == 0:
-                            logger.info("🔍 ストリーミング進行中: %d chunks, %d chars", chunk_count, len(buf))
-                    
-                    ph.markdown(buf)
-                    logger.info("🔍 ストリーミング完了: %d chunks, %d chars", chunk_count, len(buf))
-                    
-                return buf, []  # sources は未対応
-                
-            except Exception as e:
-                logger.error("❌ GPTストリーミングエラー: %s", e, exc_info=True)
-                st.error(f"GPT応答生成エラー: {e}")
-                return f"エラーが発生しました: {e}", []
-                
+        # GPT‑only ならストリーミング
+        try:
+            stream = client.chat.completions.create(
+                model     = st.session_state.gpt_model,
+                stream    = True,
+                messages  = [
+                    {"role": "system", "content": prompt},
+                    *msgs[:-1],
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature = st.session_state.temperature,
+                max_tokens  = st.session_state.get("max_tokens"),
+            )
+            buf = ""
+            with st.chat_message("assistant"):
+                ph = st.empty()
+                for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        buf += chunk.choices[0].delta.content
+                        ph.markdown(buf + "▌")
+                ph.markdown(buf)
+            return buf, []  # sources は未対応
         except Exception as e:
-            logger.error("❌ stream_main_answer全体エラー: %s", e, exc_info=True)
-            st.error(f"応答生成中にエラーが発生しました: {e}")
-            return f"エラーが発生しました: {e}", []
+            st.error(f"応答生成エラー: {e}")
+            return "エラーが発生しました", []
 
     # -------------------------------------------------------------------
     # ▼ 比較モデルを 1 ジョブ実行する async ヘルパー
