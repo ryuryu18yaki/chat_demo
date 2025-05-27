@@ -416,8 +416,11 @@ if st.session_state["authentication_status"]:
                 # タイムアウト付きで実行
                 if job["use_rag"]:
                     # RAG処理（同期のためタイムアウト制御は限定的）
-                    max_tokens = job.get("max_tokens") or 1000  # None対策
-                    job["max_tokens"] = min(max_tokens, 1000)
+                    # 修正後（安全）
+                    max_tokens = job.get("max_tokens")
+                    if max_tokens is None:
+                        max_tokens = 1000
+                    safe_max_tokens = min(max_tokens, 1000)
                     
                     res = generate_answer(
                         prompt       = job["prompt"],
