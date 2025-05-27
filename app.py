@@ -18,12 +18,6 @@ st.set_page_config(page_title="GPT + RAG Chatbot", page_icon="💬", layout="wid
 # ▶ 共通セットアップ
 # -------------------------------------------------------------------
 
-logging.basicConfig(   # root も DEBUG にしておく場合
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    force=True,        # 先に何か設定されていても上書き
-)
-
 logger = init_logger()
 client        = OpenAI()
 async_client  = AsyncOpenAI()
