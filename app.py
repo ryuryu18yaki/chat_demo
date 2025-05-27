@@ -21,7 +21,7 @@ st.set_page_config(page_title="GPT + RAG Chatbot", page_icon="💬", layout="wid
 logger = init_logger()
 client        = OpenAI()
 async_client  = AsyncOpenAI()
-MAX_PARALLEL  = 3               # 同時に叩く比較 API 本数
+MAX_PARALLEL  = 1               # 同時に叩く比較 API 本数
 SEM           = asyncio.Semaphore(MAX_PARALLEL)  # asyncio 用
 
 # =====  認証設定の読み込み ============================================================
