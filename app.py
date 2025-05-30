@@ -37,20 +37,41 @@ def post_log(
     output_text: str,
     prompt: str,
 ):
-    """Google Sheetsに直接ログを保存（gspread使用）"""
+    """Google Sheetsに直接ログを保存（gspread使用）- デバッグ版"""
     
     try:
-        success = log_to_sheets(input_text, output_text, prompt)
+        logger.info("🔍 post_log start — attempting to log conversation")
         
-        if success:
-            logger.info("✅ sheets_log success — user=%s mode=%s", 
-                       st.session_state.get("username"), 
-                       st.session_state.get("design_mode"))
-        else:
-            logger.warning("⚠️ sheets_log failed")
+        # sheets_managerの状態確認
+        try:
+            manager = get_sheets_manager()
+            logger.info("🔍 manager obtained — is_connected=%s", manager.is_connected)
+            
+            if not manager.is_connected:
+                logger.error("❌ manager not connected")
+                return
+                
+        except Exception as e:
+            logger.error("❌ failed to get sheets manager — %s", e, exc_info=True)
+            return
+        
+        # log_to_sheets呼び出し
+        try:
+            success = log_to_sheets(input_text, output_text, prompt)
+            logger.info("🔍 log_to_sheets result — success=%s", success)
+            
+            if success:
+                logger.info("✅ sheets_log success — user=%s mode=%s", 
+                           st.session_state.get("username"), 
+                           st.session_state.get("design_mode"))
+            else:
+                logger.warning("⚠️ sheets_log failed — log_to_sheets returned False")
+                
+        except Exception as e:
+            logger.error("❌ log_to_sheets failed — %s", e, exc_info=True)
             
     except Exception as e:
-        logger.error("❌ sheets_log error — %s", e)
+        logger.error("❌ post_log outer error — %s", e, exc_info=True)
 
 # =====  基本設定  ============================================================
 client = OpenAI()
@@ -815,7 +836,7 @@ if st.session_state["authentication_status"]:
                 st.session_state.current_chat = new_title
             
             post_log(user_prompt, assistant_reply, prompt)
-            
+
             st.rerun()
 
 elif st.session_state["authentication_status"] is False:
