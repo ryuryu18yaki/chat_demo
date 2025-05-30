@@ -670,6 +670,10 @@ if st.session_state["authentication_status"]:
             
         if st.button("🔄 インデックス再構築", disabled=not st.session_state.rag_files):
             rebuild_rag_collection()
+        
+        if st.button("🔧 接続診断実行"):
+            from src.sheets_manager import debug_connection
+            debug_connection()
 
     # =====  プロンプト編集画面  =================================================
     if st.session_state.edit_target:
