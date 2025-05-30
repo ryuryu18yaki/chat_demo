@@ -12,3 +12,6 @@ opentelemetry-api
 opentelemetry-exporter-otlp-proto-grpc
 pysqlite3-binary>=0.5.2
 requests
+gspread 
+google-auth 
+pandas

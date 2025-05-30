@@ -1,13 +1,15 @@
 import streamlit as st
 from openai import OpenAI
 from typing import List, Dict, Any
-import time, functools, requests
+import time, functools
+# import requests  # ← 削除（Webhook不要）
 
 from src.rag_preprocess import preprocess_files
 from src.rag_vector import save_docs_to_chroma
 from src.rag_qa import generate_answer
 from src.startup_loader import initialize_chroma_from_input
 from src.logging_utils import init_logger
+from src.sheets_manager import log_to_sheets, get_sheets_manager  # ← 追加
 
 import yaml
 import streamlit_authenticator as stauth
@@ -29,42 +31,26 @@ authenticator = stauth.Authenticate(
     config['cookie']['expiry_days']
 )
 
-WEBHOOK_URL = st.secrets["WEBHOOK_URL"]
-
-# ログ送信用の関数
+# ===== post_log関数を完全置き換え =====
 def post_log(
     input_text: str,
     output_text: str,
     prompt: str,
 ):
-    """Apps Script Webhook へ 1 行 POST する（302 を成功扱い）"""
-    payload = {
-        "mode": st.session_state["design_mode"],       # ex: "chat", "eval"
-        "model": st.session_state['gpt_model'],        # ex: "gpt-4", "gpt-4o"
-        "title": st.session_state["current_chat"],     # 会話タイトル
-        "input": input_text,                           # 入力メッセージ
-        "output": output_text,                         # 出力メッセージ（LLM応答）
-        "prompt": prompt,                              # システムプロンプトなど
-    }
-
-    for wait in (0, 1, 3):  # 最大3回リトライ
-        try:
-            r = requests.post(
-                WEBHOOK_URL,
-                json=payload,
-                timeout=4,
-                allow_redirects=False,  # 302 Found を許容するため
-            )
-            if r.status_code in (200, 302):
-                logger.info("✅ post_log ok — status=%s", r.status_code)
-                return
-            logger.warning("⚠️ post_log status=%s body=%s",
-                           r.status_code, r.text[:120])
-        except requests.RequestException as e:
-            logger.error("❌ post_log error — %s", e, exc_info=True)
-        time.sleep(wait)
-
-    st.warning("⚠️ Sheets へのログ送信に失敗しました")
+    """Google Sheetsに直接ログを保存（gspread使用）"""
+    
+    try:
+        success = log_to_sheets(input_text, output_text, prompt)
+        
+        if success:
+            logger.info("✅ sheets_log success — user=%s mode=%s", 
+                       st.session_state.get("username"), 
+                       st.session_state.get("design_mode"))
+        else:
+            logger.warning("⚠️ sheets_log failed")
+            
+    except Exception as e:
+        logger.error("❌ sheets_log error — %s", e)
 
 # =====  基本設定  ============================================================
 client = OpenAI()
@@ -819,9 +805,6 @@ if st.session_state["authentication_status"]:
             # 保存するのは元の応答（モデル情報なし）
             msgs.append({"role": "assistant", "content": assistant_reply})
 
-            # 会話内容を Sheets へ記録
-            post_log(user_prompt, assistant_reply, prompt)
-
             # チャットタイトル自動生成（初回応答後）
             # if len(msgs) == 2 and msgs[0]["role"] == "user" and msgs[1]["role"] == "assistant":
             new_title = generate_chat_title(msgs)
@@ -830,6 +813,8 @@ if st.session_state["authentication_status"]:
                 st.session_state.chats[new_title] = st.session_state.chats[old_title]
                 del st.session_state.chats[old_title]
                 st.session_state.current_chat = new_title
+            
+            post_log(user_prompt, assistant_reply, prompt)
             
             st.rerun()
 
