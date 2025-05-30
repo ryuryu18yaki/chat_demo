@@ -1,3 +1,5 @@
+# src/sheets_manager.py
+
 import gspread
 from google.oauth2.service_account import Credentials
 import pandas as pd
@@ -76,15 +78,16 @@ class SheetsManager:
                         input_text: str, 
                         output_text: str,
                         prompt_used: str,
+                        chat_title: str = None,
                         metadata: Dict[str, Any] = None) -> bool:
         """会話ログをSheetsに保存"""
         
         if not self.is_connected:
             return False
         
-        # ヘッダー定義
+        # ヘッダー定義（chat_titleを追加）
         headers = [
-            "timestamp", "user_id", "session_id", "mode", "model", 
+            "timestamp", "user_id", "session_id", "chat_title", "mode", "model", 
             "input_text", "output_text", "prompt_used", "metadata"
         ]
         
@@ -98,6 +101,7 @@ class SheetsManager:
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             user_id,
             session_id,
+            chat_title or "未設定",
             mode,
             model,
             self._truncate_text(input_text, 1000),
@@ -163,14 +167,16 @@ def get_sheets_manager():
     """キャッシュされたSheetsManagerインスタンス"""
     return SheetsManager()
 
-def log_to_sheets(input_text: str, output_text: str, prompt: str):
+def log_to_sheets(input_text: str, output_text: str, prompt: str, chat_title: str = None) -> bool:
     """Streamlitアプリから呼び出すログ関数"""
     
     manager = get_sheets_manager()
     
     if not manager.is_connected:
-        st.warning("⚠️ Google Sheets接続エラー")
         return False
+    
+    # チャットタイトルの決定
+    title_to_use = chat_title or st.session_state.get("current_chat", "未設定")
     
     # メタデータ準備
     metadata = {
@@ -189,105 +195,45 @@ def log_to_sheets(input_text: str, output_text: str, prompt: str):
         input_text=input_text,
         output_text=output_text,
         prompt_used=prompt,
+        chat_title=title_to_use,
         metadata=metadata
     )
     
     return success
 
-# デバッグ用関数を追加
-def debug_connection():
-    """詳細な接続診断"""
-    print("🔧 Google Sheets接続診断開始...")
+# 接続テスト用
+def test_connection():
+    """接続テスト"""
+    print("🔧 Google Sheets接続テスト開始...")
     
-    # Step 1: Streamlit secrets確認
-    print("\n--- Step 1: Streamlit secrets確認 ---")
-    try:
-        secrets_keys = list(st.secrets.keys())
-        print(f"✅ secrets利用可能 - キー: {secrets_keys}")
-        
-        if "gcp_service_account" in st.secrets:
-            gcp_keys = list(st.secrets["gcp_service_account"].keys())
-            print(f"✅ gcp_service_account セクション存在 - キー: {gcp_keys}")
-        else:
-            print("❌ gcp_service_account セクションが見つかりません")
-            return
-            
-        if "SPREADSHEET_ID" in st.secrets:
-            print(f"✅ SPREADSHEET_ID存在: {st.secrets['SPREADSHEET_ID'][:10]}...")
-        else:
-            print("❌ SPREADSHEET_IDが見つかりません")
-            return
-            
-    except Exception as e:
-        print(f"❌ secrets確認失敗: {e}")
-        return
-    
-    # Step 2: 認証テスト
-    print("\n--- Step 2: Google認証テスト ---")
-    try:
-        credentials_info = st.secrets["gcp_service_account"]
-        creds = Credentials.from_service_account_info(
-            credentials_info, 
-            scopes=[
-                'https://spreadsheets.google.com/feeds',
-                'https://www.googleapis.com/auth/drive'
-            ]
-        )
-        print("✅ 認証情報作成成功")
-        
-        client = gspread.authorize(creds)
-        print("✅ gspreadクライアント作成成功")
-        
-    except Exception as e:
-        print(f"❌ 認証失敗: {e}")
-        return
-    
-    # Step 3: スプレッドシートアクセステスト
-    print("\n--- Step 3: スプレッドシートアクセステスト ---")
-    try:
-        spreadsheet_id = st.secrets["SPREADSHEET_ID"]
-        spreadsheet = client.open_by_key(spreadsheet_id)
-        print(f"✅ スプレッドシート接続成功: {spreadsheet.title}")
-        
-        # ワークシート一覧表示
-        worksheets = spreadsheet.worksheets()
-        print(f"✅ ワークシート一覧: {[ws.title for ws in worksheets]}")
-        
-    except Exception as e:
-        print(f"❌ スプレッドシートアクセス失敗: {e}")
-        print("考えられる原因:")
-        print("  - スプレッドシートIDが間違っている")
-        print("  - サービスアカウントに共有権限がない")
-        print("  - Google Sheets APIが有効化されていない")
-        return
-    
-    # Step 4: 書き込みテスト
-    print("\n--- Step 4: 書き込みテスト ---")
     try:
         manager = SheetsManager()
+        
         if manager.is_connected:
+            print("✅ 接続成功")
+            
+            # テストデータ
             success = manager.log_conversation(
-                user_id="debug_user",
-                session_id="debug_session",
-                mode="デバッグテスト",
-                model="debug",
-                input_text="デバッグ質問",
-                output_text="デバッグ回答",
-                prompt_used="デバッグプロンプト",
-                metadata={"debug": True}
+                user_id="test_user",
+                session_id="test_session",
+                mode="テストモード",
+                model="gpt-4o",
+                input_text="テスト質問です",
+                output_text="テスト回答です",
+                prompt_used="テストプロンプト",
+                metadata={"test": True}
             )
             
             if success:
-                print("✅ 書き込みテスト成功")
+                print("✅ データ書き込み成功")
             else:
-                print("❌ 書き込みテスト失敗")
+                print("❌ データ書き込み失敗")
+                
         else:
-            print("❌ マネージャー接続失敗")
+            print("❌ 接続失敗")
             
     except Exception as e:
-        print(f"❌ 書き込みテスト例外: {e}")
-    
-    print("\n🔧 診断完了")
+        print(f"❌ テストエラー: {e}")
 
 def debug_connection_streamlit():
     """Streamlit用の詳細な接続診断"""
@@ -378,6 +324,7 @@ def debug_connection_streamlit():
                 input_text="デバッグ質問",
                 output_text="デバッグ回答",
                 prompt_used="デバッグプロンプト",
+                chat_title="デバッグチャット",
                 metadata={"debug": True}
             )
             
@@ -402,11 +349,6 @@ def check_connection_status():
         return manager.is_connected
     except:
         return False
-
-# 接続テスト用
-def test_connection():
-    """簡単な接続テスト"""
-    debug_connection()
 
 if __name__ == "__main__":
     test_connection()
