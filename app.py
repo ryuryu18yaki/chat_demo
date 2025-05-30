@@ -672,8 +672,8 @@ if st.session_state["authentication_status"]:
             rebuild_rag_collection()
         
         if st.button("🔧 接続診断実行"):
-            from src.sheets_manager import debug_connection
-            debug_connection()
+            from src.sheets_manager import debug_connection_streamlit
+            debug_connection_streamlit()
 
     # =====  プロンプト編集画面  =================================================
     if st.session_state.edit_target:

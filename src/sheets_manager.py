@@ -289,6 +289,120 @@ def debug_connection():
     
     print("\n🔧 診断完了")
 
+def debug_connection_streamlit():
+    """Streamlit用の詳細な接続診断"""
+    st.write("🔧 Google Sheets接続診断開始...")
+    
+    # Step 1: Streamlit secrets確認
+    st.write("### Step 1: Streamlit secrets確認")
+    try:
+        secrets_keys = list(st.secrets.keys())
+        st.success(f"✅ secrets利用可能 - キー: {secrets_keys}")
+        
+        if "gcp_service_account" in st.secrets:
+            gcp_keys = list(st.secrets["gcp_service_account"].keys())
+            st.success(f"✅ gcp_service_account セクション存在 - キー: {gcp_keys}")
+        else:
+            st.error("❌ gcp_service_account セクションが見つかりません")
+            return
+            
+        if "SPREADSHEET_ID" in st.secrets:
+            st.success(f"✅ SPREADSHEET_ID存在: {st.secrets['SPREADSHEET_ID'][:10]}...")
+        else:
+            st.error("❌ SPREADSHEET_IDが見つかりません")
+            return
+            
+    except Exception as e:
+        st.error(f"❌ secrets確認失敗: {e}")
+        return
+    
+    # Step 2: 認証テスト
+    st.write("### Step 2: Google認証テスト")
+    try:
+        credentials_info = st.secrets["gcp_service_account"]
+        creds = Credentials.from_service_account_info(
+            credentials_info, 
+            scopes=[
+                'https://spreadsheets.google.com/feeds',
+                'https://www.googleapis.com/auth/drive'
+            ]
+        )
+        st.success("✅ 認証情報作成成功")
+        
+        client = gspread.authorize(creds)
+        st.success("✅ gspreadクライアント作成成功")
+        
+    except Exception as e:
+        st.error(f"❌ 認証失敗: {e}")
+        st.write("**考えられる原因:**")
+        st.write("- private_keyの改行が正しくない")
+        st.write("- サービスアカウントの設定が間違っている")
+        return
+    
+    # Step 3: スプレッドシートアクセステスト
+    st.write("### Step 3: スプレッドシートアクセステスト")
+    try:
+        spreadsheet_id = st.secrets["SPREADSHEET_ID"]
+        spreadsheet = client.open_by_key(spreadsheet_id)
+        st.success(f"✅ スプレッドシート接続成功: {spreadsheet.title}")
+        
+        # ワークシート一覧表示
+        worksheets = spreadsheet.worksheets()
+        st.success(f"✅ ワークシート一覧: {[ws.title for ws in worksheets]}")
+        
+    except Exception as e:
+        st.error(f"❌ スプレッドシートアクセス失敗: {e}")
+        st.write("**考えられる原因:**")
+        st.write("- スプレッドシートIDが間違っている")
+        st.write("- サービスアカウントに共有権限がない ← **最も可能性が高い**")
+        st.write("- Google Sheets APIが有効化されていない")
+        
+        st.write("**解決方法:**")
+        st.write("1. Google Sheetsを開く")
+        st.write("2. 右上の「共有」ボタンをクリック")
+        st.write("3. 以下のメールアドレスを追加:")
+        st.code("sheets-service-account@streamlit-spread-integration.iam.gserviceaccount.com")
+        st.write("4. 権限を「編集者」に設定")
+        return
+    
+    # Step 4: 書き込みテスト
+    st.write("### Step 4: 書き込みテスト")
+    try:
+        manager = SheetsManager()
+        if manager.is_connected:
+            success = manager.log_conversation(
+                user_id="debug_user",
+                session_id="debug_session",
+                mode="デバッグテスト",
+                model="debug",
+                input_text="デバッグ質問",
+                output_text="デバッグ回答",
+                prompt_used="デバッグプロンプト",
+                metadata={"debug": True}
+            )
+            
+            if success:
+                st.success("✅ 書き込みテスト成功")
+                st.balloons()  # 成功時のアニメーション
+            else:
+                st.error("❌ 書き込みテスト失敗")
+        else:
+            st.error("❌ マネージャー接続失敗")
+            
+    except Exception as e:
+        st.error(f"❌ 書き込みテスト例外: {e}")
+    
+    st.write("### 🔧 診断完了")
+
+# 追加: 簡単な接続状態確認関数
+def check_connection_status():
+    """簡単な接続状態チェック"""
+    try:
+        manager = get_sheets_manager()
+        return manager.is_connected
+    except:
+        return False
+
 # 接続テスト用
 def test_connection():
     """簡単な接続テスト"""
