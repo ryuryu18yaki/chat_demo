@@ -52,6 +52,8 @@ def _embed_text_batch(texts: List[str]) -> List[List[float]]:
 # ---------------------------------------------------------------------------
 # ドキュメントを ChromaDB に保存
 # ---------------------------------------------------------------------------
+# src/rag_vector.py の save_docs_to_chroma関数を以下に置き換え
+
 def save_docs_to_chroma(
         *,
         docs: List[Dict[str, Any]],
@@ -70,11 +72,11 @@ def save_docs_to_chroma(
         else:
             client = chromadb.Client()  # インメモリ
 
-        # — 既存コレクションを削除して新規作成 —
+        # — 既存コレクションを安全に削除 —
         try:
             client.delete_collection(name=collection_name)
             print(f"🗑️ 既存コレクション削除: {collection_name}")
-        except ValueError:
+        except Exception:  # NotFoundError や ValueError など全てキャッチ
             print(f"📝 新規コレクション作成: {collection_name}")
 
         collection = client.create_collection(name=collection_name)
@@ -82,6 +84,10 @@ def save_docs_to_chroma(
         # — docs をバッチ登録 —
         docs_to_index = [d for d in docs if d["metadata"].get("kind") in ("text", "table")]
         print(f"🔍 処理対象ドキュメント: {len(docs_to_index)}")
+        
+        if not docs_to_index:
+            print("⚠️ 処理対象ドキュメントがありません")
+            return collection
         
         # 🔥 全体でユニークIDを管理
         global_seen_ids = set()
@@ -94,8 +100,8 @@ def save_docs_to_chroma(
             chunk_id = metadata.get('chunk_id', metadata.get('table_id', 0))
             page = metadata.get('page', 'unknown')
             
-            # より詳細なID生成
-            doc_id = f"{source}-{kind}-p{page}-c{chunk_id}"
+            # より詳細なID生成（安全な文字のみ）
+            doc_id = f"{source}_{kind}_p{page}_c{chunk_id}".replace(" ", "_").replace(".", "_").replace("-", "_")
             
             # バッチを跨いだ重複チェック
             if doc_id not in global_seen_ids:
@@ -106,7 +112,12 @@ def save_docs_to_chroma(
         
         print(f"✅ 重複除去後: {len(processed_docs)} ドキュメント")
         
+        if not processed_docs:
+            print("⚠️ 重複除去後にドキュメントがありません")
+            return collection
+        
         # バッチ処理
+        total_added = 0
         for start in range(0, len(processed_docs), batch_size):
             batch = processed_docs[start:start+batch_size]
             
@@ -138,31 +149,37 @@ def save_docs_to_chroma(
                         metadatas=metadatas,
                         ids=ids
                     )
-                    print(f"✅ バッチ {start//batch_size + 1} 完了: {len(embeddings)} ドキュメント")
+                    total_added += len(embeddings)
+                    print(f"✅ バッチ {start//batch_size + 1}/{(len(processed_docs)-1)//batch_size + 1} 完了: {len(embeddings)} ドキュメント")
                     
                 except Exception as e:
                     print(f"❌ バッチ追加エラー: {e}")
+                    print("🔄 個別追加を試行...")
+                    
                     # 個別追加を試行
-                    for i, (emb, doc, meta, doc_id) in enumerate(zip(embeddings, documents, metadatas, ids)):
+                    for i, (emb, doc_content, meta, doc_id) in enumerate(zip(embeddings, documents, metadatas, ids)):
                         try:
                             collection.add(
                                 embeddings=[emb],
-                                documents=[doc],
+                                documents=[doc_content],
                                 metadatas=[meta],
                                 ids=[doc_id]
                             )
+                            total_added += 1
+                            print(f"  ✅ 個別追加成功: {doc_id}")
                         except Exception as e2:
-                            print(f"❌ 個別追加失敗 (ID: {doc_id}): {e2}")
+                            print(f"  ❌ 個別追加失敗 (ID: {doc_id}): {e2}")
             
         # 永続化
         if persist_directory:
             try:
                 client.persist()
+                print("💾 永続化完了")
             except Exception as e:
                 print(f"⚠️ 永続化エラー: {e}")
         
         final_count = collection.count()
-        print(f"🎯 最終コレクション数: {final_count}")
+        print(f"🎯 最終統計: 追加{total_added}, DB内{final_count} ドキュメント")
         
         return collection
 
