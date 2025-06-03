@@ -32,6 +32,7 @@ authenticator = stauth.Authenticate(
 )
 
 # ===== post_log関数を完全置き換え =====
+# ===== post_log関数を完全置き換え =====
 def post_log(
     input_text: str,
     output_text: str,
@@ -79,7 +80,9 @@ def post_log(
                 
                 # Streamlit上で実行されている完全なプロンプトを再構築
                 try:
-                    msgs = st.session_state.get("messages", [])
+                    # 現在のチャットのメッセージを取得
+                    current_chat = st.session_state.get("current_chat", "New Chat")
+                    msgs = st.session_state.chats.get(current_chat, [])
                     
                     # 完全なプロンプトを構築（実際のAPI呼び出しと同じ形式）
                     full_prompt_parts = []
