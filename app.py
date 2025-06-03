@@ -981,17 +981,21 @@ if st.session_state["authentication_status"]:
 
             # 保存するのは元の応答（モデル情報なし）
             msgs.append({"role": "assistant", "content": assistant_reply})
-
-            # チャットタイトル自動生成（初回応答後）
-            # if len(msgs) == 2 and msgs[0]["role"] == "user" and msgs[1]["role"] == "assistant":
-            new_title = generate_chat_title(msgs)
-            if new_title and new_title != st.session_state.current_chat:
-                old_title = st.session_state.current_chat
-                st.session_state.chats[new_title] = st.session_state.chats[old_title]
-                del st.session_state.chats[old_title]
-                st.session_state.current_chat = new_title
-            
+            # ★ 重要：ログ保存を先に実行
+            logger.info("📝 Executing post_log before any other operations")
             post_log(user_prompt, assistant_reply, prompt, send_to_model_comparison=True)
+
+            # ★ チャットタイトル生成は後回し（ログ保存完了後）
+            try:
+                new_title = generate_chat_title(msgs)
+                if new_title and new_title != st.session_state.current_chat:
+                    old_title = st.session_state.current_chat
+                    st.session_state.chats[new_title] = st.session_state.chats[old_title]
+                    del st.session_state.chats[old_title]
+                    st.session_state.current_chat = new_title
+                    logger.info("📝 Chat title updated: %s -> %s", old_title, new_title)
+            except Exception as e:
+                logger.warning("⚠️ Chat title generation failed (non-critical): %s", e)
 
             st.rerun()
 
