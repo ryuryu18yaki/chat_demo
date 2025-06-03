@@ -37,11 +37,8 @@ def post_log(
     output_text: str,
     prompt: str,
     send_to_model_comparison: bool = False,
-    model_comparison_note: str = None,
 ):
     """Google Sheetsに直接ログを保存（gspread使用）- model比較シート対応版"""
-    
-    results = {"conversations": False, "model_comparison": False}
     
     try:
         logger.info("🔍 post_log start — attempting to log conversation")
@@ -53,18 +50,17 @@ def post_log(
             
             if not manager.is_connected:
                 logger.error("❌ manager not connected")
-                return results
+                return
                 
         except Exception as e:
             logger.error("❌ failed to get sheets manager — %s", e, exc_info=True)
-            return results
+            return
         
         # 1. conversationsシートへの保存
         try:
             logger.info("📝 attempting conversations sheet save")
             success = log_to_sheets(input_text, output_text, prompt)
             logger.info("🔍 log_to_sheets result — success=%s", success)
-            results["conversations"] = success
             
             if success:
                 logger.info("✅ conversations sheet success — user=%s mode=%s", 
@@ -112,29 +108,15 @@ def post_log(
                     # フォールバック
                     comparison_prompt = f"System: {prompt}\n\nHuman: {input_text}"
                 
-                # ノート作成
-                note_parts = []
-                if model_comparison_note:
-                    note_parts.append(model_comparison_note)
+                # ノート作成は不要なので削除
                 
-                # 現在のモードやユーザー情報を追加
-                current_mode = st.session_state.get("design_mode", "")
-                current_user = st.session_state.get("username", "")
-                if current_mode:
-                    note_parts.append(f"モード: {current_mode}")
-                if current_user:
-                    note_parts.append(f"ユーザー: {current_user}")
-                
-                user_note = " | ".join(note_parts) if note_parts else None
-                
-                # model比較シートに送信
+                # model比較シートに送信（プロンプトのみ）
                 model_success = send_prompt_to_model_comparison(
                     prompt_text=comparison_prompt,
-                    user_note=user_note
+                    user_note=None  # 使用しない
                 )
                 
                 logger.info("🔍 model comparison result — success=%s", model_success)
-                results["model_comparison"] = model_success
                 
                 if model_success:
                     logger.info("✅ model comparison sheet success")
@@ -143,24 +125,9 @@ def post_log(
                     
             except Exception as e:
                 logger.error("❌ model comparison save failed — %s", e, exc_info=True)
-        
-        # 結果サマリーログ
-        if results["conversations"]:
-            if send_to_model_comparison:
-                if results["model_comparison"]:
-                    logger.info("✅ both sheets saved successfully")
-                else:
-                    logger.warning("⚠️ conversations success, model comparison failed")
-            else:
-                logger.info("✅ conversations sheet saved successfully")
-        else:
-            logger.error("❌ conversations sheet save failed")
-        
-        return results
             
     except Exception as e:
         logger.error("❌ post_log outer error — %s", e, exc_info=True)
-        return results
 
 # =====  基本設定  ============================================================
 client = OpenAI()
