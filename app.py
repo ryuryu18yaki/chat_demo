@@ -438,29 +438,30 @@ if st.session_state["authentication_status"]:
     # =====  セッション変数  =======================================================
     if "chats" not in st.session_state:
         st.session_state.chats = {}
-    if "chat_sids"   not in st.session_state:                        # ★ 追加
+    if "chat_sids"   not in st.session_state:
         st.session_state.chat_sids = {"New Chat": str(uuid.uuid4())}
     if "current_chat" not in st.session_state:
         st.session_state.current_chat = "New Chat"
-    if "sid"         not in st.session_state:                        # ★ 追加
+    if "sid"         not in st.session_state:
         st.session_state.sid = st.session_state.chat_sids["New Chat"]
     if "edit_target" not in st.session_state:
         st.session_state.edit_target = None
     if "rag_files" not in st.session_state:
         st.session_state.rag_files: List[Dict[str, Any]] = []
     if "rag_collection" not in st.session_state:
-        st.session_state.rag_collection = None  # Chroma collection
+        st.session_state.rag_collection = None
     if "design_mode" not in st.session_state:
-        st.session_state.design_mode = list(DEFAULT_PROMPTS.keys())[0]  # デフォルトは「全設備モード」
+        st.session_state.design_mode = list(DEFAULT_PROMPTS.keys())[0]
     if "prompts" not in st.session_state:
-        st.session_state.prompts = DEFAULT_PROMPTS.copy()  # プロンプトを変更可能に
+        st.session_state.prompts = DEFAULT_PROMPTS.copy()
     if "gpt_model" not in st.session_state:
-        st.session_state.gpt_model = "gpt-4.1"  # デフォルトモデルをgpt-4.1に変更
-    if "sid" not in st.session_state:          # 追加
-        import uuid
-        st.session_state.sid = str(uuid.uuid4())
+        st.session_state.gpt_model = "gpt-4.1"
     if "use_rag" not in st.session_state:
         st.session_state["use_rag"] = False  # ← デフォルトでRAGを使わない
+    if "last_rag_sources" not in st.session_state:
+        st.session_state.last_rag_sources = []
+    if "last_rag_images" not in st.session_state:
+        st.session_state.last_rag_images = []
 
 
     # =====  ヘルパー  ============================================================
@@ -468,27 +469,23 @@ if st.session_state["authentication_status"]:
         title = st.session_state.current_chat
         return st.session_state.chats.setdefault(title, [])
     
-    # ★ 新しいチャットを作成
     def new_chat():
         title = f"Chat {len(st.session_state.chats) + 1}"
         st.session_state.chats[title] = []
-        st.session_state.chat_sids[title] = str(uuid.uuid4())   # 新sid
+        st.session_state.chat_sids[title] = str(uuid.uuid4())
         st.session_state.current_chat = title
         st.session_state.sid = st.session_state.chat_sids[title]
 
         logger.info("➕ new_chat — sid=%s  title='%s'", st.session_state.sid, title)
-
         st.rerun()
 
-    # ★ 既存チャットへ切替
     def switch_chat(title: str):
-        if title not in st.session_state.chat_sids:          # ★ 安全化
+        if title not in st.session_state.chat_sids:
             st.session_state.chat_sids[title] = str(uuid.uuid4())
         st.session_state.current_chat = title
         st.session_state.sid = st.session_state.chat_sids[title]
 
         logger.info("🔀 switch_chat — sid=%s  title='%s'", st.session_state.sid, title)
-
         st.rerun()
 
     def rebuild_rag_collection():
@@ -503,8 +500,7 @@ if st.session_state["authentication_status"]:
         total_files = len(st.session_state.rag_files)
         logger.info("📚 RAG rebuild start — files=%d", total_files)
 
-        import time
-        t0 = time.perf_counter()            # 所要時間計測
+        t0 = time.perf_counter()
 
         try:
             with st.spinner("📚 ファイルを解析し、ベクトル DB に登録中..."):
@@ -512,7 +508,7 @@ if st.session_state["authentication_status"]:
                 col = save_docs_to_chroma(
                     docs=docs,
                     collection_name="session_docs",
-                    persist_directory=None,   # インメモリ
+                    persist_directory=None,
                 )
                 st.session_state.rag_collection = col
 
@@ -527,13 +523,12 @@ if st.session_state["authentication_status"]:
             logger.exception("❌ RAG rebuild failed — %s", e)
             st.error(f"RAG 初期化中にエラーが発生しました: {e}")
 
-    # ----- チャットタイトル自動生成機能 -----
     def generate_chat_title(messages):
-        if len(messages) >= 2:  # ユーザー質問と回答が1往復以上ある場合
+        if len(messages) >= 2:
             prompt = f"以下の会話の内容を25文字以内の簡潔なタイトルにしてください:\n{messages[0]['content'][:200]}"
             try:
                 resp = client.chat.completions.create(
-                    model="gpt-4.1-nano",  # 軽量モデルで十分
+                    model="gpt-4.1-nano",
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=30,
                 )
@@ -547,8 +542,7 @@ if st.session_state["authentication_status"]:
         st.session_state.prompts[mode_name] = edited_text
         st.session_state.edit_target = None
 
-        logger.info("✏️ prompt_saved — mode=%s  len=%d",
-                mode_name, len(edited_text))
+        logger.info("✏️ prompt_saved — mode=%s  len=%d", mode_name, len(edited_text))
         
         st.success(f"「{mode_name}」のプロンプトを更新しました")
         time.sleep(1)
@@ -571,7 +565,6 @@ if st.session_state["authentication_status"]:
         st.rerun()
 
     # =====  CSS  ================================================================
-    # CSSを改善してダークモード対応
     st.markdown(
         """
         <style>
@@ -587,7 +580,7 @@ if st.session_state["authentication_status"]:
             .stButton button {font-size: 14px; padding: 6px 12px;}
         }
 
-        /* ダークモード対応メッセージスタイル - カスタム背景色は削除 */
+        /* ダークモード対応メッセージスタイル */
         .user-message, .assistant-message {
             border-radius: 10px;
             padding: 8px 12px;
@@ -634,7 +627,7 @@ if st.session_state["authentication_status"]:
             st.slider("応答の多様性",
                     min_value=0.0,
                     max_value=2.0,
-                    value=1.0,  # OpenAIのデフォルト値
+                    value=1.0,
                     step=0.1,
                     key="temperature",
                     help="値が高いほど創造的、低いほど一貫した回答になります（OpenAIデフォルト: 1.0）")
@@ -650,11 +643,10 @@ if st.session_state["authentication_status"]:
             selected_max_tokens = st.selectbox(
                 "最大応答長",
                 options=list(max_tokens_options.keys()),
-                index=0,  # デフォルトは「未設定（モデル上限）」
+                index=0,
                 key="max_tokens_select",
                 help="生成される回答の最大トークン数（OpenAIデフォルト: モデル上限）"
             )
-            # sessionの値を更新
             st.session_state["max_tokens"] = max_tokens_options[selected_max_tokens]
 
         st.divider()
@@ -664,7 +656,7 @@ if st.session_state["authentication_status"]:
         st.session_state.design_mode = st.radio(
             "対象設備を選択",
             options=list(st.session_state.prompts.keys()),
-            index=0,  # デフォルトは「全設備モード」
+            index=0,
             key="design_mode_radio",
         )
         st.markdown(f"**🛈 現在のモード:** `{st.session_state.design_mode}`")
@@ -686,7 +678,7 @@ if st.session_state["authentication_status"]:
         
         st.divider()
 
-        # ===== サイドバー（モデル選択などの下が最適） =====
+        # ===== RAG 検索の使用設定 =====
         st.markdown("### 🧠 RAG 検索の使用設定")
 
         st.session_state["use_rag"] = st.checkbox(
@@ -695,13 +687,12 @@ if st.session_state["authentication_status"]:
             help="OFFにすると、プロンプトと履歴のみで応答を生成します"
         )
 
-        # ✅ 現在のモードを明示表示
         if st.session_state["use_rag"]:
             st.success("現在のモード: RAG使用中")
         else:
             st.info("現在のモード: GPTのみ（検索なし）")
 
-        # サイドバー下部など、rag_collection の表示
+        # ベクトルDBステータス
         st.markdown("### 🗂 ベクトルDBステータス")
 
         if st.session_state.get("rag_collection"):
@@ -740,19 +731,15 @@ if st.session_state["authentication_status"]:
     if st.session_state.edit_target:
         mode_name = st.session_state.edit_target
 
-        # 完全にクリーンなコンテナでプロンプト編集UI
         st.title(f"✏️ プロンプト編集: {mode_name}")
 
-        # 編集用フォーム - フォームを使うことで確実に入力を受け付ける
         with st.form(key=f"prompt_edit_form_{mode_name}"):
-            # テキストエリア
             prompt_text = st.text_area(
                 "プロンプトを編集してください",
                 value=st.session_state.prompts[mode_name],
                 height=400
             )
 
-            # フォーム内のボタン
             col1, col2, col3 = st.columns(3)
             with col1:
                 save_button = st.form_submit_button(label="✅ 保存")
@@ -761,7 +748,6 @@ if st.session_state["authentication_status"]:
             with col3:
                 cancel_button = st.form_submit_button(label="❌ キャンセル")
 
-        # フォーム送信後の処理
         if save_button:
             handle_save_prompt(mode_name, prompt_text)
         elif reset_button:
@@ -769,10 +755,8 @@ if st.session_state["authentication_status"]:
         elif cancel_button:
             handle_cancel_edit()
 
-    # =====  中央ペイン  ==========================================================
-    # プロンプト編集モードでない場合のみチャットインターフェースを表示
+    # =====  メイン画面表示  ==========================================================
     if not st.session_state.edit_target:
-        # 現在のモデルとモードを表示
         st.title("💬 GPT + RAG チャットボット")
         st.subheader(f"🗣️ {st.session_state.current_chat}")
         st.markdown(f"**モデル:** {st.session_state.gpt_model} | **モード:** {st.session_state.design_mode}")
@@ -787,6 +771,98 @@ if st.session_state["authentication_status"]:
 
         # -- 入力欄 --
         user_prompt = st.chat_input("メッセージを入力…")
+
+        # ===== RAG検索結果の表示（シンプル版） =====
+        if st.session_state.get("last_rag_sources"):
+            
+            with st.expander("🔎 RAG検索結果を表示"):
+                sources = st.session_state.last_rag_sources
+                st.markdown(f"**検索チャンク数:** {len(sources)} 件")
+                
+                # セレクトボックスでチャンクを選択
+                if sources:
+                    chunk_options = []
+                    text_sources = []
+                    
+                    for idx, source in enumerate(sources):
+                        meta = source.get("metadata", {})
+                        kind = meta.get("kind", "text")
+                        
+                        if kind in ("text", "table"):
+                            source_name = meta.get("source", "N/A")
+                            page_num = meta.get("page", "N/A")
+                            distance = source.get("distance", 0)
+                            similarity = 1 - distance
+                            
+                            chunk_options.append(f"チャンク {len(text_sources)+1}: {source_name} (p.{page_num}) | 類似度: {similarity:.3f}")
+                            text_sources.append(source)
+                    
+                    if chunk_options:
+                        selected_chunk = st.selectbox(
+                            "表示するチャンクを選択:",
+                            options=range(len(chunk_options)),
+                            format_func=lambda x: chunk_options[x],
+                            key="chunk_selector"
+                        )
+                        
+                        # 選択されたチャンクの詳細表示
+                        if selected_chunk is not None and selected_chunk < len(text_sources):
+                            source = text_sources[selected_chunk]
+                            meta = source.get("metadata", {})
+                            content = source.get("content", "")
+                            
+                            col1, col2 = st.columns([3, 1])
+                            
+                            with col1:
+                                st.markdown("**内容:**")
+                                st.text_area(
+                                    label="",
+                                    value=content,
+                                    height=200,
+                                    disabled=True,
+                                    key=f"selected_content_{selected_chunk}"
+                                )
+                            
+                            with col2:
+                                st.markdown("**詳細情報:**")
+                                st.markdown(f"**種類:** {meta.get('kind', 'N/A')}")
+                                st.markdown(f"**ソース:** {meta.get('source', 'N/A')}")
+                                st.markdown(f"**ページ:** {meta.get('page', 'N/A')}")
+                                st.markdown(f"**距離:** {source.get('distance', 0):.4f}")
+                    else:
+                        st.info("📄 テキスト・表データはありませんでした")
+                
+                # 画像情報（あれば簡単に表示）
+                images = st.session_state.get("last_rag_images", [])
+                if images:
+                    st.markdown("---")
+                    st.markdown(f"**関連画像:** {len(images)} 件")
+                    
+                    # 画像選択
+                    if len(images) > 0:
+                        image_options = [f"{img['name']} (ページ {img.get('page', 'N/A')})" for img in images]
+                        selected_image = st.selectbox(
+                            "表示する画像を選択:",
+                            options=range(len(image_options)),
+                            format_func=lambda x: image_options[x],
+                            key="image_selector"
+                        )
+                        
+                        if selected_image is not None and selected_image < len(images):
+                            img_info = images[selected_image]
+                            st.image(img_info['data'], caption=img_info['name'], width=400)
+                
+                # クリアボタン
+                st.markdown("---")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🗑️ RAG結果をクリア"):
+                        st.session_state.last_rag_sources = []
+                        st.session_state.last_rag_images = []
+                        st.rerun()
+                with col2:
+                    st.markdown(f"*RAG使用: {'✅' if st.session_state.get('use_rag', False) else '❌'}*")
+
     else:
         # プロンプト編集モード時は入力欄を無効化
         user_prompt = None
@@ -818,21 +894,38 @@ if st.session_state["authentication_status"]:
                     st.session_state["last_answer_mode"] = "RAG"
 
                     t_api = time.perf_counter()
-                    rag_res = generate_answer(
-                            prompt=prompt,
-                            question=user_prompt,
-                            collection=st.session_state.rag_collection,
-                            rag_files=st.session_state.rag_files,  # ← ここを追加
-                            top_k=4,
-                            model=st.session_state.gpt_model,
-                            chat_history=msgs,
-                        )
+                    
+                    # API呼び出しパラメータを準備
+                    rag_params = {
+                        "prompt": prompt,
+                        "question": user_prompt,
+                        "collection": st.session_state.rag_collection,
+                        "rag_files": st.session_state.rag_files,
+                        "top_k": 4,
+                        "model": st.session_state.gpt_model,
+                        "chat_history": msgs,
+                    }
+                    
+                    # カスタム設定があれば追加
+                    if st.session_state.get("temperature") != 1.0:
+                        rag_params["temperature"] = st.session_state.temperature
+                    if st.session_state.get("max_tokens") is not None:
+                        rag_params["max_tokens"] = st.session_state.max_tokens
+                    
+                    # generate_answerを呼び出し
+                    rag_res = generate_answer(**rag_params)
+                    
                     api_elapsed = time.perf_counter() - t_api
                     assistant_reply = rag_res["answer"]
                     sources = rag_res["sources"]
+                    
+                    # 🔥 RAG結果をセッション状態に保存（rerunで消えないように）
+                    st.session_state.last_rag_sources = sources
+                    # 画像情報も保存（generate_answer関数から返されるようにする必要がある場合）
+                    st.session_state.last_rag_images = rag_res.get("images", [])
 
                     logger.info("💬 GPT done — tokens≈%d  api_elapsed=%.2fs  sources=%d",
-                                    len(assistant_reply.split()), api_elapsed, len(sources))
+                                len(assistant_reply.split()), api_elapsed, len(sources))
 
                 # ---------- GPT-only ----------
                 else:
