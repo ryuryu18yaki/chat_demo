@@ -34,51 +34,56 @@ authenticator = stauth.Authenticate(
 # ===== post_log関数を完全置き換え =====
 # ===== post_log関数を完全置き換え =====
 def post_log(
-    input_text: str,
-    output_text: str,
-    prompt: str,
-    send_to_model_comparison: bool = False,
-):
-    """Google Sheetsに直接ログを保存（gspread使用）- model比較シート対応版"""
-    
-    try:
-        logger.info("🔍 post_log start — attempting to log conversation")
+        input_text: str,
+        output_text: str,
+        prompt: str,
+        send_to_model_comparison: bool = False,
+    ):
+        """Google Sheetsに直接ログを保存（gspread使用）- 改良版"""
         
-        # sheets_managerの状態確認
         try:
-            manager = get_sheets_manager()
-            logger.info("🔍 manager obtained — is_connected=%s", manager.is_connected)
+            logger.info("🔍 post_log start — attempting to log conversation")
             
-            if not manager.is_connected:
-                logger.error("❌ manager not connected")
-                return
-                
-        except Exception as e:
-            logger.error("❌ failed to get sheets manager — %s", e, exc_info=True)
-            return
-        
-        # 1. conversationsシートへの保存
-        try:
-            logger.info("📝 attempting conversations sheet save")
-            success = log_to_sheets(input_text, output_text, prompt)
-            logger.info("🔍 log_to_sheets result — success=%s", success)
-            
-            if success:
-                logger.info("✅ conversations sheet success — user=%s mode=%s", 
-                           st.session_state.get("username"), 
-                           st.session_state.get("design_mode"))
-            else:
-                logger.warning("⚠️ conversations sheet failed — log_to_sheets returned False")
-                
-        except Exception as e:
-            logger.error("❌ log_to_sheets failed — %s", e, exc_info=True)
-        
-        # 2. model比較シートへの保存（オプション）
-        if send_to_model_comparison:
+            # sheets_managerの状態確認
+            logger.info("🔍 Step 1: Getting sheets manager...")
             try:
-                logger.info("📊 attempting model comparison sheet save")
+                manager = get_sheets_manager()
+                logger.info("🔍 Step 2: Manager obtained — type=%s", type(manager).__name__)
                 
-                # Streamlit上で実行されている完全なプロンプトを再構築
+                if not manager:
+                    logger.error("❌ manager is None")
+                    return
+                    
+                logger.info("🔍 Step 3: Checking connection — is_connected=%s", 
+                        getattr(manager, 'is_connected', 'ATTR_NOT_FOUND'))
+                
+                if not manager.is_connected:
+                    logger.error("❌ manager not connected")
+                    return
+                    
+            except Exception as e:
+                logger.error("❌ Step 1-3 failed — %s", e, exc_info=True)
+                return
+            
+            # 1. conversationsシートへの保存
+            logger.info("🔍 Step 4: Starting conversations sheet save...")
+            try:
+                success = log_to_sheets(input_text, output_text, prompt)
+                logger.info("🔍 Step 5: log_to_sheets result — success=%s", success)
+                
+                if success:
+                    logger.info("✅ conversations sheet success — user=%s mode=%s", 
+                            st.session_state.get("username"), 
+                            st.session_state.get("design_mode"))
+                else:
+                    logger.warning("⚠️ conversations sheet failed — log_to_sheets returned False")
+                    
+            except Exception as e:
+                logger.error("❌ Step 4-5 failed — %s", e, exc_info=True)
+            
+            # 2. model比較シートへの保存（オプション）
+            if send_to_model_comparison:
+                logger.info("🔍 Step 6: Starting model comparison sheet save...")
                 try:
                     # 現在のチャットのメッセージを取得
                     current_chat = st.session_state.get("current_chat", "New Chat")
@@ -106,31 +111,28 @@ def post_log(
                     # 完全なプロンプトを作成
                     comparison_prompt = "\n\n".join(full_prompt_parts)
                     
-                except Exception as e:
-                    logger.warning("⚠️ failed to build full prompt — %s", e)
-                    # フォールバック
-                    comparison_prompt = f"System: {prompt}\n\nHuman: {input_text}"
-                
-                # ノート作成は不要なので削除
-                
-                # model比較シートに送信（プロンプトのみ）
-                model_success = send_prompt_to_model_comparison(
-                    prompt_text=comparison_prompt,
-                    user_note=None  # 使用しない
-                )
-                
-                logger.info("🔍 model comparison result — success=%s", model_success)
-                
-                if model_success:
-                    logger.info("✅ model comparison sheet success")
-                else:
-                    logger.warning("⚠️ model comparison sheet failed")
+                    logger.info("🔍 Step 7: Sending to model comparison sheet...")
                     
-            except Exception as e:
-                logger.error("❌ model comparison save failed — %s", e, exc_info=True)
+                    # model比較シートに送信（プロンプトのみ）
+                    model_success = send_prompt_to_model_comparison(
+                        prompt_text=comparison_prompt,
+                        user_note=None  # 使用しない
+                    )
+                    
+                    logger.info("🔍 Step 8: model comparison result — success=%s", model_success)
+                    
+                    if model_success:
+                        logger.info("✅ model comparison sheet success")
+                    else:
+                        logger.warning("⚠️ model comparison sheet failed")
+                        
+                except Exception as e:
+                    logger.error("❌ Step 6-8 failed — %s", e, exc_info=True)
             
-    except Exception as e:
-        logger.error("❌ post_log outer error — %s", e, exc_info=True)
+            logger.info("🔍 post_log completed successfully")
+                
+        except Exception as e:
+            logger.error("❌ post_log outer error — %s", e, exc_info=True)
 
 # =====  基本設定  ============================================================
 client = OpenAI()
