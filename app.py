@@ -1,14 +1,15 @@
-import asyncio  # 追加
 import streamlit as st
-from openai import OpenAI, AsyncOpenAI  # AsyncOpenAI追加
+from openai import OpenAI
 from typing import List, Dict, Any
-import time, functools, requests, copy  # copy追加
+import time, functools
+# import requests  # ← 削除（Webhook不要）
 
 from src.rag_preprocess import preprocess_files
 from src.rag_vector import save_docs_to_chroma
 from src.rag_qa import generate_answer
 from src.startup_loader import initialize_chroma_from_input
 from src.logging_utils import init_logger
+from src.sheets_manager import log_to_sheets, get_sheets_manager, send_prompt_to_model_comparison  # ← 追加
 
 import yaml
 import streamlit_authenticator as stauth
@@ -17,12 +18,6 @@ import uuid
 st.set_page_config(page_title="GPT + RAG Chatbot", page_icon="💬", layout="wide")
 
 logger = init_logger()
-
-# =====  比較機能用セットアップ  ============================================================
-client = OpenAI()
-async_client = AsyncOpenAI()  # 追加
-MAX_PARALLEL = 1  # 比較処理の同時実行数制限
-SEM = asyncio.Semaphore(MAX_PARALLEL)  # 追加
 
 # =====  認証設定の読み込み ============================================================
 with open('./config.yaml') as file:
@@ -36,42 +31,109 @@ authenticator = stauth.Authenticate(
     config['cookie']['expiry_days']
 )
 
-WEBHOOK_URL = st.secrets["WEBHOOK_URL"]
-
-# ログ送信用の関数
+# ===== post_log関数を完全置き換え =====
+# ===== post_log関数を完全置き換え =====
 def post_log(
     input_text: str,
     output_text: str,
     prompt: str,
+    send_to_model_comparison: bool = False,
 ):
-    """Apps Script Webhook へ 1 行 POST する（302 を成功扱い）"""
-    payload = {
-        "mode": st.session_state["design_mode"],       # ex: "chat", "eval"
-        "model": st.session_state['gpt_model'],        # ex: "gpt-4", "gpt-4o"
-        "title": st.session_state["current_chat"],     # 会話タイトル
-        "input": input_text,                           # 入力メッセージ
-        "output": output_text,                         # 出力メッセージ（LLM応答）
-        "prompt": prompt,                              # システムプロンプトなど
-    }
-
-    for wait in (0, 1, 3):  # 最大3回リトライ
+    """Google Sheetsに直接ログを保存（gspread使用）- model比較シート対応版"""
+    
+    try:
+        logger.info("🔍 post_log start — attempting to log conversation")
+        
+        # sheets_managerの状態確認
         try:
-            r = requests.post(
-                WEBHOOK_URL,
-                json=payload,
-                timeout=4,
-                allow_redirects=False,  # 302 Found を許容するため
-            )
-            if r.status_code in (200, 302):
-                logger.info("✅ post_log ok — status=%s", r.status_code)
+            manager = get_sheets_manager()
+            logger.info("🔍 manager obtained — is_connected=%s", manager.is_connected)
+            
+            if not manager.is_connected:
+                logger.error("❌ manager not connected")
                 return
-            logger.warning("⚠️ post_log status=%s body=%s",
-                           r.status_code, r.text[:120])
-        except requests.RequestException as e:
-            logger.error("❌ post_log error — %s", e, exc_info=True)
-        time.sleep(wait)
+                
+        except Exception as e:
+            logger.error("❌ failed to get sheets manager — %s", e, exc_info=True)
+            return
+        
+        # 1. conversationsシートへの保存
+        try:
+            logger.info("📝 attempting conversations sheet save")
+            success = log_to_sheets(input_text, output_text, prompt)
+            logger.info("🔍 log_to_sheets result — success=%s", success)
+            
+            if success:
+                logger.info("✅ conversations sheet success — user=%s mode=%s", 
+                           st.session_state.get("username"), 
+                           st.session_state.get("design_mode"))
+            else:
+                logger.warning("⚠️ conversations sheet failed — log_to_sheets returned False")
+                
+        except Exception as e:
+            logger.error("❌ log_to_sheets failed — %s", e, exc_info=True)
+        
+        # 2. model比較シートへの保存（オプション）
+        if send_to_model_comparison:
+            try:
+                logger.info("📊 attempting model comparison sheet save")
+                
+                # Streamlit上で実行されている完全なプロンプトを再構築
+                try:
+                    # 現在のチャットのメッセージを取得
+                    current_chat = st.session_state.get("current_chat", "New Chat")
+                    msgs = st.session_state.chats.get(current_chat, [])
+                    
+                    # 完全なプロンプトを構築（実際のAPI呼び出しと同じ形式）
+                    full_prompt_parts = []
+                    
+                    # システムプロンプト
+                    if prompt:
+                        full_prompt_parts.append(f"System: {prompt}")
+                    
+                    # 会話履歴（最後のメッセージ以外）
+                    for msg in msgs[:-1]:
+                        role = msg.get("role", "")
+                        content = msg.get("content", "")
+                        if role == "user":
+                            full_prompt_parts.append(f"Human: {content}")
+                        elif role == "assistant":
+                            full_prompt_parts.append(f"Assistant: {content}")
+                    
+                    # 現在のユーザー入力
+                    full_prompt_parts.append(f"Human: {input_text}")
+                    
+                    # 完全なプロンプトを作成
+                    comparison_prompt = "\n\n".join(full_prompt_parts)
+                    
+                except Exception as e:
+                    logger.warning("⚠️ failed to build full prompt — %s", e)
+                    # フォールバック
+                    comparison_prompt = f"System: {prompt}\n\nHuman: {input_text}"
+                
+                # ノート作成は不要なので削除
+                
+                # model比較シートに送信（プロンプトのみ）
+                model_success = send_prompt_to_model_comparison(
+                    prompt_text=comparison_prompt,
+                    user_note=None  # 使用しない
+                )
+                
+                logger.info("🔍 model comparison result — success=%s", model_success)
+                
+                if model_success:
+                    logger.info("✅ model comparison sheet success")
+                else:
+                    logger.warning("⚠️ model comparison sheet failed")
+                    
+            except Exception as e:
+                logger.error("❌ model comparison save failed — %s", e, exc_info=True)
+            
+    except Exception as e:
+        logger.error("❌ post_log outer error — %s", e, exc_info=True)
 
-    st.warning("⚠️ Sheets へのログ送信に失敗しました")
+# =====  基本設定  ============================================================
+client = OpenAI()
 
 # =====  ログインUIの表示  ============================================================
 authenticator.login()
@@ -393,133 +455,8 @@ if st.session_state["authentication_status"]:
     if "gpt_model" not in st.session_state:
         st.session_state.gpt_model = "gpt-4.1"
     if "use_rag" not in st.session_state:
-        st.session_state["use_rag"] = False
+        st.session_state["use_rag"] = False  # ← デフォルトでRAGを使わない
 
-    # =====  比較機能用セッション変数（追加）  =======================================================
-    if "comparison_results" not in st.session_state:
-        # {(chat_sid, turn_no): {(model_name, temperature): answer_text}}
-        st.session_state.comparison_results = {}
-    if "compare_expected" not in st.session_state:
-        # 期待される比較回答数 {(sid, turn): int}
-        st.session_state.compare_expected = {}
-    if "should_run_comparison" not in st.session_state:
-        # 比較処理実行フラグ
-        st.session_state.should_run_comparison = None
-
-    # =====  比較機能の関数定義（ステップ2: 有効化）  =======================================================
-    async def _generate_async(job: Dict[str, Any]) -> str:
-        """
-        単一比較ジョブを実行する関数（安全対策付き）
-        """
-        try:
-            async with SEM:
-                # タイムアウト付きで実行
-                if job["use_rag"]:
-                    # RAG処理（同期のためタイムアウト制御は限定的）
-                    # 修正後（安全）
-                    safe_max_tokens = job.get("max_tokens", 1000)
-                    
-                    res = generate_answer(
-                        prompt       = job["prompt"],
-                        question     = job["question"],
-                        collection   = job["rag_col"],
-                        rag_files    = job["rag_files"],
-                        top_k        = 4,
-                        model        = job["model"],
-                        chat_history = job["hist"],
-                        temperature  = job["temp"],
-                    )
-                    return res["answer"]
-
-                # GPTのみの場合（タイムアウト付き）
-                resp = await asyncio.wait_for(
-                    async_client.chat.completions.create(
-                        model       = job["model"],
-                        temperature = job["temp"],
-                        messages    = [
-                            {"role": "system", "content": job["prompt"]},
-                            *job["hist"][:-1],
-                            {"role": "user", "content": job["question"]},
-                        ],
-                        max_tokens  = min(job.get("max_tokens", 1000), 1000),  # 安全制限
-                    ),
-                    timeout=30.0  # 30秒でタイムアウト
-                )
-                return resp.choices[0].message.content
-
-        except asyncio.TimeoutError:
-            logger.error("❌ 比較ジョブがタイムアウト: model=%s", job.get("model", "unknown"))
-            return f"⚠️ **TimeoutError**: {job.get('model', 'unknown')}の応答がタイムアウトしました"
-        except Exception as e:
-            logger.exception("❌ 比較ジョブ失敗: model=%s error=%s", job.get("model", "unknown"), e)
-            return f"⚠️ **{type(e).__name__}**: {e}"
-
-    def run_compare_sync(prompt: str, question: str, hist: List[Dict[str, str]]):
-        """
-        比較処理を実行する関数（ステップ2: 実際に実行）
-        """
-        logger.info("🔄 比較処理開始")
-        
-        sid, turn = st.session_state.sid, len(hist)
-        main_m, main_t = st.session_state.gpt_model, float(st.session_state.temperature)
-        
-        # 比較対象モデルリスト（1つから開始）
-        MODELS = ["gpt-4o-mini"]  # まず1つでテスト
-        # MODELS = ["gpt-4o-mini", "gpt-4.1-mini"]  # 安定したら増やす
-        
-        jobs = []
-        for m in MODELS:
-            if m == main_m:
-                logger.info("🔄 メインモデル(%s)と同じためスキップ", m)
-                continue
-                
-            jobs.append(dict(
-                sid=sid, turn=turn, model=m, temp=main_t,  # 現在の温度設定を使用
-                prompt=prompt, question=question, hist=copy.deepcopy(hist),
-                use_rag   = st.session_state["use_rag"],
-                rag_col   = st.session_state.get("rag_collection"),
-                rag_files = copy.deepcopy(st.session_state.get("rag_files", [])),
-                max_tokens= st.session_state.get("max_tokens") or 1000,
-            ))
-
-        logger.info("🔄 比較ジョブ準備完了: %d件", len(jobs))
-        
-        # ジョブが0件の場合は早期リターン
-        if not jobs:
-            logger.info("🔄 比較対象がないため処理をスキップ")
-            st.session_state.compare_expected[(sid, turn)] = 0
-            return
-
-        # 実際の比較処理を実行
-        async def _go():
-            try:
-                tasks = [_generate_async(j) for j in jobs]
-                return await asyncio.wait_for(
-                    asyncio.gather(*tasks, return_exceptions=True),
-                    timeout=60.0  # 全体で60秒のタイムアウト
-                )
-            except asyncio.TimeoutError:
-                logger.error("❌ 比較処理全体がタイムアウトしました")
-                return [f"⚠️ **TimeoutError**: 全体処理がタイムアウトしました"] * len(jobs)
-
-        try:
-            answers = asyncio.run(_go())
-            logger.info("🔄 非同期処理完了: %d件の回答取得", len(answers))
-        except Exception as e:
-            logger.error("❌ 非同期処理でエラー: %s", e, exc_info=True)
-            answers = [f"⚠️ **{type(e).__name__}**: {e}"] * len(jobs)
-
-        # 結果を保存
-        st.session_state.compare_expected[(sid, turn)] = len(jobs)
-        turn_key = (sid, turn)
-        st.session_state.comparison_results.setdefault(turn_key, {})
-        
-        for j, ans in zip(jobs, answers):
-            if isinstance(ans, Exception):
-                ans = f"⚠️ **{type(ans).__name__}**: {ans}"
-            st.session_state.comparison_results[turn_key][(j["model"], j["temp"])] = ans
-        
-        logger.info("🔄 比較結果保存完了: %d件", len(st.session_state.comparison_results[turn_key]))
 
     # =====  ヘルパー  ============================================================
     def get_messages() -> List[Dict[str, str]]:
@@ -779,6 +716,10 @@ if st.session_state["authentication_status"]:
             
         if st.button("🔄 インデックス再構築", disabled=not st.session_state.rag_files):
             rebuild_rag_collection()
+        
+        if st.button("🔧 接続診断実行"):
+            from src.sheets_manager import debug_connection_streamlit
+            debug_connection_streamlit()
 
     # =====  プロンプト編集画面  =================================================
     if st.session_state.edit_target:
@@ -822,82 +763,14 @@ if st.session_state["authentication_status"]:
                 st.markdown(f'<div class="{message_class}">{m["content"]}</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # =====  比較結果表示（ステップ2: 改善版）  =================================================
-        msgs = get_messages()
-        if msgs and msgs[-1]["role"] == "assistant":
-            turn_key = (st.session_state.sid, len(msgs))
-            
-            comparison_results = st.session_state.comparison_results.get(turn_key, {})
-            expected_count = st.session_state.get("compare_expected", {}).get(turn_key, 0)
-            should_run = st.session_state.get("should_run_comparison") == turn_key
-            
-            if should_run:
-                # 比較処理がこれから実行される
-                st.info("🧪 他モデルでの比較を準備中...")
-            elif expected_count > 0 and len(comparison_results) < expected_count:
-                # 比較処理実行中
-                st.info(f"🧪 他モデルでの比較実行中... ({len(comparison_results)}/{expected_count})")
-            elif comparison_results:
-                # 比較結果表示
-                with st.expander(f"🧪 他モデル比較結果 ({len(comparison_results)}モデル)", expanded=False):
-                    for (model, temp), answer in comparison_results.items():
-                        st.markdown(f"#### ⮞ `{model}` (temperature={temp})")
-                        st.markdown(answer)
-                        st.divider()
-            elif expected_count > 0:
-                # 比較処理が完了したが結果がない場合
-                st.warning("🧪 比較処理は完了しましたが、結果を取得できませんでした")
-
         # -- 入力欄 --
-        user_prompt = st.chat_input("メッセージを入力…", key="main_chat_input")
+        user_prompt = st.chat_input("メッセージを入力…")
     else:
+        # プロンプト編集モード時は入力欄を無効化
         user_prompt = None
 
-    # =====  比較処理の実行部分（ステップ2: 追加）  ==============================================
-    # 待機中の比較処理を実行
-    if st.session_state.get("should_run_comparison") and not user_prompt:
-        logger.info("🔍 比較処理チェック開始")
-        logger.info("🔍 should_run_comparison: %s", st.session_state.get("should_run_comparison"))
-        
-        turn_key = st.session_state.pop("should_run_comparison")
-        logger.info("🔍 turn_key: %s", turn_key)
-        
-        # 比較処理を実行
-        with st.spinner("🧪 他モデルで比較回答を生成中..."):
-            try:
-                logger.info("🔍 スピナー内部に入りました")
-                
-                msgs = get_messages()
-                logger.info("🔍 メッセージ取得: %d件", len(msgs) if msgs else 0)
-                
-                if msgs and len(msgs) >= 2:
-                    logger.info("🔍 メッセージ条件OK、比較処理開始")
-                    
-                    prompt = st.session_state.prompts[st.session_state.design_mode]
-                    user_input = msgs[-2]["content"]  # 最後から2番目がユーザー入力
-                    
-                    logger.info("🔍 比較処理パラメータ準備完了")
-                    logger.info("🔍 user_input: %s", user_input[:50] + "..." if len(user_input) > 50 else user_input)
-                    
-                    # 実際の比較処理を実行
-                    run_compare_sync(prompt, user_input, msgs)
-                    
-                    logger.info("✅ 遅延比較処理完了: %s", turn_key)
-                    st.success("🧪 比較処理が完了しました")
-
-                    # 比較結果を表示するために画面を更新
-                    time.sleep(0.5)  # 成功メッセージを少し表示
-                    st.rerun()
-                    
-                else:
-                    logger.warning("⚠️ メッセージ履歴が不足: len=%d", len(msgs) if msgs else 0)
-                    
-            except Exception as e:
-                logger.error("❌ 比較処理エラー: %s", e, exc_info=True)
-                st.error(f"比較処理中にエラーが発生しました: {e}")
-
-    # =====  応答生成（比較処理フラグ設定）  ============================================================
-    if user_prompt and not st.session_state.edit_target:
+    # =====  応答生成  ============================================================
+    if user_prompt and not st.session_state.edit_target:  # 編集モード時は応答生成をスキップ
         # メッセージリストに現在の質問を追加
         msgs = get_messages()
         msgs.append({"role": "user", "content": user_prompt})
@@ -927,7 +800,7 @@ if st.session_state["authentication_status"]:
                             prompt=prompt,
                             question=user_prompt,
                             collection=st.session_state.rag_collection,
-                            rag_files=st.session_state.rag_files,
+                            rag_files=st.session_state.rag_files,  # ← ここを追加
                             top_k=4,
                             model=st.session_state.gpt_model,
                             chat_history=msgs,
@@ -942,6 +815,7 @@ if st.session_state["authentication_status"]:
                 # ---------- GPT-only ----------
                 else:
                     st.session_state["last_answer_mode"] = "GPT-only"
+                    # API呼び出し部分（条件付き）
                     params = {
                         "model": st.session_state.gpt_model,
                         "messages": [
@@ -957,6 +831,7 @@ if st.session_state["authentication_status"]:
                     if st.session_state.get("max_tokens") is not None:
                         params["max_tokens"] = st.session_state.max_tokens
 
+                    import time
                     t_api = time.perf_counter()
 
                     # APIを呼び出し
@@ -981,18 +856,21 @@ if st.session_state["authentication_status"]:
                 full_reply = assistant_reply + model_info
                 st.markdown(full_reply)
 
+            # チャットメッセージ外で expander 表示
+            # if sources:
+            #     st.markdown("### 🔎 RAG が取得したチャンク")  # タイトルとして使う
+            #     for idx, s in enumerate(sources, 1):
+            #         chunk = s.get("content", "")[:200]
+            #         if len(s.get("content", "")) > 200:
+            #             chunk += " …"
+            #         with st.expander(f"Doc {idx} - {s['metadata'].get('source','N/A')} (score: {s['distance']:.4f})"):
+            #             st.markdown(f"> {chunk}")
+
             # 保存するのは元の応答（モデル情報なし）
             msgs.append({"role": "assistant", "content": assistant_reply})
 
-            # =====  比較処理フラグ設定（ステップ2: 実際に実行）  =====
-            turn_key = (st.session_state.sid, len(msgs))
-            st.session_state.should_run_comparison = turn_key
-            logger.info("🧪 比較処理フラグ設定: %s", turn_key)
-
-            # 会話内容を Sheets へ記録
-            post_log(user_prompt, assistant_reply, prompt)
-
-            # チャットタイトル自動生成
+            # チャットタイトル自動生成（初回応答後）
+            # if len(msgs) == 2 and msgs[0]["role"] == "user" and msgs[1]["role"] == "assistant":
             new_title = generate_chat_title(msgs)
             if new_title and new_title != st.session_state.current_chat:
                 old_title = st.session_state.current_chat
@@ -1000,6 +878,8 @@ if st.session_state["authentication_status"]:
                 del st.session_state.chats[old_title]
                 st.session_state.current_chat = new_title
             
+            post_log(user_prompt, assistant_reply, prompt, send_to_model_comparison=True)
+
             st.rerun()
 
 elif st.session_state["authentication_status"] is False:
