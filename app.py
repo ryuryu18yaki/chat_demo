@@ -770,86 +770,96 @@ if st.session_state["authentication_status"]:
         # -- 入力欄 --
         user_prompt = st.chat_input("メッセージを入力…")
 
-        # ===== RAG検索結果の表示 =====
-        # RAG検索結果があるかチェック
+        # ===== RAG検索結果の表示（シンプル版） =====
         if st.session_state.get("last_rag_sources"):
             
-            # RAG検索結果の表示セクション
-            st.markdown("---")  # 区切り線
-            st.markdown("### 🔎 最新のRAG検索結果")
-            
-            sources = st.session_state.last_rag_sources
-            if sources:
+            with st.expander("🔎 RAG検索結果を表示"):
+                sources = st.session_state.last_rag_sources
                 st.markdown(f"**検索チャンク数:** {len(sources)} 件")
                 
-                # タブで分けて表示
-                tab1, tab2 = st.tabs(["📄 テキスト・表データ", "🖼️ 画像データ"])
-                
-                with tab1:
-                    text_count = 0
-                    for idx, source in enumerate(sources, 1):
+                # セレクトボックスでチャンクを選択
+                if sources:
+                    chunk_options = []
+                    text_sources = []
+                    
+                    for idx, source in enumerate(sources):
                         meta = source.get("metadata", {})
                         kind = meta.get("kind", "text")
                         
-                        # テキストと表のみ表示
                         if kind in ("text", "table"):
-                            text_count += 1
-                            content = source.get("content", "")
-                            
-                            # プレビュー用の短縮版
-                            preview = content[:200]
-                            if len(content) > 200:
-                                preview += " ..."
-                            
-                            # 距離スコア（類似度）
-                            distance = source.get("distance", 0)
-                            similarity = 1 - distance  # 類似度に変換
-                            
-                            # ソース情報
                             source_name = meta.get("source", "N/A")
                             page_num = meta.get("page", "N/A")
+                            distance = source.get("distance", 0)
+                            similarity = 1 - distance
                             
-                            with st.expander(f"🔍 チャンク {text_count} - {source_name} (p.{page_num}) | 類似度: {similarity:.3f}"):
-                                st.markdown(f"**種類:** {kind.upper()}")
+                            chunk_options.append(f"チャンク {len(text_sources)+1}: {source_name} (p.{page_num}) | 類似度: {similarity:.3f}")
+                            text_sources.append(source)
+                    
+                    if chunk_options:
+                        selected_chunk = st.selectbox(
+                            "表示するチャンクを選択:",
+                            options=range(len(chunk_options)),
+                            format_func=lambda x: chunk_options[x],
+                            key="chunk_selector"
+                        )
+                        
+                        # 選択されたチャンクの詳細表示
+                        if selected_chunk is not None and selected_chunk < len(text_sources):
+                            source = text_sources[selected_chunk]
+                            meta = source.get("metadata", {})
+                            content = source.get("content", "")
+                            
+                            col1, col2 = st.columns([3, 1])
+                            
+                            with col1:
                                 st.markdown("**内容:**")
                                 st.text_area(
                                     label="",
                                     value=content,
-                                    height=150,
+                                    height=200,
                                     disabled=True,
-                                    key=f"rag_content_{idx}"
+                                    key=f"selected_content_{selected_chunk}"
                                 )
-                                
-                                # メタデータ情報
-                                with st.expander("📊 詳細情報"):
-                                    st.json(meta)
-                    
-                    if text_count == 0:
+                            
+                            with col2:
+                                st.markdown("**詳細情報:**")
+                                st.markdown(f"**種類:** {meta.get('kind', 'N/A')}")
+                                st.markdown(f"**ソース:** {meta.get('source', 'N/A')}")
+                                st.markdown(f"**ページ:** {meta.get('page', 'N/A')}")
+                                st.markdown(f"**距離:** {source.get('distance', 0):.4f}")
+                    else:
                         st.info("📄 テキスト・表データはありませんでした")
                 
-                with tab2:
-                    # 画像データの表示
-                    images = st.session_state.get("last_rag_images", [])
-                    if images:
-                        st.markdown(f"**画像数:** {len(images)} 件")
+                # 画像情報（あれば簡単に表示）
+                images = st.session_state.get("last_rag_images", [])
+                if images:
+                    st.markdown("---")
+                    st.markdown(f"**関連画像:** {len(images)} 件")
+                    
+                    # 画像選択
+                    if len(images) > 0:
+                        image_options = [f"{img['name']} (ページ {img.get('page', 'N/A')})" for img in images]
+                        selected_image = st.selectbox(
+                            "表示する画像を選択:",
+                            options=range(len(image_options)),
+                            format_func=lambda x: image_options[x],
+                            key="image_selector"
+                        )
                         
-                        # 画像を3列で表示
-                        cols = st.columns(3)
-                        for idx, img_info in enumerate(images):
-                            col_idx = idx % 3
-                            with cols[col_idx]:
-                                st.markdown(f"**{img_info['name']}**")
-                                st.image(img_info['data'], caption=f"ページ {img_info.get('page', 'N/A')}")
-                    else:
-                        st.info("🖼️ 関連する画像はありませんでした")
-            else:
-                st.info("🔍 RAG検索結果がありません")
-            
-            # クリアボタン
-            if st.button("🗑️ RAG結果をクリア"):
-                st.session_state.last_rag_sources = []
-                st.session_state.last_rag_images = []
-                st.rerun()
+                        if selected_image is not None and selected_image < len(images):
+                            img_info = images[selected_image]
+                            st.image(img_info['data'], caption=img_info['name'], width=400)
+                
+                # クリアボタン
+                st.markdown("---")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🗑️ RAG結果をクリア"):
+                        st.session_state.last_rag_sources = []
+                        st.session_state.last_rag_images = []
+                        st.rerun()
+                with col2:
+                    st.markdown(f"*RAG使用: {'✅' if st.session_state.get('use_rag', False) else '❌'}*")
 
     else:
         # プロンプト編集モード時は入力欄を無効化
