@@ -3,6 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 from typing import List, Dict, Any
 import uuid
+import hashlib
 
 # SQLite バージョン強制上書き（pysqlite3でchromadbが使えるようにする）
 import sys
@@ -49,8 +50,27 @@ def _embed_text_batch(texts: List[str]) -> List[List[float]]:
 #     feats = feats / feats.norm(p=2, dim=-1, keepdim=True)
 #     return feats[0].cpu().tolist()
 
+# 🔥 新機能: 安全なID生成
+def generate_safe_id(metadata: Dict[str, Any], content: str) -> str:
+    """メタデータとコンテンツから安全で一意なIDを生成"""
+    source = metadata.get('source', 'unknown')
+    kind = metadata.get('kind', 'unknown')
+    page = metadata.get('page', 0)
+    chunk_id = metadata.get('chunk_id', metadata.get('table_id', 0))
+    
+    # コンテンツハッシュを生成
+    content_hash = hashlib.md5(content.encode()).hexdigest()[:12]
+    
+    # 安全なID文字列を生成（ChromaDBで許可される文字のみ）
+    safe_id = f"{source}_{kind}_p{page}_c{chunk_id}_{content_hash}"
+    
+    # ChromaDBで問題となる文字を置換
+    safe_id = safe_id.replace(" ", "_").replace(".", "_").replace("/", "_").replace("\\", "_")
+    
+    return safe_id
+
 # ---------------------------------------------------------------------------
-# ドキュメントを ChromaDB に保存
+# ドキュメントを ChromaDB に保存（修正版）
 # ---------------------------------------------------------------------------
 def save_docs_to_chroma(
     *,
@@ -61,8 +81,13 @@ def save_docs_to_chroma(
 ) -> chromadb.api.Collection:
     """
     1) ChromaDB のコレクションを作成・取得
-    2) preprocess_files 出力 docs をバッチ登録 (ids付き)
+    2) preprocess_files 出力 docs をバッチ登録 (重複除去付き)
     3) 必要なら永続化し、Collection オブジェクトを返す
+    
+    🔥 修正点:
+    - ユニークで安全なID生成
+    - 重複チェック機能
+    - エラーハンドリング強化
     """
     # — クライアント作成 —
     if persist_directory:
@@ -70,26 +95,92 @@ def save_docs_to_chroma(
     else:
         client = chromadb.Client()  # インメモリ
 
-    # — コレクション取得 or 作成 —
-    collection = client.get_or_create_collection(name=collection_name)
+    # — 既存コレクションを削除（重複を避けるため）—
+    try:
+        client.delete_collection(name=collection_name)
+    except ValueError:
+        pass  # コレクションが存在しない場合は無視
+
+    # — 新しいコレクション作成 —
+    collection = client.create_collection(name=collection_name)
 
     # — docs をバッチ登録 —
     docs_to_index = [d for d in docs if d["metadata"].get("kind") in ("text", "table")]
-    for start in range(0, len(docs_to_index), batch_size):
-        batch = docs_to_index[start:start+batch_size]
-        embeddings, documents, metadatas, ids = [], [], [], []
-        for doc in batch:
-            emb = _embed_text_batch([doc["content"]])[0]
-            embeddings.append(emb)
-            documents.append(doc["content"])
-            metadata = doc["metadata"]
-            metadatas.append(metadata)
-            key = f"{metadata['source']}-{metadata['kind']}-{metadata.get('chunk_id', metadata.get('table_id',''))}"
-            ids.append(str(uuid.uuid4()))
-        collection.upsert(embeddings=embeddings, documents=documents, metadatas=metadatas, ids=ids)
+    
+    # 重複除去用セット
+    seen_ids = set()
+    processed_docs = []
+    
+    print(f"🔍 処理対象ドキュメント数: {len(docs_to_index)}")
+    
+    # 重複除去
+    for doc in docs_to_index:
+        doc_id = generate_safe_id(doc["metadata"], doc["content"])
         
+        if doc_id not in seen_ids:
+            seen_ids.add(doc_id)
+            processed_docs.append((doc, doc_id))
+        else:
+            print(f"⚠️ 重複スキップ: {doc_id}")
+    
+    print(f"✅ 重複除去後: {len(processed_docs)} ドキュメント")
+    
+    # バッチ処理
+    for start in range(0, len(processed_docs), batch_size):
+        batch = processed_docs[start:start+batch_size]
+        
+        embeddings, documents, metadatas, ids = [], [], [], []
+        
+        for doc, doc_id in batch:
+            try:
+                # 埋め込み生成
+                emb = _embed_text_batch([doc["content"]])[0]
+                
+                embeddings.append(emb)
+                documents.append(doc["content"])
+                metadatas.append(doc["metadata"])
+                ids.append(doc_id)  # 🔥 計算されたIDを使用
+                
+            except Exception as e:
+                print(f"❌ 埋め込み生成エラー (ID: {doc_id}): {e}")
+                continue
+        
+        # バッチをコレクションに追加
+        if embeddings:  # 空でない場合のみ
+            try:
+                collection.add(  # upsertではなくaddを使用
+                    embeddings=embeddings,
+                    documents=documents,
+                    metadatas=metadatas,
+                    ids=ids
+                )
+                print(f"✅ バッチ {start//batch_size + 1} 完了: {len(embeddings)} ドキュメント")
+                
+            except Exception as e:
+                print(f"❌ バッチ追加エラー: {e}")
+                # 個別に追加を試行
+                for i, (emb, doc, meta, doc_id) in enumerate(zip(embeddings, documents, metadatas, ids)):
+                    try:
+                        collection.add(
+                            embeddings=[emb],
+                            documents=[doc],
+                            metadatas=[meta],
+                            ids=[doc_id]
+                        )
+                    except Exception as e2:
+                        print(f"❌ 個別追加エラー (ID: {doc_id}): {e2}")
+        
+    # 永続化
     if persist_directory:
-        client.persist()
+        try:
+            client.persist()
+            print("💾 永続化完了")
+        except Exception as e:
+            print(f"⚠️ 永続化エラー: {e}")
+    
+    final_count = collection.count()
+    print(f"🎯 最終コレクション数: {final_count}")
+    
     return collection
 
 # ---------------------------------------------------------------------------
@@ -115,12 +206,15 @@ def query_collection(
     documents = res["documents"][0]
     metadatas = res["metadatas"][0]
     distances = res["distances"][0]
+    ids = res.get("ids", [None] * len(documents))[0]  # IDも取得
+    
     # 4) dict リストに整形
     hits: List[Dict[str, Any]] = []
-    for doc, meta, dist in zip(documents, metadatas, distances):
+    for doc, meta, dist, doc_id in zip(documents, metadatas, distances, ids):
         hits.append({
             "content": doc,
             "metadata": meta,
             "distance": dist,
+            "id": doc_id,  # IDも含める
         })
     return hits
