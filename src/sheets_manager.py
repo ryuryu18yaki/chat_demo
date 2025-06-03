@@ -117,6 +117,114 @@ class SheetsManager:
             print(f"❌ ログ保存失敗: {e}")
             return False
     
+    def send_to_model_comparison(self, prompt_text: str, user_note: str = None) -> bool:
+        """model比較シートのB列にプロンプトを送信"""
+        
+        if not self.is_connected:
+            print("❌ Sheets未接続")
+            return False
+        
+        try:
+            # model比較シートを取得
+            worksheet = self.spreadsheet.worksheet("model比較")
+            
+            # 次の空いている行を見つける
+            # B列の値を取得して、最初の空のセルを探す
+            b_column_values = worksheet.col_values(2)  # B列 = index 2
+            
+            # 空の行を見つける（ヘッダー行は除く）
+            next_row = len(b_column_values) + 1
+            if next_row <= 1:  # ヘッダー行がない場合
+                next_row = 2
+            
+            # A列にタイムスタンプ、B列にプロンプトを書き込み
+            timestamp = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+            
+            # 書き込みデータ準備
+            updates = [
+                {
+                    'range': f'A{next_row}',
+                    'values': [[timestamp]]
+                },
+                {
+                    'range': f'B{next_row}',
+                    'values': [[prompt_text]]
+                }
+            ]
+            
+            # ユーザーノートがある場合はI列（メモ列）に追加
+            if user_note:
+                updates.append({
+                    'range': f'I{next_row}',
+                    'values': [[user_note]]
+                })
+            
+            # 一括更新で効率化
+            worksheet.batch_update(updates)
+            
+            print(f"✅ model比較シート書き込み成功: 行{next_row}")
+            return True
+            
+        except gspread.WorksheetNotFound:
+            print("❌ 'model比較'シートが見つかりません")
+            return False
+        except Exception as e:
+            print(f"❌ model比較シート書き込み失敗: {e}")
+            return False
+    
+    def get_model_comparison_status(self, row_number: int = None) -> Dict[str, Any]:
+        """model比較シートの処理状況を取得"""
+        
+        if not self.is_connected:
+            return {"error": "未接続"}
+        
+        try:
+            worksheet = self.spreadsheet.worksheet("model比較")
+            
+            if row_number:
+                # 特定の行の状況を取得
+                row_data = worksheet.row_values(row_number)
+                if len(row_data) >= 8:  # H列まで存在するか
+                    return {
+                        "row": row_number,
+                        "timestamp": row_data[0] if len(row_data) > 0 else "",
+                        "prompt": row_data[1] if len(row_data) > 1 else "",
+                        "status": row_data[7] if len(row_data) > 7 else "",  # H列
+                        "has_results": any(row_data[2:7])  # C-G列に結果があるか
+                    }
+                else:
+                    return {"error": "行データ不足"}
+            else:
+                # 最新の処理状況を取得
+                all_data = worksheet.get_all_values()
+                if len(all_data) <= 1:  # ヘッダーのみ
+                    return {"total_rows": 0}
+                
+                # 処理状況の統計
+                pending_count = 0
+                completed_count = 0
+                error_count = 0
+                
+                for row in all_data[1:]:  # ヘッダー除く
+                    if len(row) >= 8:
+                        status = row[7]  # H列
+                        if "処理待機中" in status or "処理中" in status:
+                            pending_count += 1
+                        elif "完了" in status:
+                            completed_count += 1
+                        elif "エラー" in status:
+                            error_count += 1
+                
+                return {
+                    "total_rows": len(all_data) - 1,
+                    "pending": pending_count,
+                    "completed": completed_count,
+                    "errors": error_count
+                }
+                
+        except Exception as e:
+            return {"error": str(e)}
+    
     def _truncate_text(self, text: str, max_length: int) -> str:
         """テキストを指定長さで切り詰め"""
         if len(text) <= max_length:
@@ -201,6 +309,26 @@ def log_to_sheets(input_text: str, output_text: str, prompt: str, chat_title: st
     
     return success
 
+def send_prompt_to_model_comparison(prompt_text: str, user_note: str = None) -> bool:
+    """model比較シートにプロンプトを送信（Streamlit用）"""
+    
+    manager = get_sheets_manager()
+    
+    if not manager.is_connected:
+        return False
+    
+    return manager.send_to_model_comparison(prompt_text, user_note)
+
+def get_model_comparison_status(row_number: int = None) -> Dict[str, Any]:
+    """model比較シートの状況取得（Streamlit用）"""
+    
+    manager = get_sheets_manager()
+    
+    if not manager.is_connected:
+        return {"error": "未接続"}
+    
+    return manager.get_model_comparison_status(row_number)
+
 # 接続テスト用
 def test_connection():
     """接続テスト"""
@@ -225,9 +353,20 @@ def test_connection():
             )
             
             if success:
-                print("✅ データ書き込み成功")
+                print("✅ conversationsシート書き込み成功")
             else:
-                print("❌ データ書き込み失敗")
+                print("❌ conversationsシート書き込み失敗")
+            
+            # model比較シートテスト
+            model_success = manager.send_to_model_comparison(
+                "これはテストプロンプトです。複数のLLMモデルで比較してください。",
+                "テスト実行"
+            )
+            
+            if model_success:
+                print("✅ model比較シート書き込み成功")
+            else:
+                print("❌ model比較シート書き込み失敗")
                 
         else:
             print("❌ 接続失敗")
@@ -307,12 +446,12 @@ def debug_connection_streamlit():
         st.write("1. Google Sheetsを開く")
         st.write("2. 右上の「共有」ボタンをクリック")
         st.write("3. 以下のメールアドレスを追加:")
-        st.code("sheets-service-account@streamlit-spread-integration.iam.gserviceaccount.com")
+        st.code("120151595880-compute@developer.gserviceaccount.com")
         st.write("4. 権限を「編集者」に設定")
         return
     
     # Step 4: 書き込みテスト
-    st.write("### Step 4: 書き込みテスト")
+    st.write("### Step 4: conversationsシート書き込みテスト")
     try:
         manager = SheetsManager()
         if manager.is_connected:
@@ -329,17 +468,38 @@ def debug_connection_streamlit():
             )
             
             if success:
-                st.success("✅ 書き込みテスト成功")
-                st.balloons()  # 成功時のアニメーション
+                st.success("✅ conversationsシート書き込みテスト成功")
             else:
-                st.error("❌ 書き込みテスト失敗")
+                st.error("❌ conversationsシート書き込みテスト失敗")
         else:
             st.error("❌ マネージャー接続失敗")
             
     except Exception as e:
-        st.error(f"❌ 書き込みテスト例外: {e}")
+        st.error(f"❌ conversationsシート書き込みテスト例外: {e}")
+    
+    # Step 5: model比較シート書き込みテスト
+    st.write("### Step 5: model比較シート書き込みテスト")
+    try:
+        manager = get_sheets_manager()
+        if manager.is_connected:
+            test_prompt = f"デバッグテストプロンプト - {datetime.now().strftime('%H:%M:%S')}"
+            success = manager.send_to_model_comparison(test_prompt, "Streamlit デバッグテスト")
+            
+            if success:
+                st.success("✅ model比較シート書き込みテスト成功")
+                st.info("Google Sheetsの「model比較」シートを確認してください")
+            else:
+                st.error("❌ model比較シート書き込みテスト失敗")
+        else:
+            st.error("❌ マネージャー接続失敗")
+            
+    except Exception as e:
+        st.error(f"❌ model比較シート書き込みテスト例外: {e}")
     
     st.write("### 🔧 診断完了")
+    if st.button("model比較シート状況確認"):
+        status = get_model_comparison_status()
+        st.json(status)
 
 # 追加: 簡単な接続状態確認関数
 def check_connection_status():

@@ -9,7 +9,7 @@ from src.rag_vector import save_docs_to_chroma
 from src.rag_qa import generate_answer
 from src.startup_loader import initialize_chroma_from_input
 from src.logging_utils import init_logger
-from src.sheets_manager import log_to_sheets, get_sheets_manager  # ← 追加
+from src.sheets_manager import log_to_sheets, get_sheets_manager, send_prompt_to_model_comparison  # ← 追加
 
 import yaml
 import streamlit_authenticator as stauth
@@ -36,8 +36,12 @@ def post_log(
     input_text: str,
     output_text: str,
     prompt: str,
+    send_to_model_comparison: bool = False,
+    model_comparison_note: str = None,
 ):
-    """Google Sheetsに直接ログを保存（gspread使用）- デバッグ版"""
+    """Google Sheetsに直接ログを保存（gspread使用）- model比較シート対応版"""
+    
+    results = {"conversations": False, "model_comparison": False}
     
     try:
         logger.info("🔍 post_log start — attempting to log conversation")
@@ -49,29 +53,114 @@ def post_log(
             
             if not manager.is_connected:
                 logger.error("❌ manager not connected")
-                return
+                return results
                 
         except Exception as e:
             logger.error("❌ failed to get sheets manager — %s", e, exc_info=True)
-            return
+            return results
         
-        # log_to_sheets呼び出し
+        # 1. conversationsシートへの保存
         try:
+            logger.info("📝 attempting conversations sheet save")
             success = log_to_sheets(input_text, output_text, prompt)
             logger.info("🔍 log_to_sheets result — success=%s", success)
+            results["conversations"] = success
             
             if success:
-                logger.info("✅ sheets_log success — user=%s mode=%s", 
+                logger.info("✅ conversations sheet success — user=%s mode=%s", 
                            st.session_state.get("username"), 
                            st.session_state.get("design_mode"))
             else:
-                logger.warning("⚠️ sheets_log failed — log_to_sheets returned False")
+                logger.warning("⚠️ conversations sheet failed — log_to_sheets returned False")
                 
         except Exception as e:
             logger.error("❌ log_to_sheets failed — %s", e, exc_info=True)
+        
+        # 2. model比較シートへの保存（オプション）
+        if send_to_model_comparison:
+            try:
+                logger.info("📊 attempting model comparison sheet save")
+                
+                # Streamlit上で実行されている完全なプロンプトを再構築
+                try:
+                    msgs = st.session_state.get("messages", [])
+                    
+                    # 完全なプロンプトを構築（実際のAPI呼び出しと同じ形式）
+                    full_prompt_parts = []
+                    
+                    # システムプロンプト
+                    if prompt:
+                        full_prompt_parts.append(f"System: {prompt}")
+                    
+                    # 会話履歴（最後のメッセージ以外）
+                    for msg in msgs[:-1]:
+                        role = msg.get("role", "")
+                        content = msg.get("content", "")
+                        if role == "user":
+                            full_prompt_parts.append(f"Human: {content}")
+                        elif role == "assistant":
+                            full_prompt_parts.append(f"Assistant: {content}")
+                    
+                    # 現在のユーザー入力
+                    full_prompt_parts.append(f"Human: {input_text}")
+                    
+                    # 完全なプロンプトを作成
+                    comparison_prompt = "\n\n".join(full_prompt_parts)
+                    
+                except Exception as e:
+                    logger.warning("⚠️ failed to build full prompt — %s", e)
+                    # フォールバック
+                    comparison_prompt = f"System: {prompt}\n\nHuman: {input_text}"
+                
+                # ノート作成
+                note_parts = []
+                if model_comparison_note:
+                    note_parts.append(model_comparison_note)
+                
+                # 現在のモードやユーザー情報を追加
+                current_mode = st.session_state.get("design_mode", "")
+                current_user = st.session_state.get("username", "")
+                if current_mode:
+                    note_parts.append(f"モード: {current_mode}")
+                if current_user:
+                    note_parts.append(f"ユーザー: {current_user}")
+                
+                user_note = " | ".join(note_parts) if note_parts else None
+                
+                # model比較シートに送信
+                model_success = send_prompt_to_model_comparison(
+                    prompt_text=comparison_prompt,
+                    user_note=user_note
+                )
+                
+                logger.info("🔍 model comparison result — success=%s", model_success)
+                results["model_comparison"] = model_success
+                
+                if model_success:
+                    logger.info("✅ model comparison sheet success")
+                else:
+                    logger.warning("⚠️ model comparison sheet failed")
+                    
+            except Exception as e:
+                logger.error("❌ model comparison save failed — %s", e, exc_info=True)
+        
+        # 結果サマリーログ
+        if results["conversations"]:
+            if send_to_model_comparison:
+                if results["model_comparison"]:
+                    logger.info("✅ both sheets saved successfully")
+                else:
+                    logger.warning("⚠️ conversations success, model comparison failed")
+            else:
+                logger.info("✅ conversations sheet saved successfully")
+        else:
+            logger.error("❌ conversations sheet save failed")
+        
+        return results
             
     except Exception as e:
         logger.error("❌ post_log outer error — %s", e, exc_info=True)
+        return results
 
 # =====  基本設定  ============================================================
 client = OpenAI()
@@ -839,7 +928,7 @@ if st.session_state["authentication_status"]:
                 del st.session_state.chats[old_title]
                 st.session_state.current_chat = new_title
             
-            post_log(user_prompt, assistant_reply, prompt)
+            post_log(user_prompt, assistant_reply, prompt, send_to_model_comparison=True)
 
             st.rerun()
 
