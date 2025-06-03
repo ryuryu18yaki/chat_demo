@@ -796,21 +796,33 @@ if st.session_state["authentication_status"]:
                     st.session_state["last_answer_mode"] = "RAG"
 
                     t_api = time.perf_counter()
-                    rag_res = generate_answer(
-                            prompt=prompt,
-                            question=user_prompt,
-                            collection=st.session_state.rag_collection,
-                            rag_files=st.session_state.rag_files,  # ← ここを追加
-                            top_k=4,
-                            model=st.session_state.gpt_model,
-                            chat_history=msgs,
-                        )
+                    
+                    # API呼び出しパラメータを準備
+                    rag_params = {
+                        "prompt": prompt,
+                        "question": user_prompt,
+                        "collection": st.session_state.rag_collection,
+                        "rag_files": st.session_state.rag_files,
+                        "top_k": 4,
+                        "model": st.session_state.gpt_model,
+                        "chat_history": msgs,
+                    }
+                    
+                    # カスタム設定があれば追加
+                    if st.session_state.get("temperature") != 1.0:
+                        rag_params["temperature"] = st.session_state.temperature
+                    if st.session_state.get("max_tokens") is not None:
+                        rag_params["max_tokens"] = st.session_state.max_tokens
+                    
+                    # generate_answerを呼び出し
+                    rag_res = generate_answer(**rag_params)
+                    
                     api_elapsed = time.perf_counter() - t_api
                     assistant_reply = rag_res["answer"]
                     sources = rag_res["sources"]
 
                     logger.info("💬 GPT done — tokens≈%d  api_elapsed=%.2fs  sources=%d",
-                                    len(assistant_reply.split()), api_elapsed, len(sources))
+                                len(assistant_reply.split()), api_elapsed, len(sources))
 
                 # ---------- GPT-only ----------
                 else:
