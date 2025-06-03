@@ -82,6 +82,8 @@ def generate_answer(
         # --- 3) 画像を抽出 ---
         files: List[Dict[str, bytes]] = []
         placeholders: List[str] = []
+        images_info: List[Dict[str, Any]] = []  # 🔥 画像情報を保存
+        
         for hit in hits:
             meta = hit.get("metadata", {})
             if meta.get("kind") not in ("text", "table"):
@@ -102,6 +104,16 @@ def generate_answer(
                                 "name": f"{source}_p{page}_{img['image_id']}.png",
                                 "data": img["bytes"],
                             })
+                            
+                            # 🔥 画像情報を保存（表示用）
+                            images_info.append({
+                                "name": f"{source}_p{page}_{img['image_id']}.png",
+                                "data": img["bytes"],
+                                "source": source,
+                                "page": page,
+                                "image_id": img["image_id"]
+                            })
+        
         # 画像のプレースホルダを contexts に追加
         contexts.extend(placeholders)
         
@@ -140,4 +152,9 @@ def generate_answer(
         # --- 7) GPT-4V 呼び出し ---
         resp = client.chat.completions.create(**params)
         
-        return {"answer": resp.choices[0].message.content, "sources": hits}
+        # 🔥 画像情報も返すように修正
+        return {
+            "answer": resp.choices[0].message.content,
+            "sources": hits,
+            "images": images_info  # 画像情報を追加
+        }

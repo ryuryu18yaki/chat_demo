@@ -456,6 +456,10 @@ if st.session_state["authentication_status"]:
         st.session_state.gpt_model = "gpt-4.1"
     if "use_rag" not in st.session_state:
         st.session_state["use_rag"] = False  # ← デフォルトでRAGを使わない
+    if "last_rag_sources" not in st.session_state:
+        st.session_state.last_rag_sources = []
+    if "last_rag_images" not in st.session_state:
+        st.session_state.last_rag_images = []
 
 
     # =====  ヘルパー  ============================================================
@@ -765,6 +769,88 @@ if st.session_state["authentication_status"]:
 
         # -- 入力欄 --
         user_prompt = st.chat_input("メッセージを入力…")
+
+        # ===== RAG検索結果の表示 =====
+        # RAG検索結果があるかチェック
+        if st.session_state.get("last_rag_sources"):
+            
+            # RAG検索結果の表示セクション
+            st.markdown("---")  # 区切り線
+            st.markdown("### 🔎 最新のRAG検索結果")
+            
+            sources = st.session_state.last_rag_sources
+            if sources:
+                st.markdown(f"**検索チャンク数:** {len(sources)} 件")
+                
+                # タブで分けて表示
+                tab1, tab2 = st.tabs(["📄 テキスト・表データ", "🖼️ 画像データ"])
+                
+                with tab1:
+                    text_count = 0
+                    for idx, source in enumerate(sources, 1):
+                        meta = source.get("metadata", {})
+                        kind = meta.get("kind", "text")
+                        
+                        # テキストと表のみ表示
+                        if kind in ("text", "table"):
+                            text_count += 1
+                            content = source.get("content", "")
+                            
+                            # プレビュー用の短縮版
+                            preview = content[:200]
+                            if len(content) > 200:
+                                preview += " ..."
+                            
+                            # 距離スコア（類似度）
+                            distance = source.get("distance", 0)
+                            similarity = 1 - distance  # 類似度に変換
+                            
+                            # ソース情報
+                            source_name = meta.get("source", "N/A")
+                            page_num = meta.get("page", "N/A")
+                            
+                            with st.expander(f"🔍 チャンク {text_count} - {source_name} (p.{page_num}) | 類似度: {similarity:.3f}"):
+                                st.markdown(f"**種類:** {kind.upper()}")
+                                st.markdown("**内容:**")
+                                st.text_area(
+                                    label="",
+                                    value=content,
+                                    height=150,
+                                    disabled=True,
+                                    key=f"rag_content_{idx}"
+                                )
+                                
+                                # メタデータ情報
+                                with st.expander("📊 詳細情報"):
+                                    st.json(meta)
+                    
+                    if text_count == 0:
+                        st.info("📄 テキスト・表データはありませんでした")
+                
+                with tab2:
+                    # 画像データの表示
+                    images = st.session_state.get("last_rag_images", [])
+                    if images:
+                        st.markdown(f"**画像数:** {len(images)} 件")
+                        
+                        # 画像を3列で表示
+                        cols = st.columns(3)
+                        for idx, img_info in enumerate(images):
+                            col_idx = idx % 3
+                            with cols[col_idx]:
+                                st.markdown(f"**{img_info['name']}**")
+                                st.image(img_info['data'], caption=f"ページ {img_info.get('page', 'N/A')}")
+                    else:
+                        st.info("🖼️ 関連する画像はありませんでした")
+            else:
+                st.info("🔍 RAG検索結果がありません")
+            
+            # クリアボタン
+            if st.button("🗑️ RAG結果をクリア"):
+                st.session_state.last_rag_sources = []
+                st.session_state.last_rag_images = []
+                st.rerun()
+
     else:
         # プロンプト編集モード時は入力欄を無効化
         user_prompt = None
@@ -820,6 +906,11 @@ if st.session_state["authentication_status"]:
                     api_elapsed = time.perf_counter() - t_api
                     assistant_reply = rag_res["answer"]
                     sources = rag_res["sources"]
+                    
+                    # 🔥 RAG結果をセッション状態に保存（rerunで消えないように）
+                    st.session_state.last_rag_sources = sources
+                    # 画像情報も保存（generate_answer関数から返されるようにする必要がある場合）
+                    st.session_state.last_rag_images = rag_res.get("images", [])
 
                     logger.info("💬 GPT done — tokens≈%d  api_elapsed=%.2fs  sources=%d",
                                 len(assistant_reply.split()), api_elapsed, len(sources))
