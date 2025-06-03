@@ -53,44 +53,118 @@ def _embed_text_batch(texts: List[str]) -> List[List[float]]:
 # ドキュメントを ChromaDB に保存
 # ---------------------------------------------------------------------------
 def save_docs_to_chroma(
-    *,
-    docs: List[Dict[str, Any]],
-    collection_name: str,
-    persist_directory: str | None = None,
-    batch_size: int = 50,
-) -> chromadb.api.Collection:
-    """
-    1) ChromaDB のコレクションを作成・取得
-    2) preprocess_files 出力 docs をバッチ登録 (ids付き)
-    3) 必要なら永続化し、Collection オブジェクトを返す
-    """
-    # — クライアント作成 —
-    if persist_directory:
-        client = chromadb.Client(Settings(persist_directory=persist_directory))
-    else:
-        client = chromadb.Client()  # インメモリ
+        *,
+        docs: List[Dict[str, Any]],
+        collection_name: str,
+        persist_directory: str | None = None,
+        batch_size: int = 50,
+    ) -> chromadb.api.Collection:
+        """
+        1) ChromaDB のコレクションを作成・取得
+        2) preprocess_files 出力 docs をバッチ登録 (重複除去付き)
+        3) 必要なら永続化し、Collection オブジェクトを返す
+        """
+        # — クライアント作成 —
+        if persist_directory:
+            client = chromadb.Client(Settings(persist_directory=persist_directory))
+        else:
+            client = chromadb.Client()  # インメモリ
 
-    # — コレクション取得 or 作成 —
-    collection = client.get_or_create_collection(name=collection_name)
+        # — 既存コレクションを削除して新規作成 —
+        try:
+            client.delete_collection(name=collection_name)
+            print(f"🗑️ 既存コレクション削除: {collection_name}")
+        except ValueError:
+            print(f"📝 新規コレクション作成: {collection_name}")
 
-    # — docs をバッチ登録 —
-    docs_to_index = [d for d in docs if d["metadata"].get("kind") in ("text", "table")]
-    for start in range(0, len(docs_to_index), batch_size):
-        batch = docs_to_index[start:start+batch_size]
-        embeddings, documents, metadatas, ids = [], [], [], []
-        for doc in batch:
-            emb = _embed_text_batch([doc["content"]])[0]
-            embeddings.append(emb)
-            documents.append(doc["content"])
-            metadata = doc["metadata"]
-            metadatas.append(metadata)
-            key = f"{metadata['source']}-{metadata['kind']}-{metadata.get('chunk_id', metadata.get('table_id',''))}"
-            ids.append(key)
-        collection.upsert(embeddings=embeddings, documents=documents, metadatas=metadatas, ids=ids)
+        collection = client.create_collection(name=collection_name)
+
+        # — docs をバッチ登録 —
+        docs_to_index = [d for d in docs if d["metadata"].get("kind") in ("text", "table")]
+        print(f"🔍 処理対象ドキュメント: {len(docs_to_index)}")
         
-    if persist_directory:
-        client.persist()
-    return collection
+        # 🔥 全体でユニークIDを管理
+        global_seen_ids = set()
+        processed_docs = []
+        
+        for doc in docs_to_index:
+            metadata = doc["metadata"]
+            source = metadata.get('source', 'unknown')
+            kind = metadata.get('kind', 'unknown')
+            chunk_id = metadata.get('chunk_id', metadata.get('table_id', 0))
+            page = metadata.get('page', 'unknown')
+            
+            # より詳細なID生成
+            doc_id = f"{source}-{kind}-p{page}-c{chunk_id}"
+            
+            # バッチを跨いだ重複チェック
+            if doc_id not in global_seen_ids:
+                global_seen_ids.add(doc_id)
+                processed_docs.append((doc, doc_id))
+            else:
+                print(f"⚠️ 重複スキップ: {doc_id}")
+        
+        print(f"✅ 重複除去後: {len(processed_docs)} ドキュメント")
+        
+        # バッチ処理
+        for start in range(0, len(processed_docs), batch_size):
+            batch = processed_docs[start:start+batch_size]
+            
+            embeddings, documents, metadatas, ids = [], [], [], []
+            batch_seen_ids = set()  # バッチ内重複チェック
+            
+            for doc, doc_id in batch:
+                # バッチ内でも重複チェック（念のため）
+                if doc_id not in batch_seen_ids:
+                    try:
+                        emb = _embed_text_batch([doc["content"]])[0]
+                        embeddings.append(emb)
+                        documents.append(doc["content"])
+                        metadatas.append(doc["metadata"])
+                        ids.append(doc_id)
+                        batch_seen_ids.add(doc_id)
+                        
+                    except Exception as e:
+                        print(f"❌ 埋め込み生成エラー (ID: {doc_id}): {e}")
+                else:
+                    print(f"⚠️ バッチ内重複スキップ: {doc_id}")
+            
+            # バッチをコレクションに追加
+            if embeddings:
+                try:
+                    collection.add(
+                        embeddings=embeddings,
+                        documents=documents,
+                        metadatas=metadatas,
+                        ids=ids
+                    )
+                    print(f"✅ バッチ {start//batch_size + 1} 完了: {len(embeddings)} ドキュメント")
+                    
+                except Exception as e:
+                    print(f"❌ バッチ追加エラー: {e}")
+                    # 個別追加を試行
+                    for i, (emb, doc, meta, doc_id) in enumerate(zip(embeddings, documents, metadatas, ids)):
+                        try:
+                            collection.add(
+                                embeddings=[emb],
+                                documents=[doc],
+                                metadatas=[meta],
+                                ids=[doc_id]
+                            )
+                        except Exception as e2:
+                            print(f"❌ 個別追加失敗 (ID: {doc_id}): {e2}")
+            
+        # 永続化
+        if persist_directory:
+            try:
+                client.persist()
+            except Exception as e:
+                print(f"⚠️ 永続化エラー: {e}")
+        
+        final_count = collection.count()
+        print(f"🎯 最終コレクション数: {final_count}")
+        
+        return collection
 
 # ---------------------------------------------------------------------------
 # コレクション検索ヘルパー
