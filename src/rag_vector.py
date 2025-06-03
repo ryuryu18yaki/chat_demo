@@ -85,7 +85,7 @@ def save_docs_to_chroma(
             metadata = doc["metadata"]
             metadatas.append(metadata)
             key = f"{metadata['source']}-{metadata['kind']}-{metadata.get('chunk_id', metadata.get('table_id',''))}"
-            ids.append(str(uuid.uuid4()))
+            ids.append(key)
         collection.upsert(embeddings=embeddings, documents=documents, metadatas=metadatas, ids=ids)
         
     if persist_directory:
