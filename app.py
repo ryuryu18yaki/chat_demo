@@ -754,7 +754,74 @@ if st.session_state["authentication_status"]:
             handle_cancel_edit()
 
     # =====  メイン画面表示  ==========================================================
-    if not st.session_state.edit_target:
+    # デバッグログ表示ページ
+    if st.session_state.get("show_debug_log") and not st.session_state.edit_target:
+        st.title("🔬 RAG初期化デバッグログ")
+        
+        if st.button("← メインに戻る"):
+            st.session_state["show_debug_log"] = False
+            st.rerun()
+        
+        if st.session_state.get("debug_info") and st.session_state.debug_info.get("debug_messages"):
+            messages = st.session_state.debug_info["debug_messages"]
+            
+            # 統計表示
+            debug_info = st.session_state.debug_info
+            st.markdown("## 📊 統計サマリー")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("入力ドキュメント", debug_info.get("input_docs", "N/A"))
+            with col2:
+                st.metric("最終チャンク数", debug_info.get("final_chunks", "N/A"))
+            with col3:
+                st.metric("重複コンテンツ", debug_info.get("duplicate_contents", "N/A"))
+            with col4:
+                docs = debug_info.get("input_docs", 0)
+                chunks = debug_info.get("final_chunks", 0)
+                ratio = f"{chunks/docs:.1f}" if docs > 0 else "N/A"
+                st.metric("チャンク/ドキュメント比", ratio)
+            
+            # ドキュメント分析
+            if debug_info.get("doc_analysis"):
+                st.markdown("## 📄 ドキュメント種別分析")
+                analysis = debug_info["doc_analysis"]
+                
+                problem_items = []
+                ok_items = []
+                
+                for key, count in analysis.items():
+                    if count > 1:
+                        problem_items.append((key, count))
+                    else:
+                        ok_items.append((key, count))
+                
+                if problem_items:
+                    st.markdown("### ⚠️ 問題の可能性があるアイテム")
+                    for key, count in problem_items:
+                        st.error(f"❌ {key}: {count}個 (重複の可能性)")
+                
+                if ok_items:
+                    st.markdown("### ✅ 正常なアイテム")
+                    for key, count in ok_items:
+                        st.success(f"✅ {key}: {count}個")
+            
+            # 詳細ログ
+            st.markdown("## 🔍 詳細ログ")
+            
+            log_container = st.container()
+            with log_container:
+                for i, msg in enumerate(messages):
+                    if "⚠️" in msg or "❌" in msg:
+                        st.warning(f"{i+1:2d}. {msg}")
+                    elif "✅" in msg:
+                        st.success(f"{i+1:2d}. {msg}")
+                    else:
+                        st.info(f"{i+1:2d}. {msg}")
+        else:
+            st.error("デバッグ情報が見つかりません")
+    
+    elif not st.session_state.edit_target:
         st.title("💬 GPT + RAG チャットボット")
         st.subheader(f"🗣️ {st.session_state.current_chat}")
         st.markdown(f"**モデル:** {st.session_state.gpt_model} | **モード:** {st.session_state.design_mode}")
