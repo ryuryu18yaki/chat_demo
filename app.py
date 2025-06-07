@@ -75,13 +75,42 @@ def post_log(
             # 1. conversationsシートへの保存
             logger.info("🔍 Step 4: Starting conversations sheet save...")
             try:
-                success = log_to_sheets(input_text, output_text, prompt)
+                # user_infoから必要な情報を取得
+                if user_info:
+                    username = user_info.get("username", "unknown")
+                    design_mode = user_info.get("design_mode", "unknown")
+                    session_id = user_info.get("session_id", "unknown")
+                    gpt_model = user_info.get("gpt_model", "unknown")
+                    temperature = user_info.get("temperature", 1.0)
+                    max_tokens = user_info.get("max_tokens")
+                    use_rag = user_info.get("use_rag", False)
+                    chat_title = user_info.get("chat_title", "未設定")
+                else:
+                    # フォールバック値
+                    username = design_mode = session_id = gpt_model = "unknown"
+                    temperature = 1.0
+                    max_tokens = None
+                    use_rag = False
+                    chat_title = "未設定"
+                
+                # log_to_sheetsに全ての情報を渡す
+                success = log_to_sheets(
+                    input_text=input_text,
+                    output_text=output_text,
+                    prompt=prompt,
+                    chat_title=chat_title,
+                    user_id=username,
+                    session_id=session_id,
+                    mode=design_mode,
+                    model=gpt_model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    use_rag=use_rag
+                )
+                
                 logger.info("🔍 Step 5: log_to_sheets result — success=%s", success)
                 
                 if success:
-                    # user_infoから情報を取得（セッション状態にアクセスしない）
-                    username = user_info.get("username", "unknown") if user_info else "unknown"
-                    design_mode = user_info.get("design_mode", "unknown") if user_info else "unknown"
                     logger.info("✅ conversations sheet success — user=%s mode=%s", 
                             username, design_mode)
                 else:
@@ -196,39 +225,6 @@ class StreamlitAsyncLogger:
                     self.stats["last_error_time"] = time.time()
                     self.stats["last_error_msg"] = str(e)
                 logger.error("❌ AsyncLogger worker error — %s", e, exc_info=True)
-    
-    def _process_log_safe(self, log_data: dict):
-        """安全なログ処理（例外処理付き）"""
-        try:
-            start_time = time.perf_counter()
-            
-            # 元のpost_log関数を呼び出し
-            post_log(
-                input_text=log_data["input_text"],
-                output_text=log_data["output_text"], 
-                prompt=log_data["prompt"],
-                send_to_model_comparison=log_data.get("send_to_model_comparison", False)
-            )
-            
-            elapsed = time.perf_counter() - start_time
-            
-            # 統計情報を更新
-            with self._lock:
-                self.stats["processed"] += 1
-                self.stats["last_process_time"] = time.time()
-            
-            logger.info("✅ Async log completed — elapsed=%.2fs processed=%d", 
-                       elapsed, self.stats["processed"])
-            
-        except Exception as e:
-            with self._lock:
-                self.stats["errors"] += 1
-                self.stats["last_error_time"] = time.time()
-                self.stats["last_error_msg"] = str(e)
-            logger.error("❌ Async log processing failed — %s", e, exc_info=True)
-            
-            # 重要なログの場合は再試行ロジックを追加可能
-            # self._retry_log(log_data)
 
     def _process_log_safe(self, log_data: dict):
         """安全なログ処理（例外処理付き）"""
@@ -339,32 +335,65 @@ def get_async_logger() -> StreamlitAsyncLogger:
     
     return async_logger
 
-# post_log_async便利関数も修正
 def post_log_async(input_text: str, output_text: str, prompt: str, 
                    send_to_model_comparison: bool = False):
     """非同期ログ投稿の便利関数（セッション状態対応）"""
     try:
-        # セッション状態から必要な情報を事前に取得
+        # デバッグ: セッション状態の内容を確認
+        logger.info("🔍 Collecting session state info...")
+        
+        # セッション状態から必要な情報をすべて取得
+        username = st.session_state.get("username") or st.session_state.get("name")
+        design_mode = st.session_state.get("design_mode")
+        session_id = st.session_state.get("sid")
+        gpt_model = st.session_state.get("gpt_model")
+        temperature = st.session_state.get("temperature", 1.0)
+        max_tokens = st.session_state.get("max_tokens")
+        use_rag = st.session_state.get("use_rag", False)
+        chat_title = st.session_state.get("current_chat", "未設定")
+        
+        # デバッグログ
+        logger.info("🔍 Session state values — username=%s design_mode=%s gpt_model=%s", 
+                   username, design_mode, gpt_model)
+        
         user_info = {
-            "username": st.session_state.get("username", "unknown"),
-            "design_mode": st.session_state.get("design_mode", "unknown"),
-            "session_id": st.session_state.get("sid", "unknown")
+            "username": username or "unknown",
+            "design_mode": design_mode or "unknown",
+            "session_id": session_id or "unknown",
+            "gpt_model": gpt_model or "unknown",
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "use_rag": use_rag,
+            "chat_title": chat_title
         }
+        
+        logger.info("🔍 Final user_info — %s", user_info)
         
         # チャットメッセージも事前に取得（deep copyで安全に）
         chat_messages = None
         if send_to_model_comparison:
-            current_chat = st.session_state.get("current_chat", "New Chat")
-            msgs = st.session_state.chats.get(current_chat, [])
-            # 深いコピーを作成（参照ではなく値をコピー）
-            import copy
-            chat_messages = copy.deepcopy(msgs)
+            try:
+                current_chat = st.session_state.get("current_chat", "New Chat")
+                chats_dict = st.session_state.get("chats", {})
+                msgs = chats_dict.get(current_chat, [])
+                
+                logger.info("🔍 Chat info — current_chat=%s msgs_count=%d", 
+                           current_chat, len(msgs))
+                
+                # 深いコピーを作成（参照ではなく値をコピー）
+                import copy
+                chat_messages = copy.deepcopy(msgs)
+                
+            except Exception as e:
+                logger.error("❌ Failed to get chat messages — %s", e)
+                chat_messages = []
         
         logger_instance = get_async_logger()
         logger_instance.post_log_async(
             input_text, output_text, prompt, send_to_model_comparison,
             user_info=user_info, chat_messages=chat_messages
         )
+        
     except Exception as e:
         logger.error("❌ post_log_async failed — %s", e)
         # フォールバック: 同期処理で確実にログを保存
