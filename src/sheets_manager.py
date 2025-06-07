@@ -200,31 +200,62 @@ def get_sheets_manager():
     """キャッシュされたSheetsManagerインスタンス"""
     return SheetsManager()
 
-def log_to_sheets(input_text: str, output_text: str, prompt: str, chat_title: str = None) -> bool:
-    """Streamlitアプリから呼び出すログ関数"""
+def log_to_sheets(
+    input_text: str, 
+    output_text: str, 
+    prompt: str, 
+    chat_title: str = None,
+    # 非同期対応のための新しい引数
+    user_id: str = None,
+    session_id: str = None,
+    mode: str = None,
+    model: str = None,
+    temperature: float = None,
+    max_tokens: int = None,
+    use_rag: bool = None
+) -> bool:
+    """Streamlitアプリから呼び出すログ関数（非同期対応版）"""
     
     manager = get_sheets_manager()
     
     if not manager.is_connected:
         return False
     
-    # チャットタイトルの決定
-    title_to_use = chat_title or st.session_state.get("current_chat", "未設定")
+    # 引数が提供されていない場合はsession_stateから取得（メインスレッドの場合）
+    try:
+        title_to_use = chat_title or st.session_state.get("current_chat", "未設定")
+        final_user_id = user_id or st.session_state.get("username", "unknown")
+        final_session_id = session_id or st.session_state.get("sid", "unknown")
+        final_mode = mode or st.session_state.get("design_mode", "")
+        final_model = model or st.session_state.get("gpt_model", "")
+        final_temperature = temperature if temperature is not None else st.session_state.get("temperature", 1.0)
+        final_max_tokens = max_tokens if max_tokens is not None else st.session_state.get("max_tokens")
+        final_use_rag = use_rag if use_rag is not None else st.session_state.get("use_rag", False)
+    except Exception:
+        # session_stateにアクセスできない場合（非同期スレッド）は引数の値をそのまま使用
+        title_to_use = chat_title or "未設定"
+        final_user_id = user_id or "unknown"
+        final_session_id = session_id or "unknown"
+        final_mode = mode or ""
+        final_model = model or ""
+        final_temperature = temperature if temperature is not None else 1.0
+        final_max_tokens = max_tokens
+        final_use_rag = use_rag if use_rag is not None else False
     
     # メタデータ準備
     metadata = {
-        "temperature": st.session_state.get("temperature", 1.0),
-        "max_tokens": st.session_state.get("max_tokens"),
-        "use_rag": st.session_state.get("use_rag", False),
+        "temperature": final_temperature,
+        "max_tokens": final_max_tokens,
+        "use_rag": final_use_rag,
         "timestamp": datetime.now().isoformat()
     }
     
     # 保存実行
     success = manager.log_conversation(
-        user_id=st.session_state.get("username", "unknown"),
-        session_id=st.session_state.get("sid", "unknown"),
-        mode=st.session_state.get("design_mode", ""),
-        model=st.session_state.get("gpt_model", ""),
+        user_id=final_user_id,
+        session_id=final_session_id,
+        mode=final_mode,
+        model=final_model,
         input_text=input_text,
         output_text=output_text,
         prompt_used=prompt,
