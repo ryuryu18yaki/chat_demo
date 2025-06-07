@@ -15,6 +15,12 @@ import yaml
 import streamlit_authenticator as stauth
 import uuid
 
+import threading
+import queue
+from typing import Optional
+import atexit
+import copy
+
 st.set_page_config(page_title="GPT + RAG Chatbot", page_icon="💬", layout="wide")
 
 logger = init_logger()
@@ -31,15 +37,16 @@ authenticator = stauth.Authenticate(
     config['cookie']['expiry_days']
 )
 
-# ===== post_log関数を完全置き換え =====
-# ===== post_log関数を完全置き換え =====
+# ===== post_log関数を修正 =====
 def post_log(
         input_text: str,
         output_text: str,
         prompt: str,
         send_to_model_comparison: bool = False,
+        user_info: dict = None,
+        chat_messages: list = None,
     ):
-        """Google Sheetsに直接ログを保存（gspread使用）- 改良版"""
+        """Google Sheetsに直接ログを保存（gspread使用）- セッション状態対応版"""
         
         try:
             logger.info("🔍 post_log start — attempting to log conversation")
@@ -72,9 +79,11 @@ def post_log(
                 logger.info("🔍 Step 5: log_to_sheets result — success=%s", success)
                 
                 if success:
+                    # user_infoから情報を取得（セッション状態にアクセスしない）
+                    username = user_info.get("username", "unknown") if user_info else "unknown"
+                    design_mode = user_info.get("design_mode", "unknown") if user_info else "unknown"
                     logger.info("✅ conversations sheet success — user=%s mode=%s", 
-                            st.session_state.get("username"), 
-                            st.session_state.get("design_mode"))
+                            username, design_mode)
                 else:
                     logger.warning("⚠️ conversations sheet failed — log_to_sheets returned False")
                     
@@ -82,12 +91,11 @@ def post_log(
                 logger.error("❌ Step 4-5 failed — %s", e, exc_info=True)
             
             # 2. model比較シートへの保存（オプション）
-            if send_to_model_comparison:
+            if send_to_model_comparison and chat_messages is not None:
                 logger.info("🔍 Step 6: Starting model comparison sheet save...")
                 try:
-                    # 現在のチャットのメッセージを取得
-                    current_chat = st.session_state.get("current_chat", "New Chat")
-                    msgs = st.session_state.chats.get(current_chat, [])
+                    # 事前に取得したメッセージを使用
+                    msgs = chat_messages
                     
                     # 完全なプロンプトを構築（実際のAPI呼び出しと同じ形式）
                     full_prompt_parts = []
@@ -128,11 +136,243 @@ def post_log(
                         
                 except Exception as e:
                     logger.error("❌ Step 6-8 failed — %s", e, exc_info=True)
+            elif send_to_model_comparison:
+                logger.warning("⚠️ model comparison requested but chat_messages is None")
             
             logger.info("🔍 post_log completed successfully")
                 
         except Exception as e:
             logger.error("❌ post_log outer error — %s", e, exc_info=True)
+
+class StreamlitAsyncLogger:
+    """Streamlit向け非同期ログ処理クラス"""
+    
+    def __init__(self):
+        self.log_queue = queue.Queue(maxsize=100)  # キューサイズ制限
+        self.worker_thread = None
+        self.shutdown_event = threading.Event()
+        self.stats = {
+            "processed": 0,
+            "errors": 0,
+            "last_process_time": None,
+            "last_error_time": None,
+            "last_error_msg": None
+        }
+        self._lock = threading.Lock()
+        self.start_worker()
+    
+    def start_worker(self):
+        """ワーカースレッドを開始"""
+        with self._lock:
+            if self.worker_thread is None or not self.worker_thread.is_alive():
+                self.shutdown_event.clear()
+                self.worker_thread = threading.Thread(
+                    target=self._worker_loop,
+                    daemon=True,  # Streamlitではdaemon=Trueが適切
+                    name="StreamlitAsyncLogger"
+                )
+                self.worker_thread.start()
+                logger.info("🚀 StreamlitAsyncLogger worker started")
+    
+    def _worker_loop(self):
+        """ワーカースレッドのメインループ"""
+        while not self.shutdown_event.is_set():
+            try:
+                # タイムアウト付きでキューから取得
+                log_data = self.log_queue.get(timeout=2.0)
+                
+                if log_data is None:  # shutdown シグナル
+                    break
+                
+                # 実際のログ処理を実行
+                self._process_log_safe(log_data)
+                self.log_queue.task_done()
+                
+            except queue.Empty:
+                continue  # タイムアウト時は継続
+            except Exception as e:
+                with self._lock:
+                    self.stats["errors"] += 1
+                    self.stats["last_error_time"] = time.time()
+                    self.stats["last_error_msg"] = str(e)
+                logger.error("❌ AsyncLogger worker error — %s", e, exc_info=True)
+    
+    def _process_log_safe(self, log_data: dict):
+        """安全なログ処理（例外処理付き）"""
+        try:
+            start_time = time.perf_counter()
+            
+            # 元のpost_log関数を呼び出し
+            post_log(
+                input_text=log_data["input_text"],
+                output_text=log_data["output_text"], 
+                prompt=log_data["prompt"],
+                send_to_model_comparison=log_data.get("send_to_model_comparison", False)
+            )
+            
+            elapsed = time.perf_counter() - start_time
+            
+            # 統計情報を更新
+            with self._lock:
+                self.stats["processed"] += 1
+                self.stats["last_process_time"] = time.time()
+            
+            logger.info("✅ Async log completed — elapsed=%.2fs processed=%d", 
+                       elapsed, self.stats["processed"])
+            
+        except Exception as e:
+            with self._lock:
+                self.stats["errors"] += 1
+                self.stats["last_error_time"] = time.time()
+                self.stats["last_error_msg"] = str(e)
+            logger.error("❌ Async log processing failed — %s", e, exc_info=True)
+            
+            # 重要なログの場合は再試行ロジックを追加可能
+            # self._retry_log(log_data)
+
+    def _process_log_safe(self, log_data: dict):
+        """安全なログ処理（例外処理付き）"""
+        try:
+            start_time = time.perf_counter()
+            
+            # 元のpost_log関数を呼び出し（事前取得した情報を渡す）
+            post_log(
+                input_text=log_data["input_text"],
+                output_text=log_data["output_text"], 
+                prompt=log_data["prompt"],
+                send_to_model_comparison=log_data.get("send_to_model_comparison", False),
+                user_info=log_data.get("user_info"),  # 新しく追加
+                chat_messages=log_data.get("chat_messages")  # 新しく追加
+            )
+            
+            elapsed = time.perf_counter() - start_time
+            
+            # 統計情報を更新
+            with self._lock:
+                self.stats["processed"] += 1
+                self.stats["last_process_time"] = time.time()
+            
+            logger.info("✅ Async log completed — elapsed=%.2fs processed=%d", 
+                       elapsed, self.stats["processed"])
+            
+        except Exception as e:
+            with self._lock:
+                self.stats["errors"] += 1
+                self.stats["last_error_time"] = time.time()
+                self.stats["last_error_msg"] = str(e)
+            logger.error("❌ Async log processing failed — %s", e, exc_info=True)
+    
+    def post_log_async(self, input_text: str, output_text: str, prompt: str, 
+                       send_to_model_comparison: bool = False,
+                       user_info: dict = None, chat_messages: list = None):
+        """非同期ログ投稿"""
+        # ワーカーが生きているか確認し、必要に応じて再起動
+        if not self.worker_thread or not self.worker_thread.is_alive():
+            logger.warning("⚠️ Worker thread not alive, restarting...")
+            self.start_worker()
+        
+        log_data = {
+            "input_text": input_text,
+            "output_text": output_text,
+            "prompt": prompt,
+            "send_to_model_comparison": send_to_model_comparison,
+            "timestamp": time.time(),
+            "session_id": user_info.get("session_id", "unknown") if user_info else "unknown",
+            "user": user_info.get("username", "unknown") if user_info else "unknown",
+            "user_info": user_info,  # 新しく追加
+            "chat_messages": chat_messages  # 新しく追加
+        }
+        
+        try:
+            # ノンブロッキングでキューに追加
+            self.log_queue.put_nowait(log_data)
+            logger.info("📝 Log queued — queue_size=%d", self.log_queue.qsize())
+            
+        except queue.Full:
+            logger.error("❌ Log queue is full — dropping log entry")
+            with self._lock:
+                self.stats["errors"] += 1
+                self.stats["last_error_msg"] = "Queue full - log dropped"
+    
+    def get_status(self) -> Dict[str, Any]:
+        """現在のステータスを取得"""
+        with self._lock:
+            return {
+                "queue_size": self.log_queue.qsize(),
+                "worker_alive": self.worker_thread.is_alive() if self.worker_thread else False,
+                "shutdown_requested": self.shutdown_event.is_set(),
+                "stats": self.stats.copy()
+            }
+    
+    def force_shutdown(self, timeout: float = 5.0):
+        """強制シャットダウン（主にデバッグ用）"""
+        logger.info("🛑 Force shutting down AsyncLogger...")
+        self.shutdown_event.set()
+        
+        # 可能な限りキューを空にする
+        try:
+            while not self.log_queue.empty():
+                self.log_queue.get_nowait()
+                self.log_queue.task_done()
+        except queue.Empty:
+            pass
+        
+        self.log_queue.put_nowait(None)  # worker終了シグナル
+        
+        if self.worker_thread and self.worker_thread.is_alive():
+            self.worker_thread.join(timeout=timeout)
+        
+        logger.info("✅ AsyncLogger force shutdown completed")
+
+# セッション状態でインスタンスを管理
+def get_async_logger() -> StreamlitAsyncLogger:
+    """StreamlitAsyncLoggerのインスタンスを取得（セッション管理）"""
+    if "async_logger" not in st.session_state:
+        st.session_state.async_logger = StreamlitAsyncLogger()
+    
+    # インスタンスが無効になっている場合は再作成
+    async_logger = st.session_state.async_logger
+    if not async_logger.worker_thread or not async_logger.worker_thread.is_alive():
+        logger.warning("⚠️ AsyncLogger instance invalid, creating new one")
+        st.session_state.async_logger = StreamlitAsyncLogger()
+        async_logger = st.session_state.async_logger
+    
+    return async_logger
+
+# post_log_async便利関数も修正
+def post_log_async(input_text: str, output_text: str, prompt: str, 
+                   send_to_model_comparison: bool = False):
+    """非同期ログ投稿の便利関数（セッション状態対応）"""
+    try:
+        # セッション状態から必要な情報を事前に取得
+        user_info = {
+            "username": st.session_state.get("username", "unknown"),
+            "design_mode": st.session_state.get("design_mode", "unknown"),
+            "session_id": st.session_state.get("sid", "unknown")
+        }
+        
+        # チャットメッセージも事前に取得（deep copyで安全に）
+        chat_messages = None
+        if send_to_model_comparison:
+            current_chat = st.session_state.get("current_chat", "New Chat")
+            msgs = st.session_state.chats.get(current_chat, [])
+            # 深いコピーを作成（参照ではなく値をコピー）
+            import copy
+            chat_messages = copy.deepcopy(msgs)
+        
+        logger_instance = get_async_logger()
+        logger_instance.post_log_async(
+            input_text, output_text, prompt, send_to_model_comparison,
+            user_info=user_info, chat_messages=chat_messages
+        )
+    except Exception as e:
+        logger.error("❌ post_log_async failed — %s", e)
+        # フォールバック: 同期処理で確実にログを保存
+        try:
+            logger.warning("⚠️ Falling back to synchronous logging")
+            post_log(input_text, output_text, prompt, send_to_model_comparison)
+        except Exception as fallback_error:
+            logger.error("❌ Fallback logging also failed — %s", fallback_error)
 
 # =====  基本設定  ============================================================
 client = OpenAI()
@@ -712,6 +952,42 @@ if st.session_state["authentication_status"]:
         if st.button("🔧 接続診断実行"):
             from src.sheets_manager import debug_connection_streamlit
             debug_connection_streamlit()
+        
+        st.divider()
+        st.markdown("### 🔧 ログ処理状況")
+
+        try:
+            async_logger = get_async_logger()
+            status = async_logger.get_status()
+            stats = status["stats"]
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.metric("キュー", status["queue_size"])
+                st.metric("処理済み", stats["processed"])
+            
+            with col2:
+                worker_status = "🟢 動作中" if status["worker_alive"] else "🔴 停止"
+                st.markdown(f"**ワーカー**: {worker_status}")
+                st.metric("エラー", stats["errors"])
+            
+            if stats["last_error_msg"]:
+                st.error(f"最新エラー: {stats['last_error_msg']}")
+            
+            if st.button("🔄 ログステータス更新"):
+                st.rerun()
+                
+            # デバッグ用の強制再起動ボタン
+            if st.button("🛑 ログワーカー再起動", type="secondary"):
+                async_logger.force_shutdown()
+                if "async_logger" in st.session_state:
+                    del st.session_state.async_logger
+                st.success("ログワーカーを再起動しました")
+                st.rerun()
+                
+        except Exception as e:
+            st.error(f"ログステータス取得失敗: {e}")
 
     # =====  プロンプト編集画面  =================================================
     if st.session_state.edit_target:
@@ -971,7 +1247,7 @@ if st.session_state["authentication_status"]:
             msgs.append({"role": "assistant", "content": assistant_reply})
             # ★ 重要：ログ保存を先に実行
             logger.info("📝 Executing post_log before any other operations")
-            post_log(user_prompt, assistant_reply, prompt, send_to_model_comparison=True)
+            post_log_async(user_prompt, assistant_reply, prompt, send_to_model_comparison=True)
 
             # ★ チャットタイトル生成は後回し（ログ保存完了後）
             try:
