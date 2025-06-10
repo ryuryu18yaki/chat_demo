@@ -116,35 +116,28 @@ def extract_tables_from_pdf(data: bytes) -> List[Dict[str, Any]]:
 # 4) 画像の抽出
 # ---------------------------------------------------------------------------
 def extract_images_from_pdf(pdf_bytes: bytes) -> List[Dict[str, Any]]:
-    """
-    pypdf（BSD ライセンス）で埋め込み画像を抽出し、
-    ページ番号と image_id 付きで返す。
-    """
     reader = PdfReader(BytesIO(pdf_bytes))
-    image_infos = []
-    img_counter = 0
+    images, counter = [], 0
 
-    for page_index, page in enumerate(reader.pages, start=1):
-        # pypdf 3.11 以降: page.images プロパティ
+    for pnum, page in enumerate(reader.pages, start=1):
         for img_obj in page.images:
-            img_counter += 1
-            image_id = f"{img_counter:03}"
-            # raw image bytes
-            data = img_obj.data  
-            # 拡張子推定（DCT/JPX→jpg, Flate→png など）
-            ext = img_obj.extension  # e.g. "jpg", "png"
-            filename = f"page{page_index}_{image_id}.{ext}"
-            image_infos.append(
+            counter += 1
+            # ★ ここを修正 ★
+            fmt = (img_obj.image_format or "PNG").lower()   # JPEG, PNG, JPX…
+            ext = "jpg" if fmt == "jpeg" else fmt           # ファイル名用
+            fname = f"page{pnum}_{counter:03}.{ext}"
+
+            images.append(
                 {
-                    "page": page_index,
-                    "image_id": image_id,
-                    "bytes": data,
-                    "name": filename,
+                    "page": pnum,
+                    "image_id": f"{counter:03}",
+                    "name": fname,
+                    "bytes": img_obj.data,
                     "width": img_obj.width,
                     "height": img_obj.height,
                 }
             )
-    return image_infos
+    return images
 
 # ---------------------------------------------------------------------------
 # 5) メイン: ファイル→チャンク辞書リスト（大幅修正）
