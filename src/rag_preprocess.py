@@ -117,10 +117,6 @@ def extract_tables_from_pdf(data: bytes) -> List[Dict[str, Any]]:
 # 4) 画像の抽出
 # ---------------------------------------------------------------------------
 def extract_images_from_pdf(pdf_bytes: bytes) -> List[Dict[str, Any]]:
-    """
-    - pypdf の page.images から画像バイト列を取得
-    - 拡張子は imghdr で判定するので pypdf の属性差異に依存しない
-    """
     reader = PdfReader(BytesIO(pdf_bytes))
     images, counter = [], 0
 
@@ -129,9 +125,12 @@ def extract_images_from_pdf(pdf_bytes: bytes) -> List[Dict[str, Any]]:
             counter += 1
             data = img_obj.data
 
-            # --- 拡張子を自動判定 ---
-            fmt = imghdr.what(None, data) or "png"   # 'jpeg', 'png', 'tiff', ...
-            ext = "jpg" if fmt == "jpeg" else fmt    # ファイル名用
+            # --- Pillow で形式判定 ---
+            try:
+                fmt = Image.open(BytesIO(data)).format.lower()  # 'jpeg', 'png', ...
+            except Exception:
+                fmt = "png"  # 何かあればデフォルト
+            ext = "jpg" if fmt == "jpeg" else fmt
 
             fname = f"page{pnum}_{counter:03}.{ext}"
             images.append(

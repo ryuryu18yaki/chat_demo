@@ -16,3 +16,4 @@ gspread
 google-auth 
 pandas
 pypdf
+Pillow>=10.0
