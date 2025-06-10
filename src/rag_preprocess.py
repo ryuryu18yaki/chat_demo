@@ -8,6 +8,7 @@ import hashlib
 import pdfplumber       # pip install pdfplumber
 from pdfminer.high_level import extract_text  # type: ignore
 from pdfminer.layout import LAParams         # type: ignore
+from pypdf import PdfReader
 from PIL import Image
 
 __all__ = [
@@ -114,33 +115,36 @@ def extract_tables_from_pdf(data: bytes) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # 4) 画像の抽出
 # ---------------------------------------------------------------------------
-def extract_images_from_pdf(data: bytes) -> List[Dict[str, Any]]:
-    """pdfplumber で埋め込み画像を抽出し、バイト＋メタデータで返す。"""
-    imgs: List[Dict[str, Any]] = []
-    with pdfplumber.open(BytesIO(data)) as pdf:
-        for page_num, page in enumerate(pdf.pages, start=1):
-            # ① ページ全体を PIL Image として取得
-            page_img = page.to_image(resolution=150)
-            pil_page = page_img.original
-            for img_idx, img_meta in enumerate(page.images, start=1):
-                x0, top, x1, bottom = (
-                    img_meta["x0"], img_meta["top"],
-                    img_meta["x1"], img_meta["bottom"]
-                )
-                # ② PIL Image に対して crop
-                cropped = pil_page.crop((x0, top, x1, bottom))
-                # PIL で PNG にエンコード
-                buf = BytesIO()
-                cropped.save(buf, format="PNG")
-                img_bytes = buf.getvalue()
-                imgs.append({
-                    "bytes": img_bytes,
-                    "page": page_num,
-                    "image_id": img_idx,
-                    "width": cropped.width,
-                    "height": cropped.height,
-                })
-    return imgs
+def extract_images_from_pdf(pdf_bytes: bytes) -> List[Dict[str, Any]]:
+    """
+    pypdf（BSD ライセンス）で埋め込み画像を抽出し、
+    ページ番号と image_id 付きで返す。
+    """
+    reader = PdfReader(BytesIO(pdf_bytes))
+    image_infos = []
+    img_counter = 0
+
+    for page_index, page in enumerate(reader.pages, start=1):
+        # pypdf 3.11 以降: page.images プロパティ
+        for img_obj in page.images:
+            img_counter += 1
+            image_id = f"{img_counter:03}"
+            # raw image bytes
+            data = img_obj.data  
+            # 拡張子推定（DCT/JPX→jpg, Flate→png など）
+            ext = img_obj.extension  # e.g. "jpg", "png"
+            filename = f"page{page_index}_{image_id}.{ext}"
+            image_infos.append(
+                {
+                    "page": page_index,
+                    "image_id": image_id,
+                    "bytes": data,
+                    "name": filename,
+                    "width": img_obj.width,
+                    "height": img_obj.height,
+                }
+            )
+    return image_infos
 
 # ---------------------------------------------------------------------------
 # 5) メイン: ファイル→チャンク辞書リスト（大幅修正）
