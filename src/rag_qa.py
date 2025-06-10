@@ -148,22 +148,10 @@ def generate_answer(
                 if f["name"] == source:
                     for img in extract_images_from_pdf(f["data"]):
                         if img["page"] == page:
-                            # プレースホルダを追加
                             idx = len(placeholders) + 1
-                            placeholders.append(f"[Image {idx}: {source} p{page} id={img['image_id']}]" )
-                            files.append({
-                                "name": f"{source}_p{page}_{img['image_id']}.png",
-                                "data": img["bytes"],
-                            })
-                            
-                            # 画像情報を保存（表示用）
-                            images_info.append({
-                                "name": f"{source}_p{page}_{img['image_id']}.png",
-                                "data": img["bytes"],
-                                "source": source,
-                                "page": page,
-                                "image_id": img["image_id"]
-                            })
+                            placeholders.append(f"[Image {idx}: {source} p{page} id={img['image_id']}]")
+                            files.append({"name": img["name"], "data": img["bytes"]})
+                            images_info.append({**img, "source": source})
         
         # 画像のプレースホルダを contexts に追加
         contexts.extend(placeholders)
