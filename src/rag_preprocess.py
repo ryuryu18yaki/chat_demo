@@ -10,7 +10,6 @@ from pdfminer.high_level import extract_text  # type: ignore
 from pdfminer.layout import LAParams         # type: ignore
 from pypdf import PdfReader
 from PIL import Image
-import imghdr
 
 __all__ = [
     "extract_text_from_pdf",
