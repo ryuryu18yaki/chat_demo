@@ -151,7 +151,7 @@ def generate_answer(
                             idx = len(placeholders) + 1
                             placeholders.append(f"[Image {idx}: {source} p{page} id={img['image_id']}]")
                             files.append({"name": img["name"], "data": img["bytes"]})
-                            images_info.append({**img, "source": source})
+                            images_info.append({**img, "source": source, "data": img["bytes"]})
         
         # 画像のプレースホルダを contexts に追加
         contexts.extend(placeholders)
