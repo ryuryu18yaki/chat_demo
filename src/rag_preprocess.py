@@ -10,6 +10,7 @@ from pdfminer.high_level import extract_text  # type: ignore
 from pdfminer.layout import LAParams         # type: ignore
 from pypdf import PdfReader
 from PIL import Image
+import imghdr
 
 __all__ = [
     "extract_text_from_pdf",
@@ -116,25 +117,31 @@ def extract_tables_from_pdf(data: bytes) -> List[Dict[str, Any]]:
 # 4) 画像の抽出
 # ---------------------------------------------------------------------------
 def extract_images_from_pdf(pdf_bytes: bytes) -> List[Dict[str, Any]]:
+    """
+    - pypdf の page.images から画像バイト列を取得
+    - 拡張子は imghdr で判定するので pypdf の属性差異に依存しない
+    """
     reader = PdfReader(BytesIO(pdf_bytes))
     images, counter = [], 0
 
     for pnum, page in enumerate(reader.pages, start=1):
         for img_obj in page.images:
             counter += 1
-            # ★ ここを修正 ★
-            fmt = (img_obj.image_format or "PNG").lower()   # JPEG, PNG, JPX…
-            ext = "jpg" if fmt == "jpeg" else fmt           # ファイル名用
-            fname = f"page{pnum}_{counter:03}.{ext}"
+            data = img_obj.data
 
+            # --- 拡張子を自動判定 ---
+            fmt = imghdr.what(None, data) or "png"   # 'jpeg', 'png', 'tiff', ...
+            ext = "jpg" if fmt == "jpeg" else fmt    # ファイル名用
+
+            fname = f"page{pnum}_{counter:03}.{ext}"
             images.append(
                 {
                     "page": pnum,
                     "image_id": f"{counter:03}",
                     "name": fname,
-                    "bytes": img_obj.data,
-                    "width": img_obj.width,
-                    "height": img_obj.height,
+                    "bytes": data,
+                    "width": getattr(img_obj, "width", None),
+                    "height": getattr(img_obj, "height", None),
                 }
             )
     return images
