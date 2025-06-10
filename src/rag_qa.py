@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import List, Dict, Any, Optional
-from openai import OpenAI
+from openai import AzureOpenAI
 from src.rag_vector import query_collection
 from src.rag_preprocess import extract_images_from_pdf
 from base64 import b64encode
@@ -35,12 +35,12 @@ def create_azure_openai_client():
     if not azure_endpoint or not azure_key:
         raise ValueError("Azure OpenAI の設定が不足しています。環境変数を確認してください。")
     
-    return OpenAI(
-        api_key=azure_key,
-        base_url=f"{azure_endpoint}/openai",
-        default_query={"api-version": "2025-04-01-preview"},
-        default_headers={"api-key": azure_key}
+    return AzureOpenAI(
+        api_version="2025-04-01-preview",
+        azure_endpoint=azure_endpoint,
+        api_key=azure_key
     )
+
 
 # Azure用のモデル名マッピング
 AZURE_MODEL_MAPPING = {

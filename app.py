@@ -1,5 +1,5 @@
 import streamlit as st
-from openai import OpenAI
+from openai import AzureOpenAI
 from typing import List, Dict, Any
 import time, functools
 import os
@@ -40,11 +40,10 @@ def setup_azure_openai():
         st.error("Azure OpenAI の設定が不足しています。環境変数またはSecrets.tomlを確認してください。")
         st.stop()
     
-    return OpenAI(
-        api_key=azure_key,
-        base_url=f"{azure_endpoint}/openai",
-        default_query={"api-version": "2025-04-01-preview"},
-        default_headers={"api-key": azure_key}
+    return AzureOpenAI(
+        api_version="2025-04-01-preview",
+        azure_endpoint=azure_endpoint,
+        api_key=azure_key
     )
 
 # Azure用のモデル名マッピング
