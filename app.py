@@ -1,15 +1,15 @@
 import streamlit as st
-from openai import OpenAI
+from openai import AzureOpenAI
 from typing import List, Dict, Any
 import time, functools
-# import requests  # ← 削除（Webhook不要）
+import os
 
 from src.rag_preprocess import preprocess_files
 from src.rag_vector import save_docs_to_chroma
 from src.rag_qa import generate_answer
 from src.startup_loader import initialize_chroma_from_input
 from src.logging_utils import init_logger
-from src.sheets_manager import log_to_sheets, get_sheets_manager, send_prompt_to_model_comparison  # ← 追加
+from src.sheets_manager import log_to_sheets, get_sheets_manager, send_prompt_to_model_comparison
 
 import yaml
 import streamlit_authenticator as stauth
@@ -24,6 +24,40 @@ import copy
 st.set_page_config(page_title="GPT + RAG Chatbot", page_icon="💬", layout="wide")
 
 logger = init_logger()
+
+# Azure OpenAI設定を追加
+def setup_azure_openai():
+    """Azure OpenAI設定"""
+    # 環境変数から取得（Streamlit Secretsでも可能）
+    try:
+        azure_endpoint = st.secrets.get("AZURE_OPENAI_ENDPOINT", os.getenv("AZURE_OPENAI_ENDPOINT"))
+        azure_key = st.secrets.get("AZURE_OPENAI_KEY", os.getenv("AZURE_OPENAI_KEY"))
+    except:
+        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        azure_key = os.getenv("AZURE_OPENAI_KEY")
+    
+    if not azure_endpoint or not azure_key:
+        st.error("Azure OpenAI の設定が不足しています。環境変数またはSecrets.tomlを確認してください。")
+        st.stop()
+    
+    return AzureOpenAI(
+        api_version="2025-04-01-preview",
+        azure_endpoint=azure_endpoint,
+        api_key=azure_key
+    )
+
+# Azure用のモデル名マッピング
+AZURE_MODEL_MAPPING = {
+    "gpt-4.1": "gpt-4.1",
+    "gpt-4.1-mini": "gpt-4.1-mini", 
+    "gpt-4.1-nano": "gpt-4.1-nano",
+    "gpt-4o": "gpt-4o",
+    "gpt-4o-mini": "gpt-4o-mini"
+}
+
+def get_azure_model_name(model_name: str) -> str:
+    """OpenAIモデル名をAzureデプロイメント名に変換"""
+    return AZURE_MODEL_MAPPING.get(model_name, model_name)
 
 # =====  認証設定の読み込み ============================================================
 with open('./config.yaml') as file:
@@ -403,8 +437,8 @@ def post_log_async(input_text: str, output_text: str, prompt: str,
         except Exception as fallback_error:
             logger.error("❌ Fallback logging also failed — %s", fallback_error)
 
-# =====  基本設定  ============================================================
-client = OpenAI()
+# =====  基本設定（Azure OpenAI対応）  ============================================================
+client = setup_azure_openai()
 
 # =====  ログインUIの表示  ============================================================
 authenticator.login()
@@ -444,12 +478,14 @@ if st.session_state["authentication_status"]:
     専門用語は必要に応じて解説を加え、判断の背景にある理由を丁寧に説明します。
     **重要：以下の各事項は「代表的なビル（丸の内ビルディング）」を想定して記載しています。他のビルでは仕様や基準が異なる可能性があることを、回答時には必ず言及してください。**
     **注意：過度に込み入った条件の詳細説明をユーザーに求めることは避け、一般的な設計基準に基づく実務的な回答を心がけてください。**
+
     ────────────────────────────────
     ## 【工事区分について】
     - **B工事**：本システムが対象とする工事。入居者負担でビル側が施工する工事
     - **C工事**：入居者が独自に施工する工事（電話・LAN・防犯設備など）
     - 本システムでは、C工事設備については配管類の数量算出のみを行います
     ────────────────────────────────
+
     ## 【ビル共通要件】
     1. **防火対象建物区分**
     - 消防法施行令 区分「（16）複合用途防火対象物　イ」
@@ -783,12 +819,13 @@ if st.session_state["authentication_status"]:
             prompt = f"以下の会話の内容を25文字以内の簡潔なタイトルにしてください:\n{messages[0]['content'][:200]}"
             try:
                 resp = client.chat.completions.create(
-                    model="gpt-4.1-nano",
+                    model=get_azure_model_name("gpt-4.1-nano"),  # Azure用に変換
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=30,
                 )
                 return resp.choices[0].message.content.strip('"').strip()
-            except:
+            except Exception as e:
+                logger.error(f"Chat title generation failed: {e}")
                 return f"Chat {len(st.session_state.chats) + 1}"
         return f"Chat {len(st.session_state.chats) + 1}"
 
@@ -1221,9 +1258,9 @@ if st.session_state["authentication_status"]:
                 # ---------- GPT-only ----------
                 else:
                     st.session_state["last_answer_mode"] = "GPT-only"
-                    # API呼び出し部分（条件付き）
+                    # API呼び出し部分（Azure用に修正）
                     params = {
-                        "model": st.session_state.gpt_model,
+                        "model": get_azure_model_name(st.session_state.gpt_model),  # Azure用に変換
                         "messages": [
                             {"role": "system", "content": prompt},
                             *msgs[:-1],
@@ -1261,16 +1298,6 @@ if st.session_state["authentication_status"]:
                 model_info = f"\n\n---\n*このレスポンスは `{st.session_state.gpt_model}` で生成されました*"
                 full_reply = assistant_reply + model_info
                 st.markdown(full_reply)
-
-            # チャットメッセージ外で expander 表示
-            # if sources:
-            #     st.markdown("### 🔎 RAG が取得したチャンク")  # タイトルとして使う
-            #     for idx, s in enumerate(sources, 1):
-            #         chunk = s.get("content", "")[:200]
-            #         if len(s.get("content", "")) > 200:
-            #             chunk += " …"
-            #         with st.expander(f"Doc {idx} - {s['metadata'].get('source','N/A')} (score: {s['distance']:.4f})"):
-            #             st.markdown(f"> {chunk}")
 
             # 保存するのは元の応答（モデル情報なし）
             msgs.append({"role": "assistant", "content": assistant_reply})

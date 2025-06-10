@@ -1,10 +1,59 @@
 from __future__ import annotations
 
 from typing import List, Dict, Any, Optional
-from openai import OpenAI
+from openai import AzureOpenAI
 from src.rag_vector import query_collection
 from src.rag_preprocess import extract_images_from_pdf
 from base64 import b64encode
+import os
+
+try:
+    import streamlit as st
+    STREAMLIT_AVAILABLE = True
+except ImportError:
+    STREAMLIT_AVAILABLE = False
+
+# ---------------------------------------------------------------------------
+# Azure OpenAI設定
+# ---------------------------------------------------------------------------
+def create_azure_openai_client():
+    """Azure OpenAI クライアントを作成"""
+    # Streamlit Secretsまたは環境変数から取得
+    if STREAMLIT_AVAILABLE:
+        try:
+            azure_endpoint = st.secrets.get("AZURE_OPENAI_ENDPOINT", os.getenv("AZURE_OPENAI_ENDPOINT"))
+            azure_key = st.secrets.get("AZURE_OPENAI_KEY", os.getenv("AZURE_OPENAI_KEY"))
+        except:
+            # Streamlit外で実行される場合
+            azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+            azure_key = os.getenv("AZURE_OPENAI_KEY")
+    else:
+        # Streamlit外で実行される場合
+        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        azure_key = os.getenv("AZURE_OPENAI_KEY")
+    
+    if not azure_endpoint or not azure_key:
+        raise ValueError("Azure OpenAI の設定が不足しています。環境変数を確認してください。")
+    
+    return AzureOpenAI(
+        api_version="2025-04-01-preview",
+        azure_endpoint=azure_endpoint,
+        api_key=azure_key
+    )
+
+
+# Azure用のモデル名マッピング
+AZURE_MODEL_MAPPING = {
+    "gpt-4.1": "gpt-4.1",
+    "gpt-4.1-mini": "gpt-4.1-mini", 
+    "gpt-4.1-nano": "gpt-4.1-nano",
+    "gpt-4o": "gpt-4o",
+    "gpt-4o-mini": "gpt-4o-mini"
+}
+
+def get_azure_model_name(model_name: str) -> str:
+    """OpenAIモデル名をAzureデプロイメント名に変換"""
+    return AZURE_MODEL_MAPPING.get(model_name, model_name)
 
 # ---------------------------------------------------------------------------
 # 設定
@@ -34,7 +83,7 @@ def _build_prompt(question: str, contexts: List[str]) -> List[Dict[str, str]]:
     return [system_msg, user_msg]
 
 # ---------------------------------------------------------------------------
-# 回答生成
+# 回答生成（Azure対応版）
 # ---------------------------------------------------------------------------
 
 def generate_answer(
@@ -51,12 +100,14 @@ def generate_answer(
         max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
+        Azure OpenAI対応版のRAG回答生成
         1) テキストのみでベクトル検索
         2) ヒットしたテキスト/表チャンクを contexts に集約
         3) 同ページの画像を PDF から切り出して files に追加
-        4) GPT-4V へマルチモーダル入力として渡し回答を生成
+        4) Azure OpenAI GPT-4V へマルチモーダル入力として渡し回答を生成
         """
-        client = OpenAI()
+        # Azure OpenAI クライアントを作成
+        client = create_azure_openai_client()
 
         # --- 1) テキスト/表のみを検索 ---
         hits = query_collection(
@@ -82,7 +133,7 @@ def generate_answer(
         # --- 3) 画像を抽出 ---
         files: List[Dict[str, bytes]] = []
         placeholders: List[str] = []
-        images_info: List[Dict[str, Any]] = []  # 🔥 画像情報を保存
+        images_info: List[Dict[str, Any]] = []  # 画像情報を保存
         
         for hit in hits:
             meta = hit.get("metadata", {})
@@ -105,7 +156,7 @@ def generate_answer(
                                 "data": img["bytes"],
                             })
                             
-                            # 🔥 画像情報を保存（表示用）
+                            # 画像情報を保存（表示用）
                             images_info.append({
                                 "name": f"{source}_p{page}_{img['image_id']}.png",
                                 "data": img["bytes"],
@@ -137,9 +188,9 @@ def generate_answer(
         messages.append(system_msg)
         messages.append(user_msg)
         
-        # --- 6) API呼び出しパラメータを構築 ---
+        # --- 6) API呼び出しパラメータを構築（Azure用に修正）---
         params = {
-            "model": model,
+            "model": get_azure_model_name(model),  # Azure用に変換
             "messages": messages,
         }
         
@@ -149,10 +200,9 @@ def generate_answer(
         if max_tokens is not None:
             params["max_tokens"] = max_tokens
         
-        # --- 7) GPT-4V 呼び出し ---
+        # --- 7) Azure OpenAI 呼び出し ---
         resp = client.chat.completions.create(**params)
         
-        # 🔥 画像情報も返すように修正
         return {
             "answer": resp.choices[0].message.content,
             "sources": hits,
