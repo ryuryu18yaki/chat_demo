@@ -753,6 +753,11 @@ if st.session_state["authentication_status"]:
         st.session_state.last_rag_sources = []
     if "last_rag_images" not in st.session_state:
         st.session_state.last_rag_images = []
+    if "select_docs_mode" not in st.session_state:   # ←★追加
+     st.session_state.select_docs_mode = False
+    if "active_rag_docs" not in st.session_state:    # ←★追加
+        # 初期値：アップロード済みの全資料、なければ空
+        st.session_state.active_rag_docs = []
 
 
     # =====  ヘルパー  ============================================================
@@ -984,16 +989,11 @@ if st.session_state["authentication_status"]:
         else:
             st.info("現在のモード: GPTのみ（検索なし）")
 
-        if st.session_state.rag_files:
-            all_doc_names = [f["name"] for f in st.session_state.rag_files]
-
-            st.session_state.setdefault("active_rag_docs", all_doc_names)
-
-            st.session_state.active_rag_docs = st.multiselect(
-                "🔍 検索対象資料を選択",
-                options=all_doc_names,
-                default=st.session_state.active_rag_docs,
-            )
+        # 参考資料選択モーダル起動ボタン
+        if st.button("📚 検索対象資料を選択／変更",
+                    disabled=not st.session_state.get("rag_files")):
+            st.session_state.select_docs_mode = True
+            st.rerun()
 
         # ベクトルDBステータス
         st.markdown("### 🗂 ベクトルDBステータス")
@@ -1094,8 +1094,52 @@ if st.session_state["authentication_status"]:
         elif cancel_button:
             handle_cancel_edit()
 
+    if st.session_state.select_docs_mode:   # ★ 資料選択モード
+        st.title("📚 検索対象資料を選択")
+
+        # アップロード済み資料名を取得
+        doc_names = [f["name"] for f in st.session_state.rag_files]
+        if not doc_names:
+            st.info("先に PDF / TXT をアップロードしてください")
+        else:
+            with st.form(key="doc_select_form"):
+                st.markdown("検索に使用する資料にチェックを入れてください。")
+
+                # チェックボックス一覧
+                checked_docs = []
+                for name in doc_names:
+                    checked = st.checkbox(
+                        label=name,
+                        value=name in st.session_state.active_rag_docs
+                    )
+                    if checked:
+                        checked_docs.append(name)
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    save_btn = st.form_submit_button("✅ 保存")
+                with col2:
+                    cancel_btn = st.form_submit_button("❌ キャンセル")
+                with col3:
+                    sel_all = st.form_submit_button("🔄 全選択")
+
+            # --- ボタン処理 ---
+            if save_btn:
+                st.session_state.active_rag_docs = checked_docs
+                st.session_state.select_docs_mode = False
+                st.success("選択を保存しました")
+                st.rerun()
+            elif cancel_btn:
+                st.session_state.select_docs_mode = False
+                st.rerun()
+            elif sel_all:
+                st.session_state.active_rag_docs = doc_names
+                st.session_state.select_docs_mode = False
+                st.success("すべて選択しました")
+                st.rerun()
+
     # =====  メイン画面表示  ==========================================================
-    if not st.session_state.edit_target:
+    else:
         st.title("💬 GPT + RAG チャットボット")
         st.subheader(f"🗣️ {st.session_state.current_chat}")
         st.markdown(f"**モデル:** {st.session_state.gpt_model} | **モード:** {st.session_state.design_mode}")
@@ -1213,10 +1257,6 @@ if st.session_state["authentication_status"]:
                         st.rerun()
                 with col2:
                     st.markdown(f"*RAG使用: {'✅' if st.session_state.get('use_rag', False) else '❌'}*")
-
-    else:
-        # プロンプト編集モード時は入力欄を無効化
-        user_prompt = None
 
     # =====  応答生成  ============================================================
     if user_prompt and not st.session_state.edit_target:  # 編集モード時は応答生成をスキップ
