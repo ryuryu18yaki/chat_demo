@@ -758,7 +758,9 @@ if st.session_state["authentication_status"]:
     if "active_rag_docs" not in st.session_state:    # ←★追加
         # 初期値：アップロード済みの全資料、なければ空
         st.session_state.active_rag_docs = []
-
+    
+    # --- どのブランチでも参照できるよう初期化 --------------------
+    user_prompt: str | None = None
 
     # =====  ヘルパー  ============================================================
     def get_messages() -> List[Dict[str, str]]:
@@ -988,6 +990,15 @@ if st.session_state["authentication_status"]:
             st.success("現在のモード: RAG使用中")
         else:
             st.info("現在のモード: GPTのみ（検索なし）")
+        
+        # ---- 現在選択中の参考資料リスト ---------------------------
+        active_docs = st.session_state.get("active_rag_docs", [])
+        if active_docs:
+            st.markdown("**🔖 現在検索対象の資料:**")
+            for doc in active_docs:
+                st.markdown(f"- {doc}")
+        else:
+            st.markdown("🔖 *検索対象資料が未選択です*")
 
         # 参考資料選択モーダル起動ボタン
         if st.button("📚 検索対象資料を選択／変更",
