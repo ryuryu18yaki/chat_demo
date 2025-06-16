@@ -1232,31 +1232,7 @@ if st.session_state["authentication_status"]:
                                 st.markdown(f"**ソース:** {meta.get('source', 'N/A')}")
                                 st.markdown(f"**ページ:** {meta.get('page', 'N/A')}")
                                 st.markdown(f"**距離:** {source.get('distance', 0):.4f}")
-                                # A️⃣ 追加: PDF ワンクリック表示 / ダウンロード
-                                pdf_bytes = fetch_pdf_bytes(meta.get("source", ""))
-
-                                if pdf_bytes:
-                                    # 1) ダウンロードボタン
-                                    st.download_button(
-                                        label="📄 PDF をダウンロード",
-                                        data=pdf_bytes,
-                                        file_name=meta.get("source", "document.pdf"),
-                                        mime="application/pdf",
-                                        key=f"pdf_dl_{selected_chunk}",
-                                    )
-
-                                    # 2) ページ内プレビュー (iframe + Base64)
-                                    b64 = base64.b64encode(pdf_bytes).decode()
-                                    pdf_iframe = f"""
-                                        <iframe src="data:application/pdf;base64,{b64}"
-                                                width="100%" height="600px" type="application/pdf">
-                                        </iframe>
-                                    """
-
-                                    # expander の代わりに toggle で開閉
-                                    if st.toggle("📄 プレビューを表示 / 非表示",
-                                                key=f"pdf_toggle_{selected_chunk}", value=False):
-                                        html(pdf_iframe, height=620, scrolling=True)
+                                
                     else:
                         st.info("📄 テキスト・表データはありませんでした")
                 
