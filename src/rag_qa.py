@@ -176,7 +176,13 @@ def generate_answer(
         messages: List[Dict[str, Any]] = []
         if chat_history:
             messages.append({"role": "system", "content": prompt})
-            messages.extend(chat_history)
+            # keep only role & content, drop any UI‑only keys (e.g. _rag_meta) to avoid bytes in JSON
+            safe_history = [
+                {"role": m.get("role"), "content": m.get("content")}
+                for m in chat_history
+                if isinstance(m, dict) and m.get("role") and m.get("content")
+            ]
+            messages.extend(safe_history)
         messages.append(system_msg)
         messages.append(user_msg)
         

@@ -1353,17 +1353,13 @@ if st.session_state["authentication_status"]:
                     st.session_state["last_answer_mode"] = "RAG"
 
                     t_api = time.perf_counter()
-                    safe_files = [
-                        {k: v for k, v in f.items() if k != "data"}   # bytes を落とす
-                        for f in st.session_state.rag_files
-                    ]
                     
                     # API呼び出しパラメータを準備
                     rag_params = {
                         "prompt": prompt,
                         "question": user_prompt,
                         "collection": st.session_state.rag_collection,
-                        "rag_files": safe_files,
+                        "rag_files": st.session_state.rag_files,
                         "top_k": 4,
                         "model": st.session_state.gpt_model,
                         "chat_history": msgs,
