@@ -984,6 +984,17 @@ if st.session_state["authentication_status"]:
         else:
             st.info("現在のモード: GPTのみ（検索なし）")
 
+        if st.session_state.rag_files:
+            all_doc_names = [f["name"] for f in st.session_state.rag_files]
+
+            st.session_state.setdefault("active_rag_docs", all_doc_names)
+
+            st.session_state.active_rag_docs = st.multiselect(
+                "🔍 検索対象資料を選択",
+                options=all_doc_names,
+                default=st.session_state.active_rag_docs,
+            )
+
         # ベクトルDBステータス
         st.markdown("### 🗂 ベクトルDBステータス")
 
@@ -1157,6 +1168,18 @@ if st.session_state["authentication_status"]:
                                 st.markdown(f"**ソース:** {meta.get('source', 'N/A')}")
                                 st.markdown(f"**ページ:** {meta.get('page', 'N/A')}")
                                 st.markdown(f"**距離:** {source.get('distance', 0):.4f}")
+                                # A️⃣ 追加: PDF ワンクリック表示 / ダウンロード
+                                pdf_path = meta.get("path")
+                                if pdf_path and os.path.exists(pdf_path):
+                                    with open(pdf_path, "rb") as fp:
+                                        pdf_bytes = fp.read()
+                                    st.download_button(
+                                        label="📄 この PDF を開く／DL",
+                                        data=pdf_bytes,
+                                        file_name=meta.get("source", "document.pdf"),
+                                        mime="application/pdf",
+                                        key=f"pdf_dl_{selected_chunk}",
+                                    )
                     else:
                         st.info("📄 テキスト・表データはありませんでした")
                 
@@ -1232,6 +1255,7 @@ if st.session_state["authentication_status"]:
                         "top_k": 4,
                         "model": st.session_state.gpt_model,
                         "chat_history": msgs,
+                        "active_docs": st.session_state.active_rag_docs,
                     }
                     
                     # カスタム設定があれば追加

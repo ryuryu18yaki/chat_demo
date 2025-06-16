@@ -92,6 +92,7 @@ def generate_answer(
         question: str,
         collection,
         rag_files: List[Dict[str, Any]],
+        active_docs: Optional[List[str]] = None,
         top_k: int = 5,
         model: str = _DEFAULT_MODEL,
         max_context_chars: int = 6000,
@@ -115,6 +116,9 @@ def generate_answer(
             query=question,
             n_results=top_k,
         )
+
+        if active_docs:
+            hits = [h for h in hits if h["metadata"].get("source") in active_docs]
         
         # --- 2) contexts を収集 ---
         contexts: List[str] = []
