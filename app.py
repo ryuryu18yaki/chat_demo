@@ -1170,102 +1170,125 @@ if st.session_state["authentication_status"]:
             message_class = "user-message" if m["role"] == "user" else "assistant-message"
             with st.chat_message(m["role"]):
                 st.markdown(f'<div class="{message_class}">{m["content"]}</div>', unsafe_allow_html=True)
+            if m["role"] == "assistant" and "rag" in m:
+                srcs  = m["rag"].get("sources", [])
+                imgs  = m["rag"].get("images", [])
+
+                # 参考資料トグル（expander でも OK だがネスト回避のため toggle 推奨）
+                if st.toggle("📑 参考資料を表示 / 非表示",
+                            key=f"rag_toggle_{id(m)}", value=False):
+                    # --- チャンク一覧 ---
+                    for s in srcs:
+                        meta = s["metadata"]
+                        st.markdown(
+                            f"- **{meta['source']} (p.{meta.get('page','?')})**"
+                            f" — 類似度 *{1-s['distance']:.3f}*"
+                        )
+
+                    # --- 画像サムネイル ---
+                    if imgs:
+                        st.markdown("---")
+                        cols = st.columns(min(4, len(imgs)))
+                        for c, im in zip(cols, imgs):
+                            c.image(im["data"], caption=f"{im['name']} (p.{im['page']})",
+                                    use_column_width=True)
+                            
         st.markdown('</div>', unsafe_allow_html=True)
 
         # -- 入力欄 --
         user_prompt = st.chat_input("メッセージを入力…")
 
-        # ===== RAG検索結果の表示（シンプル版） =====
-        if st.session_state.get("last_rag_sources"):
+        # # ===== RAG検索結果の表示（シンプル版） =====
+        # if st.session_state.get("last_rag_sources"):
             
-            with st.expander("🔎 RAG検索結果を表示"):
-                sources = st.session_state.last_rag_sources
-                st.markdown(f"**検索チャンク数:** {len(sources)} 件")
+        #     with st.expander("🔎 RAG検索結果を表示"):
+        #         sources = st.session_state.last_rag_sources
+        #         st.markdown(f"**検索チャンク数:** {len(sources)} 件")
                 
-                # セレクトボックスでチャンクを選択
-                if sources:
-                    chunk_options = []
-                    text_sources = []
+        #         # セレクトボックスでチャンクを選択
+        #         if sources:
+        #             chunk_options = []
+        #             text_sources = []
                     
-                    for idx, source in enumerate(sources):
-                        meta = source.get("metadata", {})
-                        kind = meta.get("kind", "text")
+        #             for idx, source in enumerate(sources):
+        #                 meta = source.get("metadata", {})
+        #                 kind = meta.get("kind", "text")
                         
-                        if kind in ("text", "table"):
-                            source_name = meta.get("source", "N/A")
-                            page_num = meta.get("page", "N/A")
-                            distance = source.get("distance", 0)
-                            similarity = 1 - distance
+        #                 if kind in ("text", "table"):
+        #                     source_name = meta.get("source", "N/A")
+        #                     page_num = meta.get("page", "N/A")
+        #                     distance = source.get("distance", 0)
+        #                     similarity = 1 - distance
                             
-                            chunk_options.append(f"チャンク {len(text_sources)+1}: {source_name} (p.{page_num}) | 類似度: {similarity:.3f}")
-                            text_sources.append(source)
+        #                     chunk_options.append(f"チャンク {len(text_sources)+1}: {source_name} (p.{page_num}) | 類似度: {similarity:.3f}")
+        #                     text_sources.append(source)
                     
-                    if chunk_options:
-                        selected_chunk = st.selectbox(
-                            "表示するチャンクを選択:",
-                            options=range(len(chunk_options)),
-                            format_func=lambda x: chunk_options[x],
-                            key="chunk_selector"
-                        )
+        #             if chunk_options:
+        #                 selected_chunk = st.selectbox(
+        #                     "表示するチャンクを選択:",
+        #                     options=range(len(chunk_options)),
+        #                     format_func=lambda x: chunk_options[x],
+        #                     key="chunk_selector"
+        #                 )
                         
-                        # 選択されたチャンクの詳細表示
-                        if selected_chunk is not None and selected_chunk < len(text_sources):
-                            source = text_sources[selected_chunk]
-                            meta = source.get("metadata", {})
-                            content = source.get("content", "")
+        #                 # 選択されたチャンクの詳細表示
+        #                 if selected_chunk is not None and selected_chunk < len(text_sources):
+        #                     source = text_sources[selected_chunk]
+        #                     meta = source.get("metadata", {})
+        #                     content = source.get("content", "")
                             
-                            col1, col2 = st.columns([3, 1])
+        #                     col1, col2 = st.columns([3, 1])
                             
-                            with col1:
-                                st.markdown("**内容:**")
-                                st.text_area(
-                                    label="",
-                                    value=content,
-                                    height=200,
-                                    disabled=True,
-                                    key=f"selected_content_{selected_chunk}"
-                                )
+        #                     with col1:
+        #                         st.markdown("**内容:**")
+        #                         st.text_area(
+        #                             label="",
+        #                             value=content,
+        #                             height=200,
+        #                             disabled=True,
+        #                             key=f"selected_content_{selected_chunk}"
+        #                         )
                             
-                            with col2:
-                                st.markdown("**詳細情報:**")
-                                st.markdown(f"**種類:** {meta.get('kind', 'N/A')}")
-                                st.markdown(f"**ソース:** {meta.get('source', 'N/A')}")
-                                st.markdown(f"**ページ:** {meta.get('page', 'N/A')}")
-                                st.markdown(f"**距離:** {source.get('distance', 0):.4f}")
+        #                     with col2:
+        #                         st.markdown("**詳細情報:**")
+        #                         st.markdown(f"**種類:** {meta.get('kind', 'N/A')}")
+        #                         st.markdown(f"**ソース:** {meta.get('source', 'N/A')}")
+        #                         st.markdown(f"**ページ:** {meta.get('page', 'N/A')}")
+        #                         st.markdown(f"**距離:** {source.get('distance', 0):.4f}")
                                 
-                    else:
-                        st.info("📄 テキスト・表データはありませんでした")
+        #             else:
+        #                 st.info("📄 テキスト・表データはありませんでした")
                 
-                # 画像情報（あれば簡単に表示）
-                images = st.session_state.get("last_rag_images", [])
-                if images:
-                    st.markdown("---")
-                    st.markdown(f"**関連画像:** {len(images)} 件")
+        #         # 画像情報（あれば簡単に表示）
+        #         images = st.session_state.get("last_rag_images", [])
+        #         if images:
+        #             st.markdown("---")
+        #             st.markdown(f"**関連画像:** {len(images)} 件")
                     
-                    # 画像選択
-                    if len(images) > 0:
-                        image_options = [f"{img['name']} (ページ {img.get('page', 'N/A')})" for img in images]
-                        selected_image = st.selectbox(
-                            "表示する画像を選択:",
-                            options=range(len(image_options)),
-                            format_func=lambda x: image_options[x],
-                            key="image_selector"
-                        )
+        #             # 画像選択
+        #             if len(images) > 0:
+        #                 image_options = [f"{img['name']} (ページ {img.get('page', 'N/A')})" for img in images]
+        #                 selected_image = st.selectbox(
+        #                     "表示する画像を選択:",
+        #                     options=range(len(image_options)),
+        #                     format_func=lambda x: image_options[x],
+        #                     key="image_selector"
+        #                 )
                         
-                        if selected_image is not None and selected_image < len(images):
-                            img_info = images[selected_image]
-                            st.image(img_info['data'], caption=img_info['name'], width=400)
+        #                 if selected_image is not None and selected_image < len(images):
+        #                     img_info = images[selected_image]
+        #                     st.image(img_info['data'], caption=img_info['name'], width=400)
                 
-                # クリアボタン
-                st.markdown("---")
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("🗑️ RAG結果をクリア"):
-                        st.session_state.last_rag_sources = []
-                        st.session_state.last_rag_images = []
-                        st.rerun()
-                with col2:
-                    st.markdown(f"*RAG使用: {'✅' if st.session_state.get('use_rag', False) else '❌'}*")
+        #         # クリアボタン
+        #         st.markdown("---")
+        #         col1, col2 = st.columns(2)
+        #         with col1:
+        #             if st.button("🗑️ RAG結果をクリア"):
+        #                 st.session_state.last_rag_sources = []
+        #                 st.session_state.last_rag_images = []
+        #                 st.rerun()
+        #         with col2:
+        #             st.markdown(f"*RAG使用: {'✅' if st.session_state.get('use_rag', False) else '❌'}*")
 
     # =====  応答生成  ============================================================
     if user_prompt and not st.session_state.edit_target:  # 編集モード時は応答生成をスキップ
@@ -1373,7 +1396,16 @@ if st.session_state["authentication_status"]:
                 st.markdown(full_reply)
 
             # 保存するのは元の応答（モデル情報なし）
-            msgs.append({"role": "assistant", "content": assistant_reply})
+            msgs.append({
+                "role": "assistant",
+                "content": assistant_reply,
+                # RAG を使ったときだけ “rag” フィールドを付ける
+                **(
+                    {"rag": {"sources": sources, "images": st.session_state.last_rag_images}}
+                    if st.session_state.get("use_rag", False)
+                    else {}
+                )
+            })
             # ★ 重要：ログ保存を先に実行
             logger.info("📝 Executing post_log before any other operations")
             post_log_async(user_prompt, assistant_reply, prompt, send_to_model_comparison=True)
