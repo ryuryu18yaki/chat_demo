@@ -1252,7 +1252,10 @@ if st.session_state["authentication_status"]:
                                                 width="100%" height="600px" type="application/pdf">
                                         </iframe>
                                     """
-                                    with st.expander("📄 インラインプレビューを開く"):
+
+                                    # expander の代わりに toggle で開閉
+                                    if st.toggle("📄 プレビューを表示 / 非表示",
+                                                key=f"pdf_toggle_{selected_chunk}", value=False):
                                         html(pdf_iframe, height=620, scrolling=True)
                     else:
                         st.info("📄 テキスト・表データはありませんでした")
