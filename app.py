@@ -13,6 +13,7 @@ from src.sheets_manager import log_to_sheets, get_sheets_manager, send_prompt_to
 
 import yaml
 import streamlit_authenticator as stauth
+from streamlit.components.v1 import html
 import uuid
 
 import threading
@@ -20,6 +21,8 @@ import queue
 from typing import Optional
 import atexit
 import copy
+import base64
+
 
 st.set_page_config(page_title="GPT + RAG Chatbot", page_icon="💬", layout="wide")
 
@@ -835,6 +838,12 @@ if st.session_state["authentication_status"]:
                 logger.error(f"Chat title generation failed: {e}")
                 return f"Chat {len(st.session_state.chats) + 1}"
         return f"Chat {len(st.session_state.chats) + 1}"
+    
+    def fetch_pdf_bytes(source_name: str) -> bytes | None:
+        for f in st.session_state.get("rag_files", []):
+            if f["name"] == source_name:
+                return f["data"]
+        return None
 
     # =====  編集機能用のヘルパー関数  ==============================================
     def handle_save_prompt(mode_name, edited_text):
@@ -1224,17 +1233,27 @@ if st.session_state["authentication_status"]:
                                 st.markdown(f"**ページ:** {meta.get('page', 'N/A')}")
                                 st.markdown(f"**距離:** {source.get('distance', 0):.4f}")
                                 # A️⃣ 追加: PDF ワンクリック表示 / ダウンロード
-                                pdf_path = meta.get("path")
-                                if pdf_path and os.path.exists(pdf_path):
-                                    with open(pdf_path, "rb") as fp:
-                                        pdf_bytes = fp.read()
+                                pdf_bytes = fetch_pdf_bytes(meta.get("source", ""))
+
+                                if pdf_bytes:
+                                    # 1) ダウンロードボタン
                                     st.download_button(
-                                        label="📄 この PDF を開く／DL",
+                                        label="📄 PDF をダウンロード",
                                         data=pdf_bytes,
                                         file_name=meta.get("source", "document.pdf"),
                                         mime="application/pdf",
                                         key=f"pdf_dl_{selected_chunk}",
                                     )
+
+                                    # 2) ページ内プレビュー (iframe + Base64)
+                                    b64 = base64.b64encode(pdf_bytes).decode()
+                                    pdf_iframe = f"""
+                                        <iframe src="data:application/pdf;base64,{b64}"
+                                                width="100%" height="600px" type="application/pdf">
+                                        </iframe>
+                                    """
+                                    with st.expander("📄 インラインプレビューを開く"):
+                                        html(pdf_iframe, height=620, scrolling=True)
                     else:
                         st.info("📄 テキスト・表データはありませんでした")
                 
