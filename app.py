@@ -839,11 +839,56 @@ if st.session_state["authentication_status"]:
                 return f"Chat {len(st.session_state.chats) + 1}"
         return f"Chat {len(st.session_state.chats) + 1}"
     
-    def fetch_pdf_bytes(source_name: str) -> bytes | None:
-        for f in st.session_state.get("rag_files", []):
-            if f["name"] == source_name:
-                return f["data"]
-        return None
+    def render_rag_panel(sources, images, key_prefix=""):
+        """既存のドロップダウン UI をそのまま描画"""
+        if not sources:
+            return
+
+        with st.expander("🔎 RAG検索結果を表示", expanded=False):
+            st.markdown(f"**検索チャンク数:** {len(sources)} 件")
+
+            # ------ セレクトボックス ------
+            chunk_opts, text_srcs = [], []
+            for idx, src in enumerate(sources):
+                meta = src["metadata"]; kind = meta.get("kind", "text")
+                if kind in ("text", "table"):
+                    sim = 1 - src.get("distance", 0)
+                    chunk_opts.append(
+                        f"チャンク {len(text_srcs)+1}: {meta['source']} (p.{meta['page']}) | 類似度: {sim:.3f}"
+                    )
+                    text_srcs.append(src)
+
+            if text_srcs:
+                sel = st.selectbox(
+                    "表示するチャンクを選択:",
+                    options=range(len(chunk_opts)),
+                    format_func=lambda i: chunk_opts[i],
+                    key=f"{key_prefix}_chunk_select",
+                )
+
+                src  = text_srcs[sel]; meta = src["metadata"]
+                col1, col2 = st.columns([3, 1])
+
+                # --- 内容表示 ---
+                with col1:
+                    st.markdown("**内容:**")
+                    st.text_area("内容", value=src["content"], height=200,
+                                disabled=True, key=f"{key_prefix}_txt")
+
+                # --- 詳細 + PDF ---
+                with col2:
+                    st.markdown("**詳細情報:**")
+                    st.markdown(f"**ソース:** {meta['source']}")
+                    st.markdown(f"**ページ:** {meta['page']}")
+                    st.markdown(f"**距離:** {src.get('distance',0):.4f}")
+
+            # --- 画像（ページ無関係の簡易版） ---
+            if images:
+                st.markdown("---")
+                cols = st.columns(min(4, len(images)))
+                for c, img in zip(cols, images):
+                    c.image(img["data"], caption=f"{img['name']} (p.{img['page']})",
+                            use_column_width=True)
 
     # =====  編集機能用のヘルパー関数  ==============================================
     def handle_save_prompt(mode_name, edited_text):
@@ -1166,33 +1211,24 @@ if st.session_state["authentication_status"]:
 
         # -- メッセージ表示 --
         st.markdown('<div class="chat-body">', unsafe_allow_html=True)
-        for m in get_messages():
+        for idx, m in enumerate(get_messages()):
             message_class = "user-message" if m["role"] == "user" else "assistant-message"
+
             with st.chat_message(m["role"]):
-                st.markdown(f'<div class="{message_class}">{m["content"]}</div>', unsafe_allow_html=True)
-            if m["role"] == "assistant" and "rag" in m:
-                srcs  = m["rag"].get("sources", [])
-                imgs  = m["rag"].get("images", [])
+                st.markdown(
+                    f'<div class="{message_class}">{m["content"]}</div>',
+                    unsafe_allow_html=True
+                )
 
-                # 参考資料トグル（expander でも OK だがネスト回避のため toggle 推奨）
-                if st.toggle("📑 参考資料を表示 / 非表示",
-                            key=f"rag_toggle_{id(m)}", value=False):
-                    # --- チャンク一覧 ---
-                    for s in srcs:
-                        meta = s["metadata"]
-                        st.markdown(
-                            f"- **{meta['source']} (p.{meta.get('page','?')})**"
-                            f" — 類似度 *{1-s['distance']:.3f}*"
-                        )
-
-                    # --- 画像サムネイル ---
-                    if imgs:
-                        st.markdown("---")
-                        cols = st.columns(min(4, len(imgs)))
-                        for c, im in zip(cols, imgs):
-                            c.image(im["data"], caption=f"{im['name']} (p.{im['page']})",
-                                    use_column_width=True)
-                            
+            # ───────── ここで RAG パネルを描画 ─────────
+            #   1) アシスタント発話かどうか
+            #   2) 検索結果が添付されているか
+            if m["role"] == "assistant" and "rag_sources" in m:
+                render_rag_panel(
+                    sources=m["rag_sources"],
+                    images=m.get("rag_images", []),
+                    key_prefix=f"msg{idx}"
+                )
         st.markdown('</div>', unsafe_allow_html=True)
 
         # -- 入力欄 --
@@ -1399,12 +1435,8 @@ if st.session_state["authentication_status"]:
             msgs.append({
                 "role": "assistant",
                 "content": assistant_reply,
-                # RAG を使ったときだけ “rag” フィールドを付ける
-                **(
-                    {"rag": {"sources": sources, "images": st.session_state.last_rag_images}}
-                    if st.session_state.get("use_rag", False)
-                    else {}
-                )
+                "rag_sources": sources,                 # ←★追加
+                "rag_images":  st.session_state.last_rag_images,
             })
             # ★ 重要：ログ保存を先に実行
             logger.info("📝 Executing post_log before any other operations")
