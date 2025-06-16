@@ -1419,28 +1419,28 @@ if st.session_state["authentication_status"]:
 
                     logger.info("💬 GPT done — tokens≈%d  api_elapsed=%.2fs",
                                     len(assistant_reply.split()), api_elapsed)
-
-                # ---------- 画面反映 ----------
-                with st.chat_message("assistant"):
-                    # モデル情報を応答に追加
-                    model_info = f"\n\n---\n*このレスポンスは `{st.session_state.gpt_model}` で生成されました*"
-                    full_reply = assistant_reply + model_info
-                    st.markdown(full_reply)
-
-                # 保存するのは元の応答（モデル情報なし）
-                msgs.append({
-                    "role": "assistant",
-                    "content": assistant_reply,
-                    "rag_sources": sources,                 # ←★追加
-                    "rag_images":  st.session_state.last_rag_images,
-                })
-                # ★ 重要：ログ保存を先に実行
-                logger.info("📝 Executing post_log before any other operations")
-                post_log_async(user_prompt, assistant_reply, prompt, send_to_model_comparison=True)
-
+                    
             except Exception as e:
                 logger.exception("❌ answer_gen failed — %s", e)
                 st.error("回答生成時にエラーが発生しました")
+
+            # ---------- 画面反映 ----------
+            with st.chat_message("assistant"):
+                # モデル情報を応答に追加
+                model_info = f"\n\n---\n*このレスポンスは `{st.session_state.gpt_model}` で生成されました*"
+                full_reply = assistant_reply + model_info
+                st.markdown(full_reply)
+
+            # 保存するのは元の応答（モデル情報なし）
+            msgs.append({
+                "role": "assistant",
+                "content": assistant_reply,
+                "rag_sources": sources,                 # ←★追加
+                "rag_images":  st.session_state.last_rag_images,
+            })
+            # ★ 重要：ログ保存を先に実行
+            logger.info("📝 Executing post_log before any other operations")
+            post_log_async(user_prompt, assistant_reply, prompt, send_to_model_comparison=True)
 
             # ★ チャットタイトル生成は後回し（ログ保存完了後）
             try:
