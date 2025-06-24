@@ -5,9 +5,8 @@ import time, functools
 import os
 
 from src.rag_preprocess import preprocess_files
-from src.rag_vector import save_docs_to_chroma
-from src.rag_qa import generate_answer
-from src.startup_loader import initialize_chroma_from_input
+from src.rag_qa import generate_answer_with_equipment, detect_equipment_from_question
+from src.startup_loader import initialize_equipment_data
 from src.logging_utils import init_logger
 from src.sheets_manager import log_to_sheets, get_sheets_manager, send_prompt_to_model_comparison
 
@@ -452,23 +451,22 @@ if st.session_state["authentication_status"]:
 
     logger.info("🔐 login success — user=%s  username=%s", name, username)
 
-    # Chromaコレクションを input_data から自動初期化（persist_directory=None → インメモリ）
-    if st.session_state.get("rag_collection") is None:
+    # 設備データを input_data から自動初期化
+    if st.session_state.get("equipment_data") is None:
         try:
-            res = initialize_chroma_from_input(
-                input_dir="rag_data",
-                persist_dir=None,  # 永続化しない
-                collection_name="session_docs"
-            )
-            st.session_state.rag_collection = res["collection"]
-            st.session_state.rag_files = res["rag_files"]
+            res = initialize_equipment_data(input_dir="rag_data")
+            
+            st.session_state.equipment_data = res["equipment_data"]
+            st.session_state.equipment_list = res["equipment_list"]
+            st.session_state.category_list = res["category_list"]
+            st.session_state.rag_files = res["file_list"]  # 互換性のため
 
-            logger.info("📂 Chroma init — chunks=%d  files=%d",
-                    res["collection"].count(), len(res["rag_files"]))
+            logger.info("📂 設備データ初期化完了 — 設備数=%d  ファイル数=%d",
+                    len(res["equipment_list"]), len(res["file_list"]))
             
         except Exception as e:
-            logger.exception("❌ Chroma init failed — %s", e)
-            st.warning(f"RAG初期化中にエラーが発生しました: {e}")
+            logger.exception("❌ 設備データ初期化失敗 — %s", e)
+            st.warning(f"設備データ初期化中にエラーが発生しました: {e}")
 
     # --------------------------------------------------------------------------- #
     #                         ★ 各モード専用プロンプト ★                           #
@@ -742,25 +740,16 @@ if st.session_state["authentication_status"]:
         st.session_state.edit_target = None
     if "rag_files" not in st.session_state:
         st.session_state.rag_files: List[Dict[str, Any]] = []
-    if "rag_collection" not in st.session_state:
-        st.session_state.rag_collection = None
     if "design_mode" not in st.session_state:
         st.session_state.design_mode = list(DEFAULT_PROMPTS.keys())[0]
     if "prompts" not in st.session_state:
         st.session_state.prompts = DEFAULT_PROMPTS.copy()
     if "gpt_model" not in st.session_state:
         st.session_state.gpt_model = "gpt-4.1"
-    if "use_rag" not in st.session_state:
-        st.session_state["use_rag"] = False  # ← デフォルトでRAGを使わない
-    if "last_rag_sources" not in st.session_state:
-        st.session_state.last_rag_sources = []
-    if "last_rag_images" not in st.session_state:
-        st.session_state.last_rag_images = []
-    if "select_docs_mode" not in st.session_state:   # ←★追加
-     st.session_state.select_docs_mode = False
-    if "active_rag_docs" not in st.session_state:    # ←★追加
-        # 初期値：アップロード済みの全資料、なければ空
-        st.session_state.active_rag_docs = []
+    if "selected_equipment" not in st.session_state:
+        st.session_state.selected_equipment = None
+    if "selection_mode" not in st.session_state:
+        st.session_state.selection_mode = "manual"
     
     # --- どのブランチでも参照できるよう初期化 --------------------
     user_prompt: str | None = None
@@ -789,41 +778,6 @@ if st.session_state["authentication_status"]:
         logger.info("🔀 switch_chat — sid=%s  title='%s'", st.session_state.sid, title)
         st.rerun()
 
-    def rebuild_rag_collection():
-        """
-        アップロードされたファイルを前処理 → Chroma 登録し、セッションに保持
-        """
-        if not st.session_state.rag_files:
-            st.warning("まず PDF / TXT をアップロードしてください")
-            logger.warning("📚 RAG rebuild aborted — no files")
-            return
-
-        total_files = len(st.session_state.rag_files)
-        logger.info("📚 RAG rebuild start — files=%d", total_files)
-
-        t0 = time.perf_counter()
-
-        try:
-            with st.spinner("📚 ファイルを解析し、ベクトル DB に登録中..."):
-                docs = preprocess_files(st.session_state.rag_files)
-                col = save_docs_to_chroma(
-                    docs=docs,
-                    collection_name="session_docs",
-                    persist_directory=None,
-                )
-                st.session_state.rag_collection = col
-
-            chunk_count = col.count()
-            elapsed = time.perf_counter() - t0
-            logger.info("✅ RAG rebuild done — chunks=%d  files=%d  elapsed=%.2fs",
-                        chunk_count, total_files, elapsed)
-
-            st.success("🔍 検索インデックスを更新しました！")
-
-        except Exception as e:
-            logger.exception("❌ RAG rebuild failed — %s", e)
-            st.error(f"RAG 初期化中にエラーが発生しました: {e}")
-
     def generate_chat_title(messages):
         if len(messages) >= 2:
             prompt = f"以下の会話の内容を25文字以内の簡潔なタイトルにしてください:\n{messages[0]['content'][:200]}"
@@ -839,57 +793,6 @@ if st.session_state["authentication_status"]:
                 return f"Chat {len(st.session_state.chats) + 1}"
         return f"Chat {len(st.session_state.chats) + 1}"
     
-    def render_rag_panel(sources, images, key_prefix=""):
-        """既存のドロップダウン UI をそのまま描画"""
-        if not sources:
-            return
-
-        with st.expander("🔎 RAG検索結果を表示", expanded=False):
-            st.markdown(f"**検索チャンク数:** {len(sources)} 件")
-
-            # ------ セレクトボックス ------
-            chunk_opts, text_srcs = [], []
-            for idx, src in enumerate(sources):
-                meta = src["metadata"]; kind = meta.get("kind", "text")
-                if kind in ("text", "table"):
-                    sim = 1 - src.get("distance", 0)
-                    chunk_opts.append(
-                        f"チャンク {len(text_srcs)+1}: {meta['source']} (p.{meta['page']}) | 類似度: {sim:.3f}"
-                    )
-                    text_srcs.append(src)
-
-            if text_srcs:
-                sel = st.selectbox(
-                    "表示するチャンクを選択:",
-                    options=range(len(chunk_opts)),
-                    format_func=lambda i: chunk_opts[i],
-                    key=f"{key_prefix}_chunk_select",
-                )
-
-                src  = text_srcs[sel]; meta = src["metadata"]
-                col1, col2 = st.columns([3, 1])
-
-                # --- 内容表示 ---
-                with col1:
-                    st.markdown("**内容:**")
-                    st.text_area("内容", value=src["content"], height=200,
-                                disabled=True, key=f"{key_prefix}_txt")
-
-                # --- 詳細 + PDF ---
-                with col2:
-                    st.markdown("**詳細情報:**")
-                    st.markdown(f"**ソース:** {meta['source']}")
-                    st.markdown(f"**ページ:** {meta['page']}")
-                    st.markdown(f"**距離:** {src.get('distance',0):.4f}")
-
-            # --- 画像（ページ無関係の簡易版） ---
-            if images:
-                st.markdown("---")
-                cols = st.columns(min(4, len(images)))
-                for c, img in zip(cols, images):
-                    c.image(img["data"], caption=f"{img['name']} (p.{img['page']})",
-                            use_container_width=True)
-
     # =====  編集機能用のヘルパー関数  ==============================================
     def handle_save_prompt(mode_name, edited_text):
         st.session_state.prompts[mode_name] = edited_text
@@ -1031,65 +934,154 @@ if st.session_state["authentication_status"]:
 
         st.divider()
 
-        # ===== RAG 検索の使用設定 =====
-        st.markdown("### 🧠 RAG 検索の使用設定")
+        # ------- 設備選択（必須） -------
+        st.markdown("### 🔧 対象設備選択")
 
-        st.session_state["use_rag"] = st.checkbox(
-            "検索資料（ベクトルDB）を活用する",
-            value=st.session_state["use_rag"],
-            help="OFFにすると、プロンプトと履歴のみで応答を生成します"
-        )
+        available_equipment = st.session_state.get("equipment_list", [])
+        available_categories = st.session_state.get("category_list", [])
 
-        if st.session_state["use_rag"]:
-            st.success("現在のモード: RAG使用中")
+        if not available_equipment:
+            st.error("❌ 設備データが読み込まれていません")
+            st.session_state["selected_equipment"] = None
         else:
-            st.info("現在のモード: GPTのみ（検索なし）")
-        
-        # ---- 現在選択中の参考資料リスト ---------------------------
-        active_docs = st.session_state.get("active_rag_docs", [])
-        if active_docs:
-            st.markdown("**🔖 現在検索対象の資料:**")
-            for doc in active_docs:
-                st.markdown(f"- {doc}")
-        else:
-            st.markdown("🔖 *検索対象資料が未選択です*")
-
-        # 参考資料選択モーダル起動ボタン
-        if st.button("📚 検索対象資料を選択／変更",
-                    disabled=not st.session_state.get("rag_files")):
-            st.session_state.select_docs_mode = True
-            st.rerun()
-
-        # ベクトルDBステータス
-        st.markdown("### 🗂 ベクトルDBステータス")
-
-        if st.session_state.get("rag_collection"):
-            st.success("✔️ ベクトルDBは初期化済みです")
-            try:
-                count = st.session_state.rag_collection.count()
-                st.markdown(f"📄 登録チャンク数: `{count}`")
-            except Exception as e:
-                st.warning(f"⚠️ 件数取得失敗: {e}")
-        else:
-            st.error("❌ ベクトルDBがまだ初期化されていません")
-
-        # ------- RAG アップロード -------
-        st.markdown("### 📂 追加RAG 資料アップロード")
-        uploads = st.file_uploader(
-            "PDF / TXT を選択…",
-            type=["txt", "pdf"],
-            accept_multiple_files=True,
-        )
-        if uploads:
-            st.session_state.rag_files = [
-                {"name": f.name, "type": f.type, "size": f.size, "data": f.getvalue()} for f in uploads
-            ]
-
-            logger.info("📥 file_uploaded — files=%d  total_bytes=%d",
-                len(uploads), sum(f.size for f in uploads))
+            st.info(f"📊 利用可能設備数: {len(available_equipment)}")
             
-        if st.button("🔄 インデックス再構築", disabled=not st.session_state.rag_files):
-            rebuild_rag_collection()
+            # 設備選択方式
+            selection_mode = st.radio(
+                "選択方式",
+                ["設備名で選択", "カテゴリから選択", "自動推定"],
+                index=0,
+                help="質問に使用する設備の選択方法"
+            )
+            
+            if selection_mode == "設備名で選択":
+                selected_equipment = st.selectbox(
+                    "設備を選択してください",
+                    options=[""] + available_equipment,
+                    index=0,
+                    help="この設備の資料のみを使用して回答を生成します"
+                )
+                st.session_state["selected_equipment"] = selected_equipment if selected_equipment else None
+                st.session_state["selection_mode"] = "manual"
+                
+            elif selection_mode == "カテゴリから選択":
+                selected_category = st.selectbox(
+                    "カテゴリを選択してください",
+                    options=[""] + available_categories,
+                    index=0
+                )
+                
+                if selected_category:
+                    # カテゴリ内の設備を表示
+                    category_equipment = [
+                        eq for eq in available_equipment 
+                        if st.session_state.equipment_data[eq]["equipment_category"] == selected_category
+                    ]
+                    
+                    selected_equipment = st.selectbox(
+                        f"「{selected_category}」内の設備を選択",
+                        options=[""] + category_equipment,
+                        index=0
+                    )
+                    st.session_state["selected_equipment"] = selected_equipment if selected_equipment else None
+                else:
+                    st.session_state["selected_equipment"] = None
+                st.session_state["selection_mode"] = "category"
+                
+            else:  # 自動推定
+                st.info("🤖 質問文から設備を自動推定して回答します")
+                st.session_state["selected_equipment"] = None
+                st.session_state["selection_mode"] = "auto"
+
+        # 現在の選択状態を表示
+        current_equipment = st.session_state.get("selected_equipment")
+        if current_equipment:
+            eq_info = st.session_state.equipment_data[current_equipment]
+            st.success(f"✅ 選択中: **{current_equipment}**")
+            
+            # ファイル選択機能
+            st.markdown("#### 📄 使用ファイル選択")
+            available_files = eq_info['sources']
+            
+            # セッション状態でファイル選択を管理
+            selected_files_key = f"selected_files_{current_equipment}"
+            if selected_files_key not in st.session_state:
+                st.session_state[selected_files_key] = available_files.copy()  # デフォルトで全選択
+            
+            # ファイル選択UI
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🔄 全選択", key=f"select_all_{current_equipment}"):
+                    st.session_state[selected_files_key] = available_files.copy()
+                    st.rerun()
+            with col2:
+                if st.button("❌ 全解除", key=f"deselect_all_{current_equipment}"):
+                    st.session_state[selected_files_key] = []
+                    st.rerun()
+            
+            # 各ファイルのチェックボックス
+            for file in available_files:
+                checked = st.checkbox(
+                    file,
+                    value=file in st.session_state[selected_files_key],
+                    key=f"file_{current_equipment}_{file}"
+                )
+                
+                # チェック状態の変更を反映
+                if checked and file not in st.session_state[selected_files_key]:
+                    st.session_state[selected_files_key].append(file)
+                elif not checked and file in st.session_state[selected_files_key]:
+                    st.session_state[selected_files_key].remove(file)
+            
+            # 選択状況の表示
+            selected_count = len(st.session_state[selected_files_key])
+            total_count = len(available_files)
+            
+            if selected_count == 0:
+                st.error("⚠️ ファイルが選択されていません")
+            elif selected_count == total_count:
+                st.info(f"📊 全ファイル使用: {selected_count}/{total_count}")
+            else:
+                st.info(f"📊 選択ファイル: {selected_count}/{total_count}")
+            
+            # 設備詳細（折りたたみ）
+            with st.expander("📋 設備詳細", expanded=False):
+                st.markdown(f"- **カテゴリ**: {eq_info['equipment_category']}")
+                st.markdown(f"- **総ファイル数**: {eq_info['total_files']}")
+                st.markdown(f"- **総ページ数**: {eq_info['total_pages']}")
+                st.markdown(f"- **総文字数**: {eq_info['total_chars']:,}")
+                
+                # 選択ファイルの詳細
+                if selected_count > 0:
+                    st.markdown("- **選択中のファイル**:")
+                    for file in st.session_state[selected_files_key]:
+                        file_chars = len(eq_info['files'].get(file, ''))
+                        st.markdown(f"  - ✅ {file} ({file_chars:,}文字)")
+                    
+                    # 選択ファイルの統計
+                    selected_chars = sum(len(eq_info['files'].get(f, '')) for f in st.session_state[selected_files_key])
+                    if selected_count < total_count:
+                        char_ratio = 100 * selected_chars / eq_info['total_chars'] if eq_info['total_chars'] > 0 else 0
+                        st.markdown(f"- **選択ファイル統計**:")
+                        st.markdown(f"  - ファイル数: {selected_count}/{total_count} ({100*selected_count/total_count:.1f}%)")
+                        st.markdown(f"  - 文字数: {selected_chars:,}/{eq_info['total_chars']:,} ({char_ratio:.1f}%)")
+
+        st.divider()
+
+        # ベクトルDBステータス（設備データ用に変更）
+        st.markdown("### 🗂 設備データステータス")
+
+        if st.session_state.get("equipment_data"):
+            st.success("✔️ 設備データは初期化済みです")
+            try:
+                equipment_count = len(st.session_state.equipment_data)
+                total_files = sum(data['total_files'] for data in st.session_state.equipment_data.values())
+                st.markdown(f"🔧 設備数: `{equipment_count}`")
+                st.markdown(f"📄 総ファイル数: `{total_files}`")
+            except Exception as e:
+                st.warning(f"⚠️ 統計取得失敗: {e}")
+        else:
+            st.error("❌ 設備データがまだ初期化されていません")
         
         if st.button("🔧 接続診断実行"):
             from src.sheets_manager import debug_connection_streamlit
@@ -1159,53 +1151,9 @@ if st.session_state["authentication_status"]:
         elif cancel_button:
             handle_cancel_edit()
 
-    if st.session_state.select_docs_mode:   # ★ 資料選択モード
-        st.title("📚 検索対象資料を選択")
-
-        # アップロード済み資料名を取得
-        doc_names = [f["name"] for f in st.session_state.rag_files]
-        if not doc_names:
-            st.info("先に PDF / TXT をアップロードしてください")
-        else:
-            with st.form(key="doc_select_form"):
-                st.markdown("検索に使用する資料にチェックを入れてください。")
-
-                # チェックボックス一覧
-                checked_docs = []
-                for name in doc_names:
-                    checked = st.checkbox(
-                        label=name,
-                        value=name in st.session_state.active_rag_docs
-                    )
-                    if checked:
-                        checked_docs.append(name)
-
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    save_btn = st.form_submit_button("✅ 保存")
-                with col2:
-                    cancel_btn = st.form_submit_button("❌ キャンセル")
-                with col3:
-                    sel_all = st.form_submit_button("🔄 全選択")
-
-            # --- ボタン処理 ---
-            if save_btn:
-                st.session_state.active_rag_docs = checked_docs
-                st.session_state.select_docs_mode = False
-                st.success("選択を保存しました")
-                st.rerun()
-            elif cancel_btn:
-                st.session_state.select_docs_mode = False
-                st.rerun()
-            elif sel_all:
-                st.session_state.active_rag_docs = doc_names
-                st.session_state.select_docs_mode = False
-                st.success("すべて選択しました")
-                st.rerun()
-
     # =====  メイン画面表示  ==========================================================
     else:
-        st.title("💬 GPT + RAG チャットボット")
+        st.title("💬 GPT + 設備資料チャットボット")
         st.subheader(f"🗣️ {st.session_state.current_chat}")
         st.markdown(f"**モデル:** {st.session_state.gpt_model} | **モード:** {st.session_state.design_mode}")
 
@@ -1220,111 +1168,23 @@ if st.session_state["authentication_status"]:
                     unsafe_allow_html=True
                 )
 
-            # ───────── ここで RAG パネルを描画 ─────────
-            #   1) アシスタント発話かどうか
-            #   2) 検索結果が添付されているか
-            if m["role"] == "assistant" and "rag_sources" in m:
-                render_rag_panel(
-                    sources=m["rag_sources"],
-                    images=m.get("rag_images", []),
-                    key_prefix=f"msg{idx}"
-                )
+            # 使用設備・ファイルを表示（アシスタントメッセージの場合）
+            if m["role"] == "assistant" and "used_equipment" in m:
+                equipment_name = m['used_equipment']
+                used_files = m.get('used_files', [])
+                
+                if used_files:
+                    file_count_info = f"（{len(used_files)}ファイル使用）"
+                    with st.expander(f"🔧 使用設備: {equipment_name} {file_count_info}", expanded=False):
+                        for file in used_files:
+                            st.markdown(f"- 📄 {file}")
+                else:
+                    st.info(f"🔧 使用設備: {equipment_name}")
+
         st.markdown('</div>', unsafe_allow_html=True)
 
         # -- 入力欄 --
         user_prompt = st.chat_input("メッセージを入力…")
-
-        # # ===== RAG検索結果の表示（シンプル版） =====
-        # if st.session_state.get("last_rag_sources"):
-            
-        #     with st.expander("🔎 RAG検索結果を表示"):
-        #         sources = st.session_state.last_rag_sources
-        #         st.markdown(f"**検索チャンク数:** {len(sources)} 件")
-                
-        #         # セレクトボックスでチャンクを選択
-        #         if sources:
-        #             chunk_options = []
-        #             text_sources = []
-                    
-        #             for idx, source in enumerate(sources):
-        #                 meta = source.get("metadata", {})
-        #                 kind = meta.get("kind", "text")
-                        
-        #                 if kind in ("text", "table"):
-        #                     source_name = meta.get("source", "N/A")
-        #                     page_num = meta.get("page", "N/A")
-        #                     distance = source.get("distance", 0)
-        #                     similarity = 1 - distance
-                            
-        #                     chunk_options.append(f"チャンク {len(text_sources)+1}: {source_name} (p.{page_num}) | 類似度: {similarity:.3f}")
-        #                     text_sources.append(source)
-                    
-        #             if chunk_options:
-        #                 selected_chunk = st.selectbox(
-        #                     "表示するチャンクを選択:",
-        #                     options=range(len(chunk_options)),
-        #                     format_func=lambda x: chunk_options[x],
-        #                     key="chunk_selector"
-        #                 )
-                        
-        #                 # 選択されたチャンクの詳細表示
-        #                 if selected_chunk is not None and selected_chunk < len(text_sources):
-        #                     source = text_sources[selected_chunk]
-        #                     meta = source.get("metadata", {})
-        #                     content = source.get("content", "")
-                            
-        #                     col1, col2 = st.columns([3, 1])
-                            
-        #                     with col1:
-        #                         st.markdown("**内容:**")
-        #                         st.text_area(
-        #                             label="",
-        #                             value=content,
-        #                             height=200,
-        #                             disabled=True,
-        #                             key=f"selected_content_{selected_chunk}"
-        #                         )
-                            
-        #                     with col2:
-        #                         st.markdown("**詳細情報:**")
-        #                         st.markdown(f"**種類:** {meta.get('kind', 'N/A')}")
-        #                         st.markdown(f"**ソース:** {meta.get('source', 'N/A')}")
-        #                         st.markdown(f"**ページ:** {meta.get('page', 'N/A')}")
-        #                         st.markdown(f"**距離:** {source.get('distance', 0):.4f}")
-                                
-        #             else:
-        #                 st.info("📄 テキスト・表データはありませんでした")
-                
-        #         # 画像情報（あれば簡単に表示）
-        #         images = st.session_state.get("last_rag_images", [])
-        #         if images:
-        #             st.markdown("---")
-        #             st.markdown(f"**関連画像:** {len(images)} 件")
-                    
-        #             # 画像選択
-        #             if len(images) > 0:
-        #                 image_options = [f"{img['name']} (ページ {img.get('page', 'N/A')})" for img in images]
-        #                 selected_image = st.selectbox(
-        #                     "表示する画像を選択:",
-        #                     options=range(len(image_options)),
-        #                     format_func=lambda x: image_options[x],
-        #                     key="image_selector"
-        #                 )
-                        
-        #                 if selected_image is not None and selected_image < len(images):
-        #                     img_info = images[selected_image]
-        #                     st.image(img_info['data'], caption=img_info['name'], width=400)
-                
-        #         # クリアボタン
-        #         st.markdown("---")
-        #         col1, col2 = st.columns(2)
-        #         with col1:
-        #             if st.button("🗑️ RAG結果をクリア"):
-        #                 st.session_state.last_rag_sources = []
-        #                 st.session_state.last_rag_images = []
-        #                 st.rerun()
-        #         with col2:
-        #             st.markdown(f"*RAG使用: {'✅' if st.session_state.get('use_rag', False) else '❌'}*")
 
     # =====  応答生成  ============================================================
     if user_prompt and not st.session_state.edit_target:  # 編集モード時は応答生成をスキップ
@@ -1341,108 +1201,104 @@ if st.session_state["authentication_status"]:
             # プロンプト取得
             prompt = st.session_state.prompts[st.session_state.design_mode]
 
-            logger.info("💬 gen_start — mode=%s model=%s use_rag=%s sid=%s",
+            logger.info("💬 gen_start — mode=%s model=%s sid=%s",
                 st.session_state.design_mode,
                 st.session_state.gpt_model,
-                st.session_state.get("use_rag", True),
                 st.session_state.sid)
 
             try:
-                # ---------- RAG あり ----------
-                if st.session_state.get("use_rag", True):
-                    st.session_state["last_answer_mode"] = "RAG"
-
-                    t_api = time.perf_counter()
+                # 設備の決定
+                target_equipment = None
+                selection_mode = st.session_state.get("selection_mode", "manual")
+                
+                if selection_mode == "auto":
+                    # 自動推定
+                    available_equipment = st.session_state.get("equipment_list", [])
+                    target_equipment = detect_equipment_from_question(user_prompt, available_equipment)
                     
-                    # API呼び出しパラメータを準備
-                    rag_params = {
-                        "prompt": prompt,
-                        "question": user_prompt,
-                        "collection": st.session_state.rag_collection,
-                        "rag_files": st.session_state.rag_files,
-                        "top_k": 4,
-                        "model": st.session_state.gpt_model,
-                        "chat_history": msgs,
-                        "active_docs": st.session_state.active_rag_docs,
-                    }
-                    
-                    # カスタム設定があれば追加
-                    if st.session_state.get("temperature") != 0.0:
-                        rag_params["temperature"] = st.session_state.temperature
-                    if st.session_state.get("max_tokens") is not None:
-                        rag_params["max_tokens"] = st.session_state.max_tokens
-                    
-                    # generate_answerを呼び出し
-                    rag_res = generate_answer(**rag_params)
-                    
-                    api_elapsed = time.perf_counter() - t_api
-                    assistant_reply = rag_res["answer"]
-                    sources = rag_res["sources"]
-                    
-                    # 🔥 RAG結果をセッション状態に保存（rerunで消えないように）
-                    st.session_state.last_rag_sources = sources
-                    # 画像情報も保存（generate_answer関数から返されるようにする必要がある場合）
-                    st.session_state.last_rag_images = rag_res.get("images", [])
-
-                    logger.info("💬 GPT done — tokens≈%d  api_elapsed=%.2fs  sources=%d",
-                                len(assistant_reply.split()), api_elapsed, len(sources))
-
-                # ---------- GPT-only ----------
+                    if target_equipment:
+                        st.info(f"🤖 自動推定された設備: {target_equipment}")
+                    else:
+                        st.error("❌ 質問文から設備を推定できませんでした。手動で設備を選択してください。")
+                        st.stop()
                 else:
-                    st.session_state["last_answer_mode"] = "GPT-only"
-                    # API呼び出し部分（Azure用に修正）
-                    params = {
-                        "model": get_azure_model_name(st.session_state.gpt_model),  # Azure用に変換
-                        "messages": [
-                            {"role": "system", "content": prompt},
-                            *msgs[:-1],
-                            {"role": "user", "content": user_prompt},
-                        ]
-                    }
-
-                    # カスタム設定があれば追加
-                    if st.session_state.get("temperature") != 1.0:
-                        params["temperature"] = st.session_state.temperature
-                    if st.session_state.get("max_tokens") is not None:
-                        params["max_tokens"] = st.session_state.max_tokens
-
-                    import time
-                    t_api = time.perf_counter()
-
-                    # APIを呼び出し
-                    resp = client.chat.completions.create(**params)
-
-                    api_elapsed = time.perf_counter() - t_api
-
-                    assistant_reply = resp.choices[0].message.content
-                    sources = []
-
-                    logger.info("💬 GPT done — tokens≈%d  api_elapsed=%.2fs",
-                                    len(assistant_reply.split()), api_elapsed)
+                    # 手動選択
+                    target_equipment = st.session_state.get("selected_equipment")
                     
+                    if not target_equipment:
+                        st.error("❌ 設備が選択されていません。サイドバーで設備を選択してください。")
+                        st.stop()
+
+                # 設備全文投入方式でRAG実行
+                st.session_state["last_answer_mode"] = "設備全文投入"
+                
+                # 🔥 選択されたファイルを取得
+                selected_files_key = f"selected_files_{target_equipment}"
+                selected_files = st.session_state.get(selected_files_key)
+                
+                # ファイルが選択されていない場合のチェック
+                if not selected_files:
+                    st.error("❌ 使用するファイルが選択されていません。サイドバーでファイルを選択してください。")
+                    st.stop()
+                
+                st.info(f"📄 使用ファイル: {len(selected_files)}個のファイルを使用")
+                
+                # API呼び出しパラメータを準備
+                rag_params = {
+                    "prompt": prompt,
+                    "question": user_prompt,
+                    "equipment_data": st.session_state.equipment_data,
+                    "target_equipment": target_equipment,
+                    "selected_files": selected_files,  # 🔥 選択ファイルを追加
+                    "model": st.session_state.gpt_model,
+                    "chat_history": msgs,
+                }
+                
+                # カスタム設定があれば追加
+                if st.session_state.get("temperature") != 0.0:
+                    rag_params["temperature"] = st.session_state.temperature
+                if st.session_state.get("max_tokens") is not None:
+                    rag_params["max_tokens"] = st.session_state.max_tokens
+                
+                # 回答生成
+                import time
+                t_api = time.perf_counter()
+                rag_res = generate_answer_with_equipment(**rag_params)
+                api_elapsed = time.perf_counter() - t_api
+                
+                assistant_reply = rag_res["answer"]
+                used_equipment = rag_res["used_equipment"]
+                used_files = rag_res.get("selected_files", [])
+                
+                logger.info("💬 設備全文投入完了 — equipment=%s  files=%d  api_elapsed=%.2fs  回答文字数=%d",
+                            used_equipment, len(used_files), api_elapsed, len(assistant_reply))
+
             except Exception as e:
                 logger.exception("❌ answer_gen failed — %s", e)
-                st.error("回答生成時にエラーが発生しました")
+                st.error(f"回答生成時にエラーが発生しました: {e}")
+                st.stop()
 
-            # ---------- 画面反映 ----------
+            # 画面反映
             with st.chat_message("assistant"):
-                # モデル情報を応答に追加
-                model_info = f"\n\n---\n*このレスポンスは `{st.session_state.gpt_model}` で生成されました*"
+                # モデル情報と使用設備・ファイルを応答に追加
+                file_info = f"（{len(used_files)}ファイル使用）" if used_files else ""
+                model_info = f"\n\n---\n*このレスポンスは `{st.session_state.gpt_model}` と設備「{used_equipment}」{file_info}で生成されました*"
                 full_reply = assistant_reply + model_info
                 st.markdown(full_reply)
 
-            # 保存するのは元の応答（モデル情報なし）
+            # 保存するのは元の応答（付加情報なし）
             msgs.append({
                 "role": "assistant",
                 "content": assistant_reply,
-                "rag_sources": sources,                 # ←★追加
-                "rag_images":  st.session_state.last_rag_images,
+                "used_equipment": used_equipment,  # 使用設備を記録
+                "used_files": used_files,  # 🔥 使用ファイルも記録
             })
-            # ★ 重要：ログ保存を先に実行
+
+            # ログ保存
             logger.info("📝 Executing post_log before any other operations")
             post_log_async(user_prompt, assistant_reply, prompt, send_to_model_comparison=True)
 
-            # ★ チャットタイトル生成は後回し（ログ保存完了後）
+            # チャットタイトル生成
             try:
                 new_title = generate_chat_title(msgs)
                 if new_title and new_title != st.session_state.current_chat:
