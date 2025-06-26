@@ -91,8 +91,114 @@ def generate_chunk_id(source: str, page: int, chunk_index: int, content: str) ->
 # ---------------------------------------------------------------------------
 # 3) 表の抽出（強化版）
 # ---------------------------------------------------------------------------
+# src/rag_preprocess.py の format_table_as_text 関数を修正
+
+def format_table_as_text(headers: List[str], data: List[List[str]]) -> str:
+    """テーブルデータを表形式保持で読みやすく変換（A案）"""
+    if not data:
+        return ""
+    
+    lines = []
+    
+    # ヘッダー行の作成
+    if headers:
+        # ヘッダーをパイプ区切りで表示
+        header_line = " | ".join(headers)
+        lines.append(header_line)
+        
+        # 区切り線の作成（各列の幅に応じて）
+        separator_parts = []
+        for header in headers:
+            separator_parts.append("-" * max(len(header), 3))  # 最低3文字
+        separator_line = " | ".join(separator_parts)
+        lines.append(separator_line)
+    
+    # データ行の処理
+    for row in data:
+        if not any(cell.strip() for cell in row):  # 空行をスキップ
+            continue
+            
+        # 各セルを適切な幅に調整してパイプ区切りで表示
+        if headers and len(row) == len(headers):
+            # ヘッダーと列数が一致する場合
+            formatted_cells = []
+            for header, cell in zip(headers, row):
+                cell_content = cell.strip() if cell else ""
+                # セルの幅をヘッダーの幅に合わせる（最低3文字）
+                min_width = max(len(header), 3)
+                formatted_cell = cell_content.ljust(min_width)
+                formatted_cells.append(formatted_cell)
+            
+            row_line = " | ".join(formatted_cells)
+            lines.append(row_line)
+        else:
+            # ヘッダーがないか列数が不一致の場合
+            cleaned_row = [cell.strip() if cell else "" for cell in row]
+            row_line = " | ".join(cleaned_row)
+            lines.append(row_line)
+    
+    return "\n".join(lines)
+
+# より高度な表フォーマット関数（オプション）
+def format_table_as_text_advanced(headers: List[str], data: List[List[str]], table_title: str = "") -> str:
+    """より詳細な表形式フォーマット（A案発展版）"""
+    if not data:
+        return ""
+    
+    lines = []
+    
+    # テーブルタイトル
+    if table_title:
+        lines.append(f"【{table_title}】")
+        lines.append("")
+    
+    if not headers:
+        # ヘッダーがない場合はシンプルな表示
+        for i, row in enumerate(data, 1):
+            cleaned_row = [cell.strip() if cell else "" for cell in row]
+            if any(cleaned_row):
+                lines.append(" | ".join(cleaned_row))
+        return "\n".join(lines)
+    
+    # 各列の最大幅を計算
+    col_widths = []
+    for i, header in enumerate(headers):
+        max_width = len(header)
+        for row in data:
+            if i < len(row) and row[i]:
+                max_width = max(max_width, len(str(row[i]).strip()))
+        col_widths.append(max(max_width, 3))  # 最低3文字
+    
+    # ヘッダー行
+    header_cells = []
+    for header, width in zip(headers, col_widths):
+        header_cells.append(header.ljust(width))
+    lines.append(" | ".join(header_cells))
+    
+    # 区切り線
+    separator_cells = ["-" * width for width in col_widths]
+    lines.append(" | ".join(separator_cells))
+    
+    # データ行
+    for row in data:
+        if not any(cell.strip() if cell else "" for cell in row):  # 空行をスキップ
+            continue
+            
+        row_cells = []
+        for i, (cell, width) in enumerate(zip(row, col_widths)):
+            if i < len(row):
+                cell_content = str(cell).strip() if cell else ""
+                row_cells.append(cell_content.ljust(width))
+            else:
+                row_cells.append("".ljust(width))
+        
+        lines.append(" | ".join(row_cells))
+    
+    return "\n".join(lines)
+
+# extract_tables_from_pdf 関数内の該当箇所も修正
 def extract_tables_from_pdf(data: bytes) -> List[Dict[str, Any]]:
-    """pdfplumber で表を抽出し、構造化されたデータとして返す。"""
+    """pdfplumber で表を抽出し、構造化されたデータとして返す。（A案対応）"""
     tables: List[Dict[str, Any]] = []
     with pdfplumber.open(BytesIO(data)) as pdf:
         for page_num, page in enumerate(pdf.pages, start=1):
@@ -129,6 +235,10 @@ def extract_tables_from_pdf(data: bytes) -> List[Dict[str, Any]]:
                     
                     csv_text = "\n".join(csv_lines)
                     
+                    # A案: 表形式のフォーマット文字列生成
+                    table_title = f"ページ{page_num}_テーブル{tbl_idx}"
+                    formatted_text = format_table_as_text_advanced(headers, processed_table, table_title)
+                    
                     # 構造化されたテーブル情報
                     table_info = {
                         "page": page_num,
@@ -138,46 +248,13 @@ def extract_tables_from_pdf(data: bytes) -> List[Dict[str, Any]]:
                         "csv_text": csv_text,
                         "row_count": len(processed_table),
                         "col_count": len(headers) if headers else (len(processed_table[0]) if processed_table else 0),
-                        "formatted_text": format_table_as_text(headers, processed_table)
+                        "formatted_text": formatted_text  # A案フォーマット
                     }
                     
                     tables.append(table_info)
                     print(f"📊 テーブル抽出: ページ{page_num}, テーブル{tbl_idx} - {len(processed_table)}行×{table_info['col_count']}列")
     
     return tables
-
-def format_table_as_text(headers: List[str], data: List[List[str]]) -> str:
-    """テーブルデータを読みやすいテキスト形式に変換"""
-    if not data:
-        return ""
-    
-    lines = []
-    
-    # ヘッダー情報
-    if headers:
-        lines.append("【テーブル項目】")
-        for i, header in enumerate(headers):
-            lines.append(f"  {i+1}. {header}")
-        lines.append("")
-    
-    # データ行の処理
-    lines.append("【テーブルデータ】")
-    for row_idx, row in enumerate(data, start=1):
-        lines.append(f"行{row_idx}:")
-        
-        if headers and len(row) == len(headers):
-            # ヘッダーと対応付けて表示
-            for header, value in zip(headers, row):
-                if value.strip():  # 空でない値のみ
-                    lines.append(f"  ・{header}: {value}")
-        else:
-            # ヘッダーなしまたは列数不一致の場合
-            for col_idx, value in enumerate(row):
-                if value.strip():
-                    lines.append(f"  ・列{col_idx+1}: {value}")
-        lines.append("")
-    
-    return "\n".join(lines)
 
 # ---------------------------------------------------------------------------
 # 4) 画像の抽出（既存）
