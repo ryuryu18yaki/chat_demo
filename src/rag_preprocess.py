@@ -1,4 +1,4 @@
-# src/rag_preprocess.py - テーブル対応版（重複はそのまま）
+# src/rag_preprocess.py
 
 from __future__ import annotations
 from io import BytesIO
@@ -10,21 +10,18 @@ from pdfminer.high_level import extract_text  # type: ignore
 from pdfminer.layout import LAParams         # type: ignore
 from pypdf import PdfReader
 from PIL import Image
-import re
 
 __all__ = [
     "extract_text_from_pdf",
-    "extract_text_from_txt", 
+    "extract_text_from_txt",
     "chunk_text",
     "extract_tables_from_pdf",
     "extract_images_from_pdf",
     "preprocess_files",
-    "format_table_as_text",
-    "extract_structured_content"
 ]
 
 # ---------------------------------------------------------------------------
-# 1) テキスト抽出（既存）
+# 1) テキスト抽出
 # ---------------------------------------------------------------------------
 def extract_text_from_pdf(data: bytes) -> str:
     """PDF バイナリから全文テキストを取得する。"""
@@ -44,6 +41,7 @@ def extract_text_from_txt(data: bytes, encoding: str | None = None) -> str:
         raise UnicodeDecodeError("Failed to decode text file with common encodings")
     return data.decode(encoding)
 
+# 🔥 修正版: ページ別テキスト抽出
 def extract_text_from_pdf_by_pages(data: bytes) -> List[Dict[str, Any]]:
     """PDFからページ別にテキストを抽出"""
     pages_text = []
@@ -58,7 +56,7 @@ def extract_text_from_pdf_by_pages(data: bytes) -> List[Dict[str, Any]]:
     return pages_text
 
 # ---------------------------------------------------------------------------
-# 2) チャンク化ユーティリティ（既存）
+# 2) チャンク化ユーティリティ（修正版）
 # ---------------------------------------------------------------------------
 def chunk_text(text: str, *, chunk_size: int = 800, overlap: int = 80) -> List[str]:
     """テキストを重複付きで分割する。（オーバーラップを10%に調整）"""
@@ -84,222 +82,38 @@ def chunk_text(text: str, *, chunk_size: int = 800, overlap: int = 80) -> List[s
     
     return chunks
 
+# 🔥 新機能: ユニークID生成
 def generate_chunk_id(source: str, page: int, chunk_index: int, content: str) -> str:
     """ユニークなチャンクIDを生成"""
     content_hash = hashlib.md5(content.encode()).hexdigest()[:8]
     return f"{source}_p{page}_{chunk_index}_{content_hash}"
 
 # ---------------------------------------------------------------------------
-# 3) 表の抽出（強化版）
+# 3) 表の抽出
 # ---------------------------------------------------------------------------
-# src/rag_preprocess.py の format_table_as_text 関数を修正
-
-# src/rag_preprocess.py の軽量版テーブルフォーマット
-
-def format_table_as_text(headers: List[str], data: List[List[str]]) -> str:
-    """軽量版の表形式フォーマット（A案）"""
-    if not data:
-        return ""
-    
-    lines = []
-    
-    # ヘッダー行の作成
-    if headers:
-        # ヘッダーをパイプ区切りで表示
-        header_line = " | ".join(headers)
-        lines.append(header_line)
-        
-        # 区切り線の作成（ヘッダーの長さに基づく簡易版）
-        separator_line = " | ".join(["-" * len(h) for h in headers])
-        lines.append(separator_line)
-    
-    # データ行の処理
-    for row in data:
-        # 空行をスキップ
-        if not any(cell.strip() if cell else "" for cell in row):
-            continue
-            
-        # セルをそのままパイプ区切りで結合（幅調整なし）
-        cleaned_row = [cell.strip() if cell else "" for cell in row]
-        row_line = " | ".join(cleaned_row)
-        lines.append(row_line)
-    
-    return "\n".join(lines)
-
 def extract_tables_from_pdf(data: bytes) -> List[Dict[str, Any]]:
-    """pdfplumber で表を抽出（軽量版フォーマット使用）"""
+    """pdfplumber で表を抽出し、CSV ライクな文字列で返す。"""
     tables: List[Dict[str, Any]] = []
-    
     with pdfplumber.open(BytesIO(data)) as pdf:
         for page_num, page in enumerate(pdf.pages, start=1):
-            page_tables = page.extract_tables()
-            
-            for tbl_idx, table in enumerate(page_tables, start=1):
-                if not table or len(table) == 0:
-                    continue
-                    
-                # テーブルデータの処理
-                processed_table = []
-                headers = []
+            for tbl_idx, table in enumerate(page.extract_tables(), start=1):
+                # None を "" に置き換えてから結合
+                lines: list[str] = []
+                for row in table:
+                    cells = [(cell if cell is not None else "") for cell in row]
+                    lines.append(",".join(cells))
+                csv_text = "\n".join(lines)
                 
-                # ヘッダー行の検出（最初の行をヘッダーとして扱う）
-                if table[0]:
-                    headers = [str(cell).strip() if cell else f"列{i+1}" for i, cell in enumerate(table[0])]
-                
-                # データ行の処理
-                for row_idx, row in enumerate(table[1:] if headers else table, start=1):
-                    if not row:
-                        continue
-                    processed_row = [str(cell).strip() if cell else "" for cell in row]
-                    if any(processed_row):  # 空行をスキップ
-                        processed_table.append(processed_row)
-                
-                if processed_table:
-                    # CSV形式のテキスト生成
-                    csv_lines = []
-                    if headers:
-                        csv_lines.append(",".join(f'"{h}"' for h in headers))
-                    
-                    for row in processed_table:
-                        csv_lines.append(",".join(f'"{cell}"' for cell in row))
-                    
-                    csv_text = "\n".join(csv_lines)
-                    
-                    # 軽量版表形式フォーマット
-                    formatted_text = format_table_as_text(headers, processed_table)
-                    
-                    # テーブルタイトルを先頭に追加
-                    table_title = f"【ページ{page_num}_テーブル{tbl_idx}】"
-                    if formatted_text:
-                        formatted_text = f"{table_title}\n\n{formatted_text}"
-                    
-                    # 構造化されたテーブル情報
-                    table_info = {
+                if csv_text.strip():  # 空の表をスキップ
+                    tables.append({
+                        "text": csv_text,
                         "page": page_num,
                         "table_id": tbl_idx,
-                        "headers": headers,
-                        "data": processed_table,
-                        "csv_text": csv_text,
-                        "row_count": len(processed_table),
-                        "col_count": len(headers) if headers else (len(processed_table[0]) if processed_table else 0),
-                        "formatted_text": formatted_text  # 軽量版フォーマット
-                    }
-                    
-                    tables.append(table_info)
-                    print(f"📊 テーブル抽出: ページ{page_num}, テーブル{tbl_idx} - {len(processed_table)}行×{table_info['col_count']}列")
-    
-    return tables
-
-# 厳密なテーブル検出機能も軽量化（オプション）
-def is_valid_table_simple(table_data: List[List[str]], headers: List[str]) -> bool:
-    """軽量版のテーブル検証（厳密版が不要な場合）"""
-    if not table_data:
-        return False
-    
-    # 基本的な条件のみチェック
-    col_count = len(headers) if headers else (len(table_data[0]) if table_data else 0)
-    
-    # 最低条件
-    if col_count < 2:  # 2列未満は除外
-        return False
-    
-    if len(table_data) < 2:  # データ行2行未満は除外
-        return False
-    
-    # 2列の場合、リスト形式の簡易チェック
-    if col_count == 2:
-        first_col_patterns = [r'^[①②③④⑤⑥⑦⑧⑨⑩]', r'^[1-9]\d*[.)]', r'^[-*+・]']
-        list_like_count = 0
-        
-        for row in table_data:
-            if len(row) >= 1 and row[0]:
-                for pattern in first_col_patterns:
-                    if re.search(pattern, row[0].strip()):
-                        list_like_count += 1
-                        break
-        
-        # リスト形式の可能性が高い場合は除外
-        if list_like_count >= len(table_data) * 0.6:
-            return False
-    
-    return True
-
-# 厳密検証を使いたい場合の関数置き換え
-def extract_tables_from_pdf_with_validation(data: bytes) -> List[Dict[str, Any]]:
-    """軽量版テーブル検証付きの抽出"""
-    tables: List[Dict[str, Any]] = []
-    total_detected = 0
-    total_valid = 0
-    
-    with pdfplumber.open(BytesIO(data)) as pdf:
-        for page_num, page in enumerate(pdf.pages, start=1):
-            page_tables = page.extract_tables()
-            total_detected += len(page_tables)
-            
-            for tbl_idx, table in enumerate(page_tables, start=1):
-                if not table or len(table) == 0:
-                    continue
-                    
-                # テーブルデータの処理
-                processed_table = []
-                headers = []
-                
-                # ヘッダー行の検出
-                if table[0]:
-                    headers = [str(cell).strip() if cell else f"列{i+1}" for i, cell in enumerate(table[0])]
-                
-                # データ行の処理
-                for row_idx, row in enumerate(table[1:] if headers else table, start=1):
-                    if not row:
-                        continue
-                    processed_row = [str(cell).strip() if cell else "" for cell in row]
-                    if any(processed_row):
-                        processed_table.append(processed_row)
-                
-                if not processed_table:
-                    continue
-                
-                # 軽量版検証
-                if is_valid_table_simple(processed_table, headers):
-                    total_valid += 1
-                    
-                    # フォーマット処理
-                    csv_lines = []
-                    if headers:
-                        csv_lines.append(",".join(f'"{h}"' for h in headers))
-                    
-                    for row in processed_table:
-                        csv_lines.append(",".join(f'"{cell}"' for cell in row))
-                    
-                    csv_text = "\n".join(csv_lines)
-                    formatted_text = format_table_as_text(headers, processed_table)
-                    
-                    # テーブルタイトル追加
-                    table_title = f"【ページ{page_num}_テーブル{tbl_idx}】"
-                    if formatted_text:
-                        formatted_text = f"{table_title}\n\n{formatted_text}"
-                    
-                    table_info = {
-                        "page": page_num,
-                        "table_id": tbl_idx,
-                        "headers": headers,
-                        "data": processed_table,
-                        "csv_text": csv_text,
-                        "row_count": len(processed_table),
-                        "col_count": len(headers) if headers else (len(processed_table[0]) if processed_table else 0),
-                        "formatted_text": formatted_text
-                    }
-                    
-                    tables.append(table_info)
-                    print(f"✅ 有効テーブル: ページ{page_num}, テーブル{tbl_idx} - {len(processed_table)}行×{table_info['col_count']}列")
-                else:
-                    print(f"❌ 無効テーブル: ページ{page_num}, テーブル{tbl_idx} - 基本条件未満")
-    
-    print(f"📊 テーブル検出結果: {total_valid}/{total_detected} 個が有効テーブルとして採用")
+                    })
     return tables
 
 # ---------------------------------------------------------------------------
-# 4) 画像の抽出（既存）
+# 4) 画像の抽出
 # ---------------------------------------------------------------------------
 def extract_images_from_pdf(pdf_bytes: bytes) -> List[Dict[str, Any]]:
     reader = PdfReader(BytesIO(pdf_bytes))
@@ -331,63 +145,28 @@ def extract_images_from_pdf(pdf_bytes: bytes) -> List[Dict[str, Any]]:
     return images
 
 # ---------------------------------------------------------------------------
-# 5) 構造化コンテンツ抽出
-# ---------------------------------------------------------------------------
-def extract_structured_content(data: bytes, filename: str) -> Dict[str, Any]:
-    """PDFから構造化されたコンテンツ（テキスト+テーブル）を抽出"""
-    
-    result = {
-        "text_content": [],
-        "table_content": [],
-        "total_text_chars": 0,
-        "total_tables": 0
-    }
-    
-    # テキスト抽出
-    try:
-        pages_text = extract_text_from_pdf_by_pages(data)
-        result["text_content"] = pages_text
-        result["total_text_chars"] = sum(len(page["text"]) for page in pages_text)
-        print(f"📄 テキスト抽出完了: {filename} - {len(pages_text)}ページ, {result['total_text_chars']}文字")
-    except Exception as e:
-        print(f"❌ テキスト抽出エラー: {filename} - {e}")
-    
-    # テーブル抽出
-    try:
-        tables = extract_tables_from_pdf(data)
-        result["table_content"] = tables
-        result["total_tables"] = len(tables)
-        print(f"📊 テーブル抽出完了: {filename} - {len(tables)}テーブル")
-    except Exception as e:
-        print(f"❌ テーブル抽出エラー: {filename} - {e}")
-    
-    return result
-
-# ---------------------------------------------------------------------------
-# 6) メイン: ファイル→設備辞書リスト（テーブル対応版）
+# 5) メイン: ファイル→チャンク辞書リスト（大幅修正）
 # ---------------------------------------------------------------------------
 def preprocess_files(
     files: List[Dict[str, Any]]
 ) -> Dict[str, Dict[str, Any]]:
     """
     files: List of {"name": str, "type": mime, "data": bytes, "equipment_name": str, "equipment_category": str}
-    を受け取り、設備ごとにファイル別でテキスト+テーブルを保持して返す。
+    を受け取り、設備ごとにファイル別でテキストを保持して返す。
     
     Returns:
         Dict[equipment_name, {
-            "files": Dict[filename, file_content],  # ファイル別コンテンツ保持
+            "files": Dict[filename, file_text],  # ファイル別テキスト保持
             "sources": List[str],  # 使用したファイル名のリスト
             "equipment_category": str,
             "total_files": int,
             "total_pages": int,
-            "total_chars": int,
-            "total_tables": int,  # テーブル数
-            "table_info": List[Dict]  # テーブル詳細情報
+            "total_chars": int
         }]
     """
     equipment_data = {}  # 設備名をキーとする辞書
     
-    print(f"📚 設備ごとファイル別保持処理開始（テーブル対応版） - ファイル数: {len(files)}")
+    print(f"📚 設備ごとファイル別保持処理開始 - ファイル数: {len(files)}")
 
     for f in files:
         name, mime, data = f["name"], f["type"], f["data"]
@@ -399,76 +178,50 @@ def preprocess_files(
         # 設備データの初期化
         if equipment_name not in equipment_data:
             equipment_data[equipment_name] = {
-                "files": {},  # ファイル名 → コンテンツの辞書
+                "files": {},  # ファイル名 → テキストの辞書
                 "sources": [],
                 "equipment_category": equipment_category,
                 "total_files": 0,
                 "total_pages": 0,
-                "total_chars": 0,
-                "total_tables": 0,  # テーブル数
-                "table_info": []    # テーブル詳細情報
+                "total_chars": 0
             }
         
-        # ファイルごとのコンテンツ抽出
-        file_content = ""
+        # ファイルごとのテキスト抽出
+        file_text = ""
         file_pages = 0
-        file_tables = 0
         
         # テキストファイルの処理
         if mime == "text/plain" or name.lower().endswith(".txt"):
             try:
                 raw_text = extract_text_from_txt(data)
-                file_content = f"=== ファイル: {name} ===\n{raw_text}"
+                file_text = f"=== ファイル: {name} ===\n{raw_text}"
                 file_pages = 1  # テキストファイルは1ページとして扱う
-                print(f"  ✅ TXTファイル処理完了 - 文字数: {len(file_content)}")
+                print(f"  ✅ TXTファイル処理完了 - 文字数: {len(file_text)}")
             except Exception as e:
                 print(f"  ❌ TXTファイル処理エラー: {e}")
                 continue
                 
-        # PDFファイルの処理（テーブル対応版）
+        # PDFファイルの処理
         elif mime == "application/pdf" or name.lower().endswith(".pdf"):
             try:
-                # 構造化コンテンツ抽出
-                structured = extract_structured_content(data, name)
+                # ページ別にテキストを抽出
+                pages_data = extract_text_from_pdf_by_pages(data)
                 
-                # ファイルヘッダー
-                content_parts = [f"=== ファイル: {name} ==="]
+                # 全ページのテキストを結合（ファイル単位）
+                page_texts = [f"=== ファイル: {name} ==="]  # ファイルヘッダー
                 
-                # テキストコンテンツの処理
-                for page_data in structured["text_content"]:
+                for page_data in pages_data:
                     page_num = page_data["page"]
                     page_text = page_data["text"].strip()
                     
                     if page_text:  # 空ページをスキップ
+                        # ページ情報を含めてテキストを整形
                         formatted_page = f"\n--- ページ {page_num} ---\n{page_text}"
-                        content_parts.append(formatted_page)
+                        page_texts.append(formatted_page)
                         file_pages += 1
                 
-                # テーブルコンテンツの処理
-                if structured["table_content"]:
-                    content_parts.append(f"\n=== テーブル情報 ({len(structured['table_content'])}個) ===")
-                    
-                    for table in structured["table_content"]:
-                        table_header = f"\n--- ページ{table['page']} テーブル{table['table_id']} ({table['row_count']}行×{table['col_count']}列) ---"
-                        content_parts.append(table_header)
-                        content_parts.append(table["formatted_text"])
-                        
-                        # テーブル情報を設備データに追加
-                        table_info = {
-                            "source_file": name,
-                            "page": table["page"],
-                            "table_id": table["table_id"],
-                            "headers": table["headers"],
-                            "row_count": table["row_count"],
-                            "col_count": table["col_count"],
-                            "formatted_text": table["formatted_text"]
-                        }
-                        equipment_data[equipment_name]["table_info"].append(table_info)
-                        file_tables += 1
-                
-                file_content = "\n".join(content_parts)
-                
-                print(f"  ✅ PDFファイル処理完了 - ページ数: {file_pages}, テーブル数: {file_tables}, 文字数: {len(file_content)}")
+                file_text = "\n".join(page_texts)
+                print(f"  ✅ PDFファイル処理完了 - ページ数: {file_pages}, 文字数: {len(file_text)}")
                 
             except Exception as e:
                 print(f"  ❌ PDFファイル処理エラー: {e}")
@@ -479,21 +232,19 @@ def preprocess_files(
             continue
         
         # 設備データに追加（ファイル別に保存）
-        if file_content.strip():  # 空でない場合のみ追加
-            equipment_data[equipment_name]["files"][name] = file_content
+        if file_text.strip():  # 空でない場合のみ追加
+            equipment_data[equipment_name]["files"][name] = file_text
             equipment_data[equipment_name]["sources"].append(name)
             equipment_data[equipment_name]["total_files"] += 1
             equipment_data[equipment_name]["total_pages"] += file_pages
-            equipment_data[equipment_name]["total_chars"] += len(file_content)
-            equipment_data[equipment_name]["total_tables"] += file_tables
+            equipment_data[equipment_name]["total_chars"] += len(file_text)
     
     # 結果サマリーを出力
-    print(f"\n📋 設備ごとファイル別保持処理完了（テーブル対応版）")
+    print(f"\n📋 設備ごとファイル別保持処理完了")
     for equipment_name, data in equipment_data.items():
         print(f"🔧 設備: {equipment_name}")
         print(f"   ファイル数: {data['total_files']}")
         print(f"   ページ数: {data['total_pages']}")
-        print(f"   テーブル数: {data['total_tables']}")
         print(f"   総文字数: {data['total_chars']}")
         print(f"   ソース: {', '.join(data['sources'])}")
         print()
