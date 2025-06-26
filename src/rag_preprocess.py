@@ -10,6 +10,7 @@ from pdfminer.high_level import extract_text  # type: ignore
 from pdfminer.layout import LAParams         # type: ignore
 from pypdf import PdfReader
 from PIL import Image
+import re
 
 __all__ = [
     "extract_text_from_pdf",
@@ -93,8 +94,10 @@ def generate_chunk_id(source: str, page: int, chunk_index: int, content: str) ->
 # ---------------------------------------------------------------------------
 # src/rag_preprocess.py の format_table_as_text 関数を修正
 
+# src/rag_preprocess.py の軽量版テーブルフォーマット
+
 def format_table_as_text(headers: List[str], data: List[List[str]]) -> str:
-    """テーブルデータを表形式保持で読みやすく変換（A案）"""
+    """軽量版の表形式フォーマット（A案）"""
     if not data:
         return ""
     
@@ -106,100 +109,27 @@ def format_table_as_text(headers: List[str], data: List[List[str]]) -> str:
         header_line = " | ".join(headers)
         lines.append(header_line)
         
-        # 区切り線の作成（各列の幅に応じて）
-        separator_parts = []
-        for header in headers:
-            separator_parts.append("-" * max(len(header), 3))  # 最低3文字
-        separator_line = " | ".join(separator_parts)
+        # 区切り線の作成（ヘッダーの長さに基づく簡易版）
+        separator_line = " | ".join(["-" * len(h) for h in headers])
         lines.append(separator_line)
     
     # データ行の処理
     for row in data:
-        if not any(cell.strip() for cell in row):  # 空行をスキップ
+        # 空行をスキップ
+        if not any(cell.strip() if cell else "" for cell in row):
             continue
             
-        # 各セルを適切な幅に調整してパイプ区切りで表示
-        if headers and len(row) == len(headers):
-            # ヘッダーと列数が一致する場合
-            formatted_cells = []
-            for header, cell in zip(headers, row):
-                cell_content = cell.strip() if cell else ""
-                # セルの幅をヘッダーの幅に合わせる（最低3文字）
-                min_width = max(len(header), 3)
-                formatted_cell = cell_content.ljust(min_width)
-                formatted_cells.append(formatted_cell)
-            
-            row_line = " | ".join(formatted_cells)
-            lines.append(row_line)
-        else:
-            # ヘッダーがないか列数が不一致の場合
-            cleaned_row = [cell.strip() if cell else "" for cell in row]
-            row_line = " | ".join(cleaned_row)
-            lines.append(row_line)
+        # セルをそのままパイプ区切りで結合（幅調整なし）
+        cleaned_row = [cell.strip() if cell else "" for cell in row]
+        row_line = " | ".join(cleaned_row)
+        lines.append(row_line)
     
     return "\n".join(lines)
 
-# より高度な表フォーマット関数（オプション）
-def format_table_as_text_advanced(headers: List[str], data: List[List[str]], table_title: str = "") -> str:
-    """より詳細な表形式フォーマット（A案発展版）"""
-    if not data:
-        return ""
-    
-    lines = []
-    
-    # テーブルタイトル
-    if table_title:
-        lines.append(f"【{table_title}】")
-        lines.append("")
-    
-    if not headers:
-        # ヘッダーがない場合はシンプルな表示
-        for i, row in enumerate(data, 1):
-            cleaned_row = [cell.strip() if cell else "" for cell in row]
-            if any(cleaned_row):
-                lines.append(" | ".join(cleaned_row))
-        return "\n".join(lines)
-    
-    # 各列の最大幅を計算
-    col_widths = []
-    for i, header in enumerate(headers):
-        max_width = len(header)
-        for row in data:
-            if i < len(row) and row[i]:
-                max_width = max(max_width, len(str(row[i]).strip()))
-        col_widths.append(max(max_width, 3))  # 最低3文字
-    
-    # ヘッダー行
-    header_cells = []
-    for header, width in zip(headers, col_widths):
-        header_cells.append(header.ljust(width))
-    lines.append(" | ".join(header_cells))
-    
-    # 区切り線
-    separator_cells = ["-" * width for width in col_widths]
-    lines.append(" | ".join(separator_cells))
-    
-    # データ行
-    for row in data:
-        if not any(cell.strip() if cell else "" for cell in row):  # 空行をスキップ
-            continue
-            
-        row_cells = []
-        for i, (cell, width) in enumerate(zip(row, col_widths)):
-            if i < len(row):
-                cell_content = str(cell).strip() if cell else ""
-                row_cells.append(cell_content.ljust(width))
-            else:
-                row_cells.append("".ljust(width))
-        
-        lines.append(" | ".join(row_cells))
-    
-    return "\n".join(lines)
-
-# extract_tables_from_pdf 関数内の該当箇所も修正
 def extract_tables_from_pdf(data: bytes) -> List[Dict[str, Any]]:
-    """pdfplumber で表を抽出し、構造化されたデータとして返す。（A案対応）"""
+    """pdfplumber で表を抽出（軽量版フォーマット使用）"""
     tables: List[Dict[str, Any]] = []
+    
     with pdfplumber.open(BytesIO(data)) as pdf:
         for page_num, page in enumerate(pdf.pages, start=1):
             page_tables = page.extract_tables()
@@ -235,9 +165,13 @@ def extract_tables_from_pdf(data: bytes) -> List[Dict[str, Any]]:
                     
                     csv_text = "\n".join(csv_lines)
                     
-                    # A案: 表形式のフォーマット文字列生成
-                    table_title = f"ページ{page_num}_テーブル{tbl_idx}"
-                    formatted_text = format_table_as_text_advanced(headers, processed_table, table_title)
+                    # 軽量版表形式フォーマット
+                    formatted_text = format_table_as_text(headers, processed_table)
+                    
+                    # テーブルタイトルを先頭に追加
+                    table_title = f"【ページ{page_num}_テーブル{tbl_idx}】"
+                    if formatted_text:
+                        formatted_text = f"{table_title}\n\n{formatted_text}"
                     
                     # 構造化されたテーブル情報
                     table_info = {
@@ -248,12 +182,120 @@ def extract_tables_from_pdf(data: bytes) -> List[Dict[str, Any]]:
                         "csv_text": csv_text,
                         "row_count": len(processed_table),
                         "col_count": len(headers) if headers else (len(processed_table[0]) if processed_table else 0),
-                        "formatted_text": formatted_text  # A案フォーマット
+                        "formatted_text": formatted_text  # 軽量版フォーマット
                     }
                     
                     tables.append(table_info)
                     print(f"📊 テーブル抽出: ページ{page_num}, テーブル{tbl_idx} - {len(processed_table)}行×{table_info['col_count']}列")
     
+    return tables
+
+# 厳密なテーブル検出機能も軽量化（オプション）
+def is_valid_table_simple(table_data: List[List[str]], headers: List[str]) -> bool:
+    """軽量版のテーブル検証（厳密版が不要な場合）"""
+    if not table_data:
+        return False
+    
+    # 基本的な条件のみチェック
+    col_count = len(headers) if headers else (len(table_data[0]) if table_data else 0)
+    
+    # 最低条件
+    if col_count < 2:  # 2列未満は除外
+        return False
+    
+    if len(table_data) < 2:  # データ行2行未満は除外
+        return False
+    
+    # 2列の場合、リスト形式の簡易チェック
+    if col_count == 2:
+        first_col_patterns = [r'^[①②③④⑤⑥⑦⑧⑨⑩]', r'^[1-9]\d*[.)]', r'^[-*+・]']
+        list_like_count = 0
+        
+        for row in table_data:
+            if len(row) >= 1 and row[0]:
+                for pattern in first_col_patterns:
+                    if re.search(pattern, row[0].strip()):
+                        list_like_count += 1
+                        break
+        
+        # リスト形式の可能性が高い場合は除外
+        if list_like_count >= len(table_data) * 0.6:
+            return False
+    
+    return True
+
+# 厳密検証を使いたい場合の関数置き換え
+def extract_tables_from_pdf_with_validation(data: bytes) -> List[Dict[str, Any]]:
+    """軽量版テーブル検証付きの抽出"""
+    tables: List[Dict[str, Any]] = []
+    total_detected = 0
+    total_valid = 0
+    
+    with pdfplumber.open(BytesIO(data)) as pdf:
+        for page_num, page in enumerate(pdf.pages, start=1):
+            page_tables = page.extract_tables()
+            total_detected += len(page_tables)
+            
+            for tbl_idx, table in enumerate(page_tables, start=1):
+                if not table or len(table) == 0:
+                    continue
+                    
+                # テーブルデータの処理
+                processed_table = []
+                headers = []
+                
+                # ヘッダー行の検出
+                if table[0]:
+                    headers = [str(cell).strip() if cell else f"列{i+1}" for i, cell in enumerate(table[0])]
+                
+                # データ行の処理
+                for row_idx, row in enumerate(table[1:] if headers else table, start=1):
+                    if not row:
+                        continue
+                    processed_row = [str(cell).strip() if cell else "" for cell in row]
+                    if any(processed_row):
+                        processed_table.append(processed_row)
+                
+                if not processed_table:
+                    continue
+                
+                # 軽量版検証
+                if is_valid_table_simple(processed_table, headers):
+                    total_valid += 1
+                    
+                    # フォーマット処理
+                    csv_lines = []
+                    if headers:
+                        csv_lines.append(",".join(f'"{h}"' for h in headers))
+                    
+                    for row in processed_table:
+                        csv_lines.append(",".join(f'"{cell}"' for cell in row))
+                    
+                    csv_text = "\n".join(csv_lines)
+                    formatted_text = format_table_as_text(headers, processed_table)
+                    
+                    # テーブルタイトル追加
+                    table_title = f"【ページ{page_num}_テーブル{tbl_idx}】"
+                    if formatted_text:
+                        formatted_text = f"{table_title}\n\n{formatted_text}"
+                    
+                    table_info = {
+                        "page": page_num,
+                        "table_id": tbl_idx,
+                        "headers": headers,
+                        "data": processed_table,
+                        "csv_text": csv_text,
+                        "row_count": len(processed_table),
+                        "col_count": len(headers) if headers else (len(processed_table[0]) if processed_table else 0),
+                        "formatted_text": formatted_text
+                    }
+                    
+                    tables.append(table_info)
+                    print(f"✅ 有効テーブル: ページ{page_num}, テーブル{tbl_idx} - {len(processed_table)}行×{table_info['col_count']}列")
+                else:
+                    print(f"❌ 無効テーブル: ページ{page_num}, テーブル{tbl_idx} - 基本条件未満")
+    
+    print(f"📊 テーブル検出結果: {total_valid}/{total_detected} 個が有効テーブルとして採用")
     return tables
 
 # ---------------------------------------------------------------------------
