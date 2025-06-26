@@ -1126,20 +1126,22 @@ if st.session_state["authentication_status"]:
 
         st.divider()
 
-        # ------- 資料内容確認 -------
+        # ------- 資料内容確認（テーブル対応版） -------
         st.markdown("### 📚 資料内容確認")
         
         if st.session_state.get("equipment_data"):
             equipment_data = st.session_state.equipment_data
             
-            # 統計情報の表示
+            # 統計情報の表示（テーブル情報を追加）
             total_equipments = len(equipment_data)
             total_files = sum(data['total_files'] for data in equipment_data.values())
             total_chars = sum(data['total_chars'] for data in equipment_data.values())
+            total_tables = sum(data.get('total_tables', 0) for data in equipment_data.values())
             
             st.info(f"📊 **総統計**\n"
                    f"- 設備数: {total_equipments}\n"
                    f"- ファイル数: {total_files}\n"
+                   f"- テーブル数: {total_tables}\n"
                    f"- 総文字数: {total_chars:,}")
             
             # 設備選択
@@ -1155,98 +1157,283 @@ if st.session_state["authentication_status"]:
                 # 設備情報の表示
                 st.markdown(f"#### 🔧 {selected_equipment_for_view}")
                 
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
                 with col1:
                     st.metric("ファイル数", equipment_info['total_files'])
                     st.metric("ページ数", equipment_info['total_pages'])
                 with col2:
                     st.metric("文字数", f"{equipment_info['total_chars']:,}")
+                    st.metric("テーブル数", equipment_info.get('total_tables', 0))
+                with col3:
                     st.markdown(f"**カテゴリ**: {equipment_info['equipment_category']}")
                 
-                # ファイル一覧と詳細表示
-                st.markdown("##### 📄 ファイル一覧")
+                # 表示オプション
+                view_mode = st.radio(
+                    "表示モード",
+                    ["ファイル別表示", "テーブル一覧", "統計サマリー"],
+                    key=f"view_mode_{selected_equipment_for_view}"
+                )
                 
-                for file_name in equipment_info['sources']:
-                    file_text = equipment_info['files'][file_name]
-                    file_chars = len(file_text)
+                if view_mode == "ファイル別表示":
+                    # ファイル一覧と詳細表示
+                    st.markdown("##### 📄 ファイル一覧")
                     
-                    with st.expander(f"📄 {file_name} ({file_chars:,}文字)", expanded=False):
-                        # ファイル情報
-                        st.markdown(f"**文字数**: {file_chars:,}")
+                    for file_name in equipment_info['sources']:
+                        file_text = equipment_info['files'][file_name]
+                        file_chars = len(file_text)
                         
-                        # テキスト内容の表示オプション
-                        view_option = st.radio(
-                            "表示方法",
-                            ["プレビュー（最初の500文字）", "全文表示", "構造化表示"],
-                            key=f"view_option_{selected_equipment_for_view}_{file_name}"
-                        )
+                        # ファイル内のテーブル数を計算
+                        file_table_count = len([t for t in equipment_info.get('table_info', []) 
+                                              if t['source_file'] == file_name])
                         
-                        if view_option == "プレビュー（最初の500文字）":
-                            preview_text = file_text[:500]
-                            if len(file_text) > 500:
-                                preview_text += "\n\n... （以下省略）"
-                            st.text_area(
-                                "プレビュー",
-                                value=preview_text,
-                                height=200,
-                                key=f"preview_{selected_equipment_for_view}_{file_name}"
+                        file_info_text = f"📄 {file_name} ({file_chars:,}文字"
+                        if file_table_count > 0:
+                            file_info_text += f", {file_table_count}テーブル"
+                        file_info_text += ")"
+                        
+                        with st.expander(file_info_text, expanded=False):
+                            # ファイル情報
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.markdown(f"**文字数**: {file_chars:,}")
+                            with col2:
+                                st.markdown(f"**テーブル数**: {file_table_count}")
+                            
+                            # テキスト内容の表示オプション
+                            view_option = st.radio(
+                                "表示方法",
+                                ["プレビュー（最初の500文字）", "全文表示", "構造化表示", "テーブルのみ表示"],
+                                key=f"view_option_{selected_equipment_for_view}_{file_name}"
                             )
                             
-                        elif view_option == "全文表示":
-                            st.text_area(
-                                "全文",
-                                value=file_text,
-                                height=400,
-                                key=f"fulltext_{selected_equipment_for_view}_{file_name}"
-                            )
+                            if view_option == "プレビュー（最初の500文字）":
+                                preview_text = file_text[:500]
+                                if len(file_text) > 500:
+                                    preview_text += "\n\n... （以下省略）"
+                                st.text_area(
+                                    "プレビュー",
+                                    value=preview_text,
+                                    height=200,
+                                    key=f"preview_{selected_equipment_for_view}_{file_name}"
+                                )
+                                
+                            elif view_option == "全文表示":
+                                st.text_area(
+                                    "全文",
+                                    value=file_text,
+                                    height=400,
+                                    key=f"fulltext_{selected_equipment_for_view}_{file_name}"
+                                )
+                                
+                            elif view_option == "構造化表示":
+                                # ページ別に分割して表示
+                                sections = file_text.split("--- ページ ")
+                                
+                                st.markdown("**ファイルヘッダー**:")
+                                st.code(sections[0] if sections else "ヘッダーなし")
+                                
+                                if len(sections) > 1:
+                                    st.markdown("**ページ別内容**:")
+                                    for i, section in enumerate(sections[1:], 1):
+                                        page_lines = section.split("\n", 1)
+                                        if len(page_lines) >= 2:
+                                            page_num = page_lines[0].split(" ---")[0]
+                                            page_content = page_lines[1]
+                                            
+                                            with st.expander(f"ページ {page_num} ({len(page_content)}文字)", expanded=False):
+                                                st.text_area(
+                                                    f"ページ {page_num} 内容",
+                                                    value=page_content,
+                                                    height=200,
+                                                    key=f"page_{selected_equipment_for_view}_{file_name}_{i}"
+                                                )
                             
-                        elif view_option == "構造化表示":
-                            # ページ別に分割して表示
-                            sections = file_text.split("--- ページ ")
-                            
-                            st.markdown("**ファイルヘッダー**:")
-                            st.code(sections[0] if sections else "ヘッダーなし")
-                            
-                            if len(sections) > 1:
-                                st.markdown("**ページ別内容**:")
-                                for i, section in enumerate(sections[1:], 1):
-                                    page_lines = section.split("\n", 1)
-                                    if len(page_lines) >= 2:
-                                        page_num = page_lines[0].split(" ---")[0]
-                                        page_content = page_lines[1]
-                                        
-                                        with st.expander(f"ページ {page_num} ({len(page_content)}文字)", expanded=False):
+                            elif view_option == "テーブルのみ表示":
+                                # このファイルのテーブルのみ表示
+                                file_tables = [t for t in equipment_info.get('table_info', []) 
+                                             if t['source_file'] == file_name]
+                                
+                                if file_tables:
+                                    st.markdown(f"**{file_name} のテーブル一覧**:")
+                                    
+                                    for table in file_tables:
+                                        with st.expander(f"📊 ページ{table['page']} テーブル{table['table_id']} ({table['row_count']}行×{table['col_count']}列)", expanded=False):
+                                            
+                                            # テーブル情報
+                                            col1, col2, col3 = st.columns(3)
+                                            with col1:
+                                                st.metric("行数", table['row_count'])
+                                            with col2:
+                                                st.metric("列数", table['col_count'])
+                                            with col3:
+                                                st.metric("ページ", table['page'])
+                                            
+                                            # ヘッダー情報
+                                            if table['headers']:
+                                                st.markdown("**列ヘッダー**:")
+                                                for i, header in enumerate(table['headers'], 1):
+                                                    st.markdown(f"  {i}. {header}")
+                                            
+                                            # フォーマット済みテーブル表示
+                                            st.markdown("**テーブル内容**:")
                                             st.text_area(
-                                                f"ページ {page_num} 内容",
-                                                value=page_content,
-                                                height=200,
-                                                key=f"page_{selected_equipment_for_view}_{file_name}_{i}"
+                                                "テーブルデータ",
+                                                value=table['formatted_text'],
+                                                height=300,
+                                                key=f"table_{selected_equipment_for_view}_{file_name}_{table['page']}_{table['table_id']}"
                                             )
+                                else:
+                                    st.info("このファイルにはテーブルが含まれていません。")
+                            
+                            # ダウンロード機能
+                            st.download_button(
+                                label="📥 テキストをダウンロード",
+                                data=file_text,
+                                file_name=f"{selected_equipment_for_view}_{file_name}.txt",
+                                mime="text/plain",
+                                key=f"download_{selected_equipment_for_view}_{file_name}"
+                            )
+                
+                elif view_mode == "テーブル一覧":
+                    # 設備全体のテーブル一覧表示
+                    st.markdown("##### 📊 テーブル一覧")
+                    
+                    table_info = equipment_info.get('table_info', [])
+                    
+                    if table_info:
+                        st.info(f"合計 {len(table_info)} 個のテーブルが見つかりました")
                         
-                        # ダウンロード機能
-                        st.download_button(
-                            label="📥 テキストをダウンロード",
-                            data=file_text,
-                            file_name=f"{selected_equipment_for_view}_{file_name}.txt",
-                            mime="text/plain",
-                            key=f"download_{selected_equipment_for_view}_{file_name}"
-                        )
+                        # テーブルを一覧表示
+                        for i, table in enumerate(table_info, 1):
+                            table_title = f"{table['source_file']} - ページ{table['page']} テーブル{table['table_id']}"
+                            
+                            with st.expander(f"📊 {i}. {table_title} ({table['row_count']}行×{table['col_count']}列)", expanded=False):
+                                
+                                # テーブル情報
+                                col1, col2, col3, col4 = st.columns(4)
+                                with col1:
+                                    st.metric("ファイル", table['source_file'])
+                                with col2:
+                                    st.metric("ページ", table['page'])
+                                with col3:
+                                    st.metric("行数", table['row_count'])
+                                with col4:
+                                    st.metric("列数", table['col_count'])
+                                
+                                # ヘッダー情報
+                                if table['headers']:
+                                    st.markdown("**列ヘッダー**:")
+                                    header_text = " | ".join(table['headers'])
+                                    st.code(header_text)
+                                
+                                # フォーマット済みテーブル表示
+                                st.markdown("**テーブル内容**:")
+                                st.text_area(
+                                    "データ",
+                                    value=table['formatted_text'],
+                                    height=200,
+                                    key=f"table_view_{i}_{selected_equipment_for_view}"
+                                )
+                                
+                                # テーブル単体ダウンロード
+                                table_filename = f"{selected_equipment_for_view}_{table['source_file']}_p{table['page']}_t{table['table_id']}.txt"
+                                st.download_button(
+                                    label="📥 このテーブルをダウンロード",
+                                    data=table['formatted_text'],
+                                    file_name=table_filename,
+                                    mime="text/plain",
+                                    key=f"download_table_{i}_{selected_equipment_for_view}"
+                                )
+                    
+                    else:
+                        st.info("この設備にはテーブルが含まれていません。")
+                
+                elif view_mode == "統計サマリー":
+                    # 詳細統計表示
+                    st.markdown("##### 📈 詳細統計")
+                    
+                    # ファイル別統計
+                    st.markdown("**ファイル別統計**:")
+                    file_stats = []
+                    for file_name in equipment_info['sources']:
+                        file_text = equipment_info['files'][file_name]
+                        file_table_count = len([t for t in equipment_info.get('table_info', []) 
+                                              if t['source_file'] == file_name])
+                        
+                        file_stats.append({
+                            "ファイル名": file_name,
+                            "文字数": len(file_text),
+                            "テーブル数": file_table_count
+                        })
+                    
+                    import pandas as pd
+                    df_files = pd.DataFrame(file_stats)
+                    st.dataframe(df_files, use_container_width=True)
+                    
+                    # テーブル統計
+                    table_info = equipment_info.get('table_info', [])
+                    if table_info:
+                        st.markdown("**テーブル統計**:")
+                        
+                        # テーブルサイズ分布
+                        table_sizes = [f"{t['row_count']}×{t['col_count']}" for t in table_info]
+                        size_counts = {}
+                        for size in table_sizes:
+                            size_counts[size] = size_counts.get(size, 0) + 1
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.markdown("**テーブルサイズ分布**:")
+                            for size, count in sorted(size_counts.items()):
+                                st.markdown(f"- {size}: {count}個")
+                        
+                        with col2:
+                            st.markdown("**ページ別テーブル数**:")
+                            page_counts = {}
+                            for t in table_info:
+                                page = t['page']
+                                page_counts[page] = page_counts.get(page, 0) + 1
+                            
+                            for page in sorted(page_counts.keys()):
+                                st.markdown(f"- ページ{page}: {page_counts[page]}個")
+                        
+                        # テーブル詳細一覧
+                        st.markdown("**テーブル詳細一覧**:")
+                        table_details = []
+                        for i, table in enumerate(table_info, 1):
+                            table_details.append({
+                                "No.": i,
+                                "ファイル": table['source_file'],
+                                "ページ": table['page'],
+                                "テーブルID": table['table_id'],
+                                "行数": table['row_count'],
+                                "列数": table['col_count'],
+                                "ヘッダー": " | ".join(table['headers']) if table['headers'] else "なし"
+                            })
+                        
+                        df_tables = pd.DataFrame(table_details)
+                        st.dataframe(df_tables, use_container_width=True)
+                    
+                    else:
+                        st.info("この設備にはテーブルが含まれていません。")
                 
                 # 設備全体のダウンロード
                 st.markdown("##### 📦 設備全体のエクスポート")
                 
-                # 全ファイル結合テキスト
-                all_files_text = "\n\n" + "="*80 + "\n\n".join([
-                    f"設備名: {selected_equipment_for_view}\n"
-                    f"カテゴリ: {equipment_info['equipment_category']}\n"
-                    f"ファイル数: {equipment_info['total_files']}\n"
-                    f"総文字数: {equipment_info['total_chars']:,}\n"
-                    + "="*80 + "\n\n" +
-                    "\n\n".join(equipment_info['files'].values())
-                ])
-                
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
                 with col1:
+                    # 全ファイル結合テキスト
+                    all_files_text = "\n\n" + "="*80 + "\n\n".join([
+                        f"設備名: {selected_equipment_for_view}\n"
+                        f"カテゴリ: {equipment_info['equipment_category']}\n"
+                        f"ファイル数: {equipment_info['total_files']}\n"
+                        f"テーブル数: {equipment_info.get('total_tables', 0)}\n"
+                        f"総文字数: {equipment_info['total_chars']:,}\n"
+                        + "="*80 + "\n\n" +
+                        "\n\n".join(equipment_info['files'].values())
+                    ])
+                    
                     st.download_button(
                         label="📥 設備全体をダウンロード",
                         data=all_files_text,
@@ -1266,8 +1453,25 @@ if st.session_state["authentication_status"]:
                         mime="application/json",
                         key=f"download_json_{selected_equipment_for_view}"
                     )
+                
+                with col3:
+                    # テーブルのみCSV形式でエクスポート
+                    table_info = equipment_info.get('table_info', [])
+                    if table_info:
+                        csv_content = "ファイル名,ページ,テーブルID,行数,列数,ヘッダー\n"
+                        for table in table_info:
+                            headers_str = " | ".join(table['headers']) if table['headers'] else ""
+                            csv_content += f'"{table["source_file"]}",{table["page"]},{table["table_id"]},{table["row_count"]},{table["col_count"]},"{headers_str}"\n'
+                        
+                        st.download_button(
+                            label="📊 テーブル情報CSV",
+                            data=csv_content,
+                            file_name=f"{selected_equipment_for_view}_テーブル情報.csv",
+                            mime="text/csv",
+                            key=f"download_tables_csv_{selected_equipment_for_view}"
+                        )
             
-            # 全設備一括ダウンロード
+            # 全設備一括操作
             st.markdown("##### 🗂️ 全設備一括操作")
             
             if st.button("📊 全設備統計を表示", key="show_all_stats"):
@@ -1281,6 +1485,7 @@ if st.session_state["authentication_status"]:
                         "カテゴリ": eq_data['equipment_category'],
                         "ファイル数": eq_data['total_files'],
                         "ページ数": eq_data['total_pages'],
+                        "テーブル数": eq_data.get('total_tables', 0),
                         "文字数": eq_data['total_chars']
                     })
                 
@@ -1292,6 +1497,7 @@ if st.session_state["authentication_status"]:
                     '設備名': 'count',
                     'ファイル数': 'sum',
                     'ページ数': 'sum',
+                    'テーブル数': 'sum',
                     '文字数': 'sum'
                 }).rename(columns={'設備名': '設備数'})
                 
@@ -1302,7 +1508,6 @@ if st.session_state["authentication_status"]:
             if st.button("🔄 資料を再読み込み", key="reload_documents"):
                 with st.spinner("資料を再読み込み中..."):
                     try:
-                        # 設備データを再初期化
                         from src.startup_loader import initialize_equipment_data
                         res = initialize_equipment_data(input_dir="rag_data")
                         

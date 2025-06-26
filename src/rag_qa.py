@@ -1,4 +1,4 @@
-# src/rag_qa.py - シンプル版（設備全文投入方式）
+# src/rag_qa.py - テーブル対応版（A案：選択ファイルのテーブル常に使用）
 
 from __future__ import annotations
 from typing import List, Dict, Any, Optional
@@ -13,7 +13,7 @@ except ImportError:
     STREAMLIT_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
-# Azure OpenAI設定
+# Azure OpenAI設定（既存）
 # ---------------------------------------------------------------------------
 def create_azure_openai_client():
     """Azure OpenAI クライアントを作成"""
@@ -37,7 +37,7 @@ def create_azure_openai_client():
         api_key=azure_key
     )
 
-# Azure用のモデル名マッピング
+# Azure用のモデル名マッピング（既存）
 AZURE_MODEL_MAPPING = {
     "gpt-4.1": "gpt-4.1",
     "gpt-4.1-mini": "gpt-4.1-mini", 
@@ -51,42 +51,29 @@ def get_azure_model_name(model_name: str) -> str:
     return AZURE_MODEL_MAPPING.get(model_name, model_name)
 
 # ---------------------------------------------------------------------------
-# 設定
+# 設定（既存）
 # ---------------------------------------------------------------------------
 _DEFAULT_MODEL = "gpt-4o-mini"
 
 # ---------------------------------------------------------------------------
-# 回答生成（設備全文投入版）
+# 回答生成（テーブル対応版 - A案実装）
 # ---------------------------------------------------------------------------
-
 def generate_answer_with_equipment(
         *,
         prompt: str,
         question: str,
         equipment_data: Dict[str, Dict[str, Any]],
         target_equipment: str,
-        selected_files: Optional[List[str]] = None,  # 🔥 新規追加
+        selected_files: Optional[List[str]] = None,
         model: str = _DEFAULT_MODEL,
         chat_history: Optional[List[Dict[str, str]]] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
     """
-    指定された設備の選択ファイルをプロンプトに投入して回答を生成
+    指定された設備の選択ファイルをプロンプトに投入して回答を生成（テーブル対応版 - A案）
     
-    Args:
-        prompt: システムプロンプト
-        question: ユーザーの質問
-        equipment_data: 設備データ辞書（preprocess_filesの出力）
-        target_equipment: 対象設備名
-        selected_files: 使用するファイル名のリスト（Noneなら全ファイル）
-        model: 使用するモデル
-        chat_history: チャット履歴
-        temperature: 温度パラメータ
-        max_tokens: 最大トークン数
-    
-    Returns:
-        回答結果辞書
+    A案: 選択ファイル内のテーブル情報は常に使用
     """
     # Azure OpenAI クライアントを作成
     client = create_azure_openai_client()
@@ -99,12 +86,12 @@ def generate_answer_with_equipment(
     equipment_info = equipment_data[target_equipment]
     available_files = equipment_info["files"]  # ファイル名 → テキストの辞書
     all_sources = equipment_info["sources"]
+    table_info = equipment_info.get("table_info", [])  # テーブル情報
     
-    # 🔥 選択されたファイルのみを結合
+    # --- 2) 選択されたファイルのみを結合 ---
     if selected_files is not None:
         print(f"🔧 使用設備: {target_equipment}")
         print(f"📄 選択ファイル: {', '.join(selected_files)}")
-        print(f"📄 利用可能ファイル: {', '.join(all_sources)}")
         
         # 選択されたファイルのテキストを結合
         selected_texts = []
@@ -123,56 +110,98 @@ def generate_answer_with_equipment(
         combined_text = "\n\n".join(selected_texts)
         sources = actual_sources
         
-        print(f"📝 結合後文字数: {len(combined_text)}")
+        # A案: 選択ファイルに対応するテーブル情報を常に取得
+        relevant_table_info = [t for t in table_info if t['source_file'] in selected_files]
         
     else:
         # 全ファイル使用
         selected_texts = list(available_files.values())
         combined_text = "\n\n".join(selected_texts)
         sources = all_sources
-        
-        print(f"🔧 使用設備: {target_equipment}")
-        print(f"📄 全ファイル使用: {', '.join(sources)}")
-        print(f"📝 結合後文字数: {len(combined_text)}")
+        relevant_table_info = table_info
     
-    # --- 2) プロンプト組み立て ---
+    # --- 3) テーブル情報の処理（A案：常に使用） ---
+    table_context = ""
+    used_tables = []
+    
+    if relevant_table_info:
+        print(f"📊 A案適用: 選択ファイル内の全テーブルを使用 ({len(relevant_table_info)}個)")
+        
+        table_context += "\n\n【重要: テーブル・表データ】\n"
+        table_context += f"選択ファイル内のテーブル情報 (全{len(relevant_table_info)}個):\n\n"
+        
+        for i, table in enumerate(relevant_table_info, 1):
+            table_header = f"■ テーブル{i}: {table['source_file']} ページ{table['page']}"
+            table_header += f" ({table['row_count']}行×{table['col_count']}列)"
+            
+            table_context += f"{table_header}\n"
+            if table.get('headers'):
+                table_context += f"列ヘッダー: {' | '.join(table['headers'])}\n"
+            table_context += f"{table['formatted_text']}\n"
+            table_context += "-" * 60 + "\n\n"
+            
+            used_tables.append({
+                "source_file": table['source_file'],
+                "page": table['page'],
+                "table_id": table['table_id'],
+                "usage_mode": "A案_常に使用"
+            })
+        
+        print(f"📊 使用テーブル数: {len(used_tables)}")
+    else:
+        print("📊 選択ファイル内にテーブル情報がありません")
+    
+    # --- 4) プロンプト組み立て ---
     equipment_context = f"""
 【参考資料】設備: {target_equipment} (カテゴリ: {equipment_info['equipment_category']})
 使用ファイル: {', '.join(sources)}
 使用ファイル数: {len(sources)}/{len(all_sources)}
+テーブル数: {len(used_tables)}個（選択ファイル内: {len(relevant_table_info)}個, 総テーブル数: {len(table_info)}個）
 
 【資料内容】
 {combined_text}
+{table_context}
+"""
+    
+    # テーブル使用時の追加指示
+    table_instruction = ""
+    if used_tables:
+        table_instruction = """
+
+【テーブル情報の活用について】
+- 上記のテーブル・表データは選択された資料に含まれる重要な構造化情報です
+- 数値や基準、条件等を回答する際は、テーブル情報を優先的に参照してください
+- テーブルの行・列情報を正確に読み取り、該当する項目を特定してください
+- 可能な限り具体的な数値や条件を示してください
+- 「○」「×」「◎」などの記号や、面積・階数などの数値条件に特に注意してください
 """
     
     system_msg = {
         "role": "system",
-        "content": prompt
+        "content": prompt + table_instruction
     }
     
     user_msg = {
         "role": "user", 
-        "content": f"{equipment_context}\n\n【質問】\n{question}\n\n上記の資料を参考に、日本語で回答してください。"
+        "content": f"{equipment_context}\n\n【質問】\n{question}\n\n上記の資料（テーブル情報含む）を参考に、日本語で詳細に回答してください。"
     }
     
-    # --- 3) Messages 組み立て ---
+    # --- 5) Messages 組み立て ---
     messages: List[Dict[str, Any]] = []
     
-    # チャット履歴があれば追加
     if chat_history:
         messages.append(system_msg)
-        # 安全な履歴のみ追加
         safe_history = [
             {"role": m.get("role"), "content": m.get("content")}
             for m in chat_history
             if isinstance(m, dict) and m.get("role") and m.get("content")
         ]
-        messages.extend(safe_history[:-1])  # 最後の質問は除く（新しい質問で上書き）
+        messages.extend(safe_history[:-1])
         messages.append(user_msg)
     else:
         messages = [system_msg, user_msg]
     
-    # --- 4) API呼び出しパラメータを構築 ---
+    # --- 6) API呼び出しパラメータを構築 ---
     params = {
         "model": get_azure_model_name(model),
         "messages": messages,
@@ -183,7 +212,7 @@ def generate_answer_with_equipment(
     if max_tokens is not None:
         params["max_tokens"] = max_tokens
     
-    # --- 5) Azure OpenAI 呼び出し ---
+    # --- 7) Azure OpenAI 呼び出し ---
     try:
         print(f"🤖 API呼び出し開始 - モデル: {get_azure_model_name(model)}")
         resp = client.chat.completions.create(**params)
@@ -199,15 +228,18 @@ def generate_answer_with_equipment(
         "used_equipment": target_equipment,
         "equipment_info": equipment_info,
         "sources": sources,
-        "selected_files": selected_files,  # 🔥 選択ファイル情報を追加
+        "selected_files": selected_files,
         "context_length": len(combined_text),
-        "images": []  # 現バージョンでは画像は対応しない
+        "used_tables": used_tables,
+        "total_tables": len(table_info),
+        "relevant_tables_in_files": len(relevant_table_info),
+        "table_usage_mode": "A案_常に使用",
+        "images": []
     }
 
 # ---------------------------------------------------------------------------
-# 質問から設備を自動推定する関数
+# 質問から設備を自動推定する関数（既存）
 # ---------------------------------------------------------------------------
-
 def detect_equipment_from_question(question: str, available_equipment: List[str]) -> Optional[str]:
     """
     質問文から対象設備を推定
@@ -252,7 +284,6 @@ def detect_equipment_from_question(question: str, available_equipment: List[str]
 # ---------------------------------------------------------------------------
 # 互換性維持（旧関数）
 # ---------------------------------------------------------------------------
-
 def generate_answer(*args, **kwargs):
     """旧関数の互換性維持 - 廃止予定"""
     raise NotImplementedError(
