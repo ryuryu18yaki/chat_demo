@@ -22,7 +22,7 @@ def extract_equipment_from_filename(filename: str) -> Optional[str]:
             r"日本火災報知器工業会 自動火災報知設備の設置基準",
             r"東京消防庁 自動火災報知設備",
             r"能美防災 警報設備早見表",
-            r"WEBカタログ",
+            r"カタログ",
             r"煙感知",
             r"熱感知",
             r"防災設備"
