@@ -1400,130 +1400,193 @@ if st.session_state["authentication_status"]:
         user_prompt = st.chat_input("メッセージを入力…")
 
     # =====  応答生成  ============================================================
-    if user_prompt and not st.session_state.edit_target:  # 編集モード時は応答生成をスキップ
-        # メッセージリストに現在の質問を追加
-        msgs = get_messages()
-        msgs.append({"role": "user", "content": user_prompt})
+    if user_prompt and not st.session_state.edit_target:
+    # メッセージリストに現在の質問を追加
+    msgs = get_messages()
+    msgs.append({"role": "user", "content": user_prompt})
 
-        # ユーザーメッセージを表示
-        with st.chat_message("user"):
-            st.markdown(f'<div class="user-message">{user_prompt}</div>', unsafe_allow_html=True)
+    # ユーザーメッセージを表示
+    with st.chat_message("user"):
+        st.markdown(f'<div class="user-message">{user_prompt}</div>', unsafe_allow_html=True)
 
-        # シンプルなステータス表示 - 折りたたみなし
-        with st.status(f"🤖 {st.session_state.gpt_model} で回答を生成中...", expanded=True) as status:
-            # プロンプト取得
-            prompt = st.session_state.prompts[st.session_state.design_mode]
+    # シンプルなステータス表示
+    with st.status(f"🤖 {st.session_state.gpt_model} で回答を生成中...", expanded=True) as status:
+        # プロンプト取得
+        prompt = st.session_state.prompts[st.session_state.design_mode]
 
-            logger.info("💬 gen_start — mode=%s model=%s sid=%s",
-                st.session_state.design_mode,
-                st.session_state.gpt_model,
-                st.session_state.sid)
+        logger.info("💬 gen_start — mode=%s model=%s sid=%s",
+            st.session_state.design_mode,
+            st.session_state.gpt_model,
+            st.session_state.sid)
 
-            try:
-                # 設備の決定
-                target_equipment = None
-                selection_mode = st.session_state.get("selection_mode", "manual")
+        try:
+            # 設備の決定
+            target_equipment = None
+            selection_mode = st.session_state.get("selection_mode", "manual")
+            
+            if selection_mode == "auto":
+                # 自動推定
+                available_equipment = st.session_state.get("equipment_list", [])
+                target_equipment = detect_equipment_from_question(user_prompt, available_equipment)
                 
-                if selection_mode == "auto":
-                    # 自動推定
-                    available_equipment = st.session_state.get("equipment_list", [])
-                    target_equipment = detect_equipment_from_question(user_prompt, available_equipment)
-                    
-                    if target_equipment:
-                        st.info(f"🤖 自動推定された設備: {target_equipment}")
-                    else:
-                        st.error("❌ 質問文から設備を推定できませんでした。手動で設備を選択してください。")
-                        st.stop()
+                if target_equipment:
+                    st.info(f"🤖 自動推定された設備: {target_equipment}")
                 else:
-                    # 手動選択
-                    target_equipment = st.session_state.get("selected_equipment")
-                    
-                    if not target_equipment:
-                        st.error("❌ 設備が選択されていません。サイドバーで設備を選択してください。")
-                        st.stop()
-
-                # 設備全文投入方式でRAG実行
-                st.session_state["last_answer_mode"] = "設備全文投入"
+                    st.warning("⚠️ 質問文から設備を推定できませんでした。設備資料なしで回答します。")
+            else:
+                # 手動選択
+                target_equipment = st.session_state.get("selected_equipment")
                 
-                # 🔥 選択されたファイルを取得
+                if not target_equipment:
+                    st.warning("⚠️ 設備が選択されていません。設備資料なしで回答します。")
+
+            # === 🔥 新機能: 設備未選択時の処理分岐 ===
+            if target_equipment:
+                # 設備が選択されている場合のRAG処理
                 selected_files_key = f"selected_files_{target_equipment}"
                 selected_files = st.session_state.get(selected_files_key)
                 
-                # ファイルが選択されていない場合のチェック
+                # ファイルが選択されていない場合の処理
                 if not selected_files:
-                    st.error("❌ 使用するファイルが選択されていません。サイドバーでファイルを選択してください。")
-                    st.stop()
+                    st.warning("⚠️ 使用するファイルが選択されていません。設備資料なしで回答します。")
+                    target_equipment = None  # 設備なしモードに切り替え
+                else:
+                    st.info(f"📄 使用ファイル: {len(selected_files)}個のファイルを使用")
+                    
+                    # RAG処理実行
+                    rag_params = {
+                        "prompt": prompt,
+                        "question": user_prompt,
+                        "equipment_data": st.session_state.equipment_data,
+                        "target_equipment": target_equipment,
+                        "selected_files": selected_files,
+                        "model": st.session_state.gpt_model,
+                        "chat_history": msgs,
+                    }
+                    
+                    # カスタム設定があれば追加
+                    if st.session_state.get("temperature") != 0.0:
+                        rag_params["temperature"] = st.session_state.temperature
+                    if st.session_state.get("max_tokens") is not None:
+                        rag_params["max_tokens"] = st.session_state.max_tokens
+                    
+                    # 回答生成
+                    import time
+                    t_api = time.perf_counter()
+                    rag_res = generate_answer_with_equipment(**rag_params)
+                    api_elapsed = time.perf_counter() - t_api
+                    
+                    assistant_reply = rag_res["answer"]
+                    used_equipment = rag_res["used_equipment"]
+                    used_files = rag_res.get("selected_files", [])
+                    
+                    logger.info("💬 設備全文投入完了 — equipment=%s  files=%d  api_elapsed=%.2fs  回答文字数=%d",
+                                used_equipment, len(used_files), api_elapsed, len(assistant_reply))
+
+            # === 🔥 新機能: 設備なしモードの処理 ===
+            if not target_equipment:
+                st.info("💭 設備資料なしでの一般的な回答を生成します")
                 
-                st.info(f"📄 使用ファイル: {len(selected_files)}個のファイルを使用")
+                # Azure OpenAI クライアントを作成
+                client = setup_azure_openai()
                 
                 # API呼び出しパラメータを準備
-                rag_params = {
-                    "prompt": prompt,
-                    "question": user_prompt,
-                    "equipment_data": st.session_state.equipment_data,
-                    "target_equipment": target_equipment,
-                    "selected_files": selected_files,  # 🔥 選択ファイルを追加
-                    "model": st.session_state.gpt_model,
-                    "chat_history": msgs,
+                messages = []
+                
+                # システムプロンプト
+                system_msg = {
+                    "role": "system",
+                    "content": prompt
+                }
+                messages.append(system_msg)
+                
+                # チャット履歴があれば追加
+                if len(msgs) > 1:
+                    safe_history = [
+                        {"role": m.get("role"), "content": m.get("content")}
+                        for m in msgs[:-1]  # 最後の質問は除く
+                        if isinstance(m, dict) and m.get("role") and m.get("content")
+                    ]
+                    messages.extend(safe_history)
+                
+                # 現在の質問
+                user_msg = {
+                    "role": "user",
+                    "content": f"【質問】\n{user_prompt}\n\n設備資料は利用せず、あなたの知識に基づいて回答してください。"
+                }
+                messages.append(user_msg)
+                
+                # API呼び出しパラメータ
+                params = {
+                    "model": get_azure_model_name(st.session_state.gpt_model),
+                    "messages": messages,
                 }
                 
-                # カスタム設定があれば追加
                 if st.session_state.get("temperature") != 0.0:
-                    rag_params["temperature"] = st.session_state.temperature
+                    params["temperature"] = st.session_state.temperature
                 if st.session_state.get("max_tokens") is not None:
-                    rag_params["max_tokens"] = st.session_state.max_tokens
+                    params["max_tokens"] = st.session_state.max_tokens
                 
-                # 回答生成
+                # API呼び出し
                 import time
                 t_api = time.perf_counter()
-                rag_res = generate_answer_with_equipment(**rag_params)
+                resp = client.chat.completions.create(**params)
                 api_elapsed = time.perf_counter() - t_api
                 
-                assistant_reply = rag_res["answer"]
-                used_equipment = rag_res["used_equipment"]
-                used_files = rag_res.get("selected_files", [])
+                assistant_reply = resp.choices[0].message.content
+                used_equipment = "なし（一般知識による回答）"
+                used_files = []
                 
-                logger.info("💬 設備全文投入完了 — equipment=%s  files=%d  api_elapsed=%.2fs  回答文字数=%d",
-                            used_equipment, len(used_files), api_elapsed, len(assistant_reply))
+                logger.info("💬 一般回答完了 — api_elapsed=%.2fs  回答文字数=%d",
+                            api_elapsed, len(assistant_reply))
 
-            except Exception as e:
-                logger.exception("❌ answer_gen failed — %s", e)
-                st.error(f"回答生成時にエラーが発生しました: {e}")
-                st.stop()
+        except Exception as e:
+            logger.exception("❌ answer_gen failed — %s", e)
+            st.error(f"回答生成時にエラーが発生しました: {e}")
+            st.stop()
 
-            # 画面反映
-            with st.chat_message("assistant"):
-                # モデル情報と使用設備・ファイルを応答に追加
-                file_info = f"（{len(used_files)}ファイル使用）" if used_files else ""
+        # 画面反映
+        with st.chat_message("assistant"):
+            # モデル情報と使用設備・ファイルを応答に追加
+            if used_files:
+                file_info = f"（{len(used_files)}ファイル使用）"
                 model_info = f"\n\n---\n*このレスポンスは `{st.session_state.gpt_model}` と設備「{used_equipment}」{file_info}で生成されました*"
-                full_reply = assistant_reply + model_info
-                st.markdown(full_reply)
+            else:
+                model_info = f"\n\n---\n*このレスポンスは `{st.session_state.gpt_model}` で生成されました（設備資料なし）*"
+            
+            full_reply = assistant_reply + model_info
+            st.markdown(full_reply)
 
-            # 保存するのは元の応答（付加情報なし）
-            msgs.append({
-                "role": "assistant",
-                "content": assistant_reply,
-                "used_equipment": used_equipment,  # 使用設備を記録
-                "used_files": used_files,  # 🔥 使用ファイルも記録
-            })
+        # 保存するのは元の応答（付加情報なし）
+        msg_to_save = {
+            "role": "assistant",
+            "content": assistant_reply,
+        }
+        
+        # 設備・ファイル情報がある場合のみ追加
+        if target_equipment and target_equipment != "なし（一般知識による回答）":
+            msg_to_save["used_equipment"] = used_equipment
+            msg_to_save["used_files"] = used_files
 
-            # ログ保存
-            logger.info("📝 Executing post_log before any other operations")
-            post_log_async(user_prompt, assistant_reply, prompt, send_to_model_comparison=True)
+        msgs.append(msg_to_save)
 
-            # チャットタイトル生成
-            try:
-                new_title = generate_chat_title(msgs)
-                if new_title and new_title != st.session_state.current_chat:
-                    old_title = st.session_state.current_chat
-                    st.session_state.chats[new_title] = st.session_state.chats[old_title]
-                    del st.session_state.chats[old_title]
-                    st.session_state.current_chat = new_title
-                    logger.info("📝 Chat title updated: %s -> %s", old_title, new_title)
-            except Exception as e:
-                logger.warning("⚠️ Chat title generation failed (non-critical): %s", e)
+        # ログ保存
+        logger.info("📝 Executing post_log before any other operations")
+        post_log_async(user_prompt, assistant_reply, prompt, send_to_model_comparison=True)
 
-            st.rerun()
+        # チャットタイトル生成
+        try:
+            new_title = generate_chat_title(msgs)
+            if new_title and new_title != st.session_state.current_chat:
+                old_title = st.session_state.current_chat
+                st.session_state.chats[new_title] = st.session_state.chats[old_title]
+                del st.session_state.chats[old_title]
+                st.session_state.current_chat = new_title
+                logger.info("📝 Chat title updated: %s -> %s", old_title, new_title)
+        except Exception as e:
+            logger.warning("⚠️ Chat title generation failed (non-critical): %s", e)
+
+        st.rerun()
 
 elif st.session_state["authentication_status"] is False:
     st.error('ユーザー名またはパスワードが間違っています。')
