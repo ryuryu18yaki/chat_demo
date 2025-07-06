@@ -104,9 +104,9 @@ class SheetsManager:
             chat_title or "未設定",
             mode,
             model,
-            self._truncate_text(input_text, 1000),
-            self._truncate_text(output_text, 2000),
-            self._truncate_text(prompt_used, 500),
+            self._truncate_text(input_text, 50000),
+            self._truncate_text(output_text, 50000),
+            self._truncate_text(prompt_used, 50000),
             json.dumps(metadata or {}, ensure_ascii=False)
         ]
         
