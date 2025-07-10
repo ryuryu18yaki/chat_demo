@@ -8,7 +8,7 @@ from src.gdrive_simple import download_files_from_drive
 from src.logging_utils import init_logger
 logger = init_logger()
 
-def initialize_equipment_data_new(input_dir: str = "rag_data") -> dict:
+def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
     logger.info("🚨🚨🚨 NEW_FUNCTION: 関数呼び出し - input_dir='%s'", input_dir)
     
     # Google Driveからの読み込み判定
@@ -19,7 +19,6 @@ def initialize_equipment_data_new(input_dir: str = "rag_data") -> dict:
         
         try:
             logger.info("🚨🚨🚨 gdrive_simple import開始")
-            from src.gdrive_simple import download_files_from_drive
             logger.info("🚨🚨🚨 download_files_from_drive 呼び出し開始")
             file_dicts = download_files_from_drive(folder_id)
             logger.info("🚨🚨🚨 download_files_from_drive 結果: %dファイル", len(file_dicts))
