@@ -36,7 +36,8 @@ def download_files_from_drive(folder_id: str) -> List[Dict[str, Any]]:
         try:
             test_results = service.files().list(
                 pageSize=10,
-                fields="files(id, name, parents, owners)"
+                fields="files(id, name, parents, owners)",
+                supportsAllDrives=True
             ).execute()
             
             test_files = test_results.get('files', [])
@@ -54,7 +55,8 @@ def download_files_from_drive(folder_id: str) -> List[Dict[str, Any]]:
         try:
             folder_info = service.files().get(
                 fileId=folder_id,
-                fields="id, name, mimeType, permissions, owners"
+                fields="id, name, mimeType, permissions, owners",
+                supportsAllDrives=True,       # ★必須②-1
             ).execute()
             logger.info("🔍 フォルダ名: %s", folder_info.get('name'))
             logger.info("🔍 フォルダMIME: %s", folder_info.get('mimeType'))
@@ -71,7 +73,9 @@ def download_files_from_drive(folder_id: str) -> List[Dict[str, Any]]:
         
         results1 = service.files().list(
             q=query1,
-            fields="files(id, name, mimeType, size, parents, owners)"
+            fields="files(id, name, mimeType, size, parents, owners)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True
         ).execute()
         files1 = results1.get('files', [])
         logger.info("🔍 クエリ1結果: %d個", len(files1))
@@ -82,7 +86,9 @@ def download_files_from_drive(folder_id: str) -> List[Dict[str, Any]]:
         
         results2 = service.files().list(
             q=query2,
-            fields="files(id, name, mimeType, size, trashed)"
+            fields="files(id, name, mimeType, size, trashed)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True
         ).execute()
         files2 = results2.get('files', [])
         logger.info("🔍 クエリ2結果: %d個", len(files2))
