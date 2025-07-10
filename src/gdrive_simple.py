@@ -136,7 +136,7 @@ def download_files_from_drive(folder_id: str) -> List[Dict[str, Any]]:
             fh.seek(0)                       # 先頭に戻す
             file_dicts.append({
                 "name": file_name,
-                "mime": mime_type or mimetypes.guess_type(file_name)[0],
+                "type": mime_type,
                 "data": fh.read()            # bytes
             })
             logger.info("✅ 取得完了: %s (%d bytes)", file_name, len(file_dicts[-1]["data"]))
