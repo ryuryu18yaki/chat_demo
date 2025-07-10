@@ -1,10 +1,11 @@
 import os
-import io
+import io, mimetypes
 from typing import List, Dict, Any, Optional
 import streamlit as st
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
+
 
 from src.logging_utils import init_logger
 logger = init_logger()
@@ -111,21 +112,34 @@ def download_files_from_drive(folder_id: str) -> List[Dict[str, Any]]:
         
         # 以下は既存のコードと同じ...
         file_dicts = []
-        
+
         for file_info in files:
-            file_name = file_info['name']
-            file_id = file_info['id']
-            mime_type = file_info['mimeType']
-            
-            logger.info("🔍 処理中: %s", file_name)
-            
-            # PDFとテキストファイルのみ処理
-            if not (file_name.lower().endswith('.pdf') or file_name.lower().endswith('.txt')):
-                logger.info("⏭️ スキップ: %s (拡張子: %s)", file_name, 
-                           file_name.split('.')[-1] if '.' in file_name else 'なし')
+            file_name = file_info["name"]
+            file_id   = file_info["id"]
+            mime_type = file_info["mimeType"]
+
+            # PDF / TXT だけ対象
+            if not file_name.lower().endswith((".pdf", ".txt")):
                 continue
-            
-            # 以下既存のダウンロード処理...
+
+            logger.info("⬇️ ダウンロード開始: %s", file_name)
+
+            fh = io.BytesIO()
+            request = service.files().get_media(fileId=file_id)
+            downloader = MediaIoBaseDownload(fh, request)
+
+            done = False
+            while not done:
+                status, done = downloader.next_chunk()   # 10 MBずつ取得
+                logger.debug("   %.1f%%", status.progress() * 100)
+
+            fh.seek(0)                       # 先頭に戻す
+            file_dicts.append({
+                "name": file_name,
+                "mime": mime_type or mimetypes.guess_type(file_name)[0],
+                "data": fh.read()            # bytes
+            })
+            logger.info("✅ 取得完了: %s (%d bytes)", file_name, len(file_dicts[-1]["data"]))
         
         logger.info("📊 Google Drive読み込み完了: %dファイル", len(file_dicts))
         return file_dicts
