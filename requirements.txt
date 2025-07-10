@@ -17,3 +17,6 @@ google-auth
 pandas
 pypdf
 Pillow>=10.0
+google-api-python-client
+google-auth
+google-auth-httplib2

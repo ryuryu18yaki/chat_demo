@@ -3,6 +3,7 @@ from openai import AzureOpenAI
 from typing import List, Dict, Any
 import time, functools
 import os
+import pandas as pd
 
 from src.rag_preprocess import preprocess_files
 from src.rag_qa import generate_answer_with_equipment, detect_equipment_from_question
@@ -452,21 +453,66 @@ if st.session_state["authentication_status"]:
     logger.info("🔐 login success — user=%s  username=%s", name, username)
 
     # 設備データを input_data から自動初期化
+    # 設備データ初期化
     if st.session_state.get("equipment_data") is None:
+        logger.info("🔍🔍🔍 設備データ初期化開始")
+        
         try:
-            res = initialize_equipment_data(input_dir="rag_data")
+            logger.info("🔍🔍🔍 try ブロック開始")
             
+            # Google DriveフォルダIDが設定されているかチェック
+            drive_folder_id = None
+            try:
+                logger.info("🔍🔍🔍 secrets取得試行")
+                drive_folder_id = st.secrets.get("GOOGLE_DRIVE_FOLDER_ID")
+                logger.info("🔍🔍🔍 取得結果: '%s'", drive_folder_id)
+                if drive_folder_id:
+                    drive_folder_id = drive_folder_id.strip()  # 前後の空白を除去
+                    logger.info("🔍🔍🔍 strip後: '%s'", drive_folder_id)
+            except Exception as secrets_error:
+                logger.error("🔍🔍🔍 secrets取得エラー: %s", secrets_error)
+            
+            # 初期化実行
+            if drive_folder_id:
+                logger.info("🔍🔍🔍 Google Driveモード選択")
+                # Google Driveから読み込み
+                st.info("📁 Google Driveからファイルを読み込み中...")
+                
+                param = f"gdrive:{drive_folder_id}"
+                logger.info("🔍🔍🔍 呼び出しパラメータ: '%s'", param)
+                logger.info("🔍🔍🔍 initialize_equipment_data 呼び出し直前")
+                
+                res = initialize_equipment_data(param)
+                
+                logger.info("🔍🔍🔍 initialize_equipment_data 呼び出し完了")
+                logger.info("📂 Google Driveから設備データ初期化完了")
+            else:
+                logger.info("🔍🔍🔍 ローカルモード選択")
+                # ローカルから読み込み（既存処理）
+                st.info("📂 ローカル rag_data フォルダからファイルを読み込み中...")
+                logger.info("🔍🔍🔍 initialize_equipment_data 呼び出し直前（ローカル）")
+                
+                res = initialize_equipment_data("rag_data")
+                
+                logger.info("🔍🔍🔍 initialize_equipment_data 呼び出し完了（ローカル）")
+                logger.info("📂 ローカルディレクトリから設備データ初期化完了")
+            
+            logger.info("🔍🔍🔍 結果処理開始")
             st.session_state.equipment_data = res["equipment_data"]
             st.session_state.equipment_list = res["equipment_list"]
             st.session_state.category_list = res["category_list"]
-            st.session_state.rag_files = res["file_list"]  # 互換性のため
+            st.session_state.rag_files = res["file_list"]
+            logger.info("🔍🔍🔍 セッション状態更新完了")
 
             logger.info("📂 設備データ初期化完了 — 設備数=%d  ファイル数=%d",
                     len(res["equipment_list"]), len(res["file_list"]))
             
         except Exception as e:
+            logger.error("🔍🔍🔍 メイン例外キャッチ: %s", e, exc_info=True)
             logger.exception("❌ 設備データ初期化失敗 — %s", e)
-            st.warning(f"設備データ初期化中にエラーが発生しました: {e}")
+            st.error(f"設備データ初期化中にエラーが発生しました: {e}")
+    else:
+        logger.info("🔍🔍🔍 設備データは既に初期化済み")
 
     # --------------------------------------------------------------------------- #
     #                         ★ 各モード専用プロンプト ★                           #
@@ -1122,6 +1168,218 @@ if st.session_state["authentication_status"]:
                 
         except Exception as e:
             st.error(f"ログステータス取得失敗: {e}")
+        
+        st.divider()
+
+        # ------- 資料内容確認 -------
+        st.markdown("### 📚 資料内容確認")
+        
+        if st.session_state.get("equipment_data"):
+            equipment_data = st.session_state.equipment_data
+            
+            # 統計情報の表示
+            total_equipments = len(equipment_data)
+            total_files = sum(data['total_files'] for data in equipment_data.values())
+            total_chars = sum(data['total_chars'] for data in equipment_data.values())
+            
+            st.info(f"📊 **総統計**\n"
+                   f"- 設備数: {total_equipments}\n"
+                   f"- ファイル数: {total_files}\n"
+                   f"- 総文字数: {total_chars:,}")
+            
+            # 設備選択
+            selected_equipment_for_view = st.selectbox(
+                "📋 資料を確認する設備を選択",
+                options=[""] + sorted(equipment_data.keys()),
+                key="equipment_viewer_select"
+            )
+            
+            if selected_equipment_for_view:
+                equipment_info = equipment_data[selected_equipment_for_view]
+                
+                # 設備情報の表示
+                st.markdown(f"#### 🔧 {selected_equipment_for_view}")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("ファイル数", equipment_info['total_files'])
+                    st.metric("ページ数", equipment_info['total_pages'])
+                with col2:
+                    st.metric("文字数", f"{equipment_info['total_chars']:,}")
+                    st.markdown(f"**カテゴリ**: {equipment_info['equipment_category']}")
+                
+                # ファイル一覧と詳細表示
+                st.markdown("##### 📄 ファイル一覧")
+                
+                for file_name in equipment_info['sources']:
+                    file_text = equipment_info['files'][file_name]
+                    file_chars = len(file_text)
+                    
+                    with st.expander(f"📄 {file_name} ({file_chars:,}文字)", expanded=False):
+                        # ファイル情報
+                        st.markdown(f"**文字数**: {file_chars:,}")
+                        
+                        # テキスト内容の表示オプション
+                        view_option = st.radio(
+                            "表示方法",
+                            ["プレビュー（最初の500文字）", "全文表示", "構造化表示"],
+                            key=f"view_option_{selected_equipment_for_view}_{file_name}"
+                        )
+                        
+                        if view_option == "プレビュー（最初の500文字）":
+                            preview_text = file_text[:500]
+                            if len(file_text) > 500:
+                                preview_text += "\n\n... （以下省略）"
+                            st.text_area(
+                                "プレビュー",
+                                value=preview_text,
+                                height=200,
+                                key=f"preview_{selected_equipment_for_view}_{file_name}"
+                            )
+                            
+                        elif view_option == "全文表示":
+                            st.text_area(
+                                "全文",
+                                value=file_text,
+                                height=400,
+                                key=f"fulltext_{selected_equipment_for_view}_{file_name}"
+                            )
+                            
+                        elif view_option == "構造化表示":
+                            # ページ別に分割して表示
+                            sections = file_text.split("--- ページ ")
+                            
+                            st.markdown("**ファイルヘッダー**:")
+                            st.code(sections[0] if sections else "ヘッダーなし")
+                            
+                            if len(sections) > 1:
+                                st.markdown("**ページ別内容**:")
+                                for i, section in enumerate(sections[1:], 1):
+                                    page_lines = section.split("\n", 1)
+                                    if len(page_lines) >= 2:
+                                        page_num = page_lines[0].split(" ---")[0]
+                                        page_content = page_lines[1]
+                                        
+                                        with st.expander(f"ページ {page_num} ({len(page_content)}文字)", expanded=False):
+                                            st.text_area(
+                                                f"ページ {page_num} 内容",
+                                                value=page_content,
+                                                height=200,
+                                                key=f"page_{selected_equipment_for_view}_{file_name}_{i}"
+                                            )
+                        
+                        # ダウンロード機能
+                        st.download_button(
+                            label="📥 テキストをダウンロード",
+                            data=file_text,
+                            file_name=f"{selected_equipment_for_view}_{file_name}.txt",
+                            mime="text/plain",
+                            key=f"download_{selected_equipment_for_view}_{file_name}"
+                        )
+                
+                # 設備全体のダウンロード
+                st.markdown("##### 📦 設備全体のエクスポート")
+                
+                # 全ファイル結合テキスト
+                all_files_text = "\n\n" + "="*80 + "\n\n".join([
+                    f"設備名: {selected_equipment_for_view}\n"
+                    f"カテゴリ: {equipment_info['equipment_category']}\n"
+                    f"ファイル数: {equipment_info['total_files']}\n"
+                    f"総文字数: {equipment_info['total_chars']:,}\n"
+                    + "="*80 + "\n\n" +
+                    "\n\n".join(equipment_info['files'].values())
+                ])
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.download_button(
+                        label="📥 設備全体をダウンロード",
+                        data=all_files_text,
+                        file_name=f"{selected_equipment_for_view}_全ファイル.txt",
+                        mime="text/plain",
+                        key=f"download_all_{selected_equipment_for_view}"
+                    )
+                
+                with col2:
+                    # JSON形式でのエクスポート
+                    import json
+                    equipment_json = json.dumps(equipment_info, ensure_ascii=False, indent=2)
+                    st.download_button(
+                        label="📄 JSON形式でダウンロード",
+                        data=equipment_json,
+                        file_name=f"{selected_equipment_for_view}_metadata.json",
+                        mime="application/json",
+                        key=f"download_json_{selected_equipment_for_view}"
+                    )
+            
+            # 全設備一括ダウンロード
+            st.markdown("##### 🗂️ 全設備一括操作")
+            
+            if st.button("📊 全設備統計を表示", key="show_all_stats"):
+                st.markdown("#### 📊 全設備詳細統計")
+                
+                # 設備別統計テーブル
+                stats_data = []
+                for eq_name, eq_data in equipment_data.items():
+                    stats_data.append({
+                        "設備名": eq_name,
+                        "カテゴリ": eq_data['equipment_category'],
+                        "ファイル数": eq_data['total_files'],
+                        "ページ数": eq_data['total_pages'],
+                        "文字数": eq_data['total_chars']
+                    })
+                
+                df = pd.DataFrame(stats_data)
+                st.dataframe(df, use_container_width=True)
+                
+                # カテゴリ別統計
+                category_stats = df.groupby('カテゴリ').agg({
+                    '設備名': 'count',
+                    'ファイル数': 'sum',
+                    'ページ数': 'sum',
+                    '文字数': 'sum'
+                }).rename(columns={'設備名': '設備数'})
+                
+                st.markdown("#### 📈 カテゴリ別統計")
+                st.dataframe(category_stats, use_container_width=True)
+            
+            # 資料再読み込み機能
+            if st.button("🔄 資料を再読み込み", key="reload_documents"):
+                with st.spinner("資料を再読み込み中..."):
+                    try:
+                        # 設備データを再初期化
+                        from src.startup_loader import initialize_equipment_data
+                        res = initialize_equipment_data(input_dir="rag_data")
+                        
+                        st.session_state.equipment_data = res["equipment_data"]
+                        st.session_state.equipment_list = res["equipment_list"]
+                        st.session_state.category_list = res["category_list"]
+                        st.session_state.rag_files = res["file_list"]
+                        
+                        st.success("✅ 資料の再読み込みが完了しました")
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"❌ 資料の再読み込みに失敗しました: {e}")
+        
+        else:
+            st.error("❌ 設備データが読み込まれていません")
+            if st.button("🚀 設備データを初期化", key="init_equipment_data"):
+                with st.spinner("設備データを初期化中..."):
+                    try:
+                        from src.startup_loader import initialize_equipment_data
+                        res = initialize_equipment_data(input_dir="rag_data")
+                        
+                        st.session_state.equipment_data = res["equipment_data"]
+                        st.session_state.equipment_list = res["equipment_list"]
+                        st.session_state.category_list = res["category_list"]
+                        st.session_state.rag_files = res["file_list"]
+                        
+                        st.success("✅ 設備データの初期化が完了しました")
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"❌ 設備データの初期化に失敗しました: {e}")
 
     # =====  プロンプト編集画面  =================================================
     if st.session_state.edit_target:
