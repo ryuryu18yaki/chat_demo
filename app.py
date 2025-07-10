@@ -455,64 +455,64 @@ if st.session_state["authentication_status"]:
     # 設備データを input_data から自動初期化
     # 設備データ初期化
     if st.session_state.get("equipment_data") is None:
-        st.write("🔍🔍🔍 設備データ初期化開始")
+        logger.info("🔍🔍🔍 設備データ初期化開始")
         
         try:
-            st.write("🔍🔍🔍 try ブロック開始")
+            logger.info("🔍🔍🔍 try ブロック開始")
             
             # Google DriveフォルダIDが設定されているかチェック
             drive_folder_id = None
             try:
-                st.write("🔍🔍🔍 secrets取得試行")
+                logger.info("🔍🔍🔍 secrets取得試行")
                 drive_folder_id = st.secrets.get("GOOGLE_DRIVE_FOLDER_ID")
-                st.write(f"🔍🔍🔍 取得結果: '{drive_folder_id}'")
+                logger.info("🔍🔍🔍 取得結果: '%s'", drive_folder_id)
                 if drive_folder_id:
                     drive_folder_id = drive_folder_id.strip()  # 前後の空白を除去
-                    st.write(f"🔍🔍🔍 strip後: '{drive_folder_id}'")
+                    logger.info("🔍🔍🔍 strip後: '%s'", drive_folder_id)
             except Exception as secrets_error:
-                st.write(f"🔍🔍🔍 secrets取得エラー: {secrets_error}")
+                logger.error("🔍🔍🔍 secrets取得エラー: %s", secrets_error)
             
             # 初期化実行
             if drive_folder_id:
-                st.write("🔍🔍🔍 Google Driveモード選択")
+                logger.info("🔍🔍🔍 Google Driveモード選択")
                 # Google Driveから読み込み
                 st.info("📁 Google Driveからファイルを読み込み中...")
                 
                 param = f"gdrive:{drive_folder_id}"
-                st.write(f"🔍🔍🔍 呼び出しパラメータ: '{param}'")
-                st.write("🔍🔍🔍 initialize_equipment_data 呼び出し直前")
+                logger.info("🔍🔍🔍 呼び出しパラメータ: '%s'", param)
+                logger.info("🔍🔍🔍 initialize_equipment_data 呼び出し直前")
                 
                 res = initialize_equipment_data(param)
                 
-                st.write("🔍🔍🔍 initialize_equipment_data 呼び出し完了")
+                logger.info("🔍🔍🔍 initialize_equipment_data 呼び出し完了")
                 logger.info("📂 Google Driveから設備データ初期化完了")
             else:
-                st.write("🔍🔍🔍 ローカルモード選択")
+                logger.info("🔍🔍🔍 ローカルモード選択")
                 # ローカルから読み込み（既存処理）
                 st.info("📂 ローカル rag_data フォルダからファイルを読み込み中...")
-                st.write("🔍🔍🔍 initialize_equipment_data 呼び出し直前（ローカル）")
+                logger.info("🔍🔍🔍 initialize_equipment_data 呼び出し直前（ローカル）")
                 
                 res = initialize_equipment_data("rag_data")
                 
-                st.write("🔍🔍🔍 initialize_equipment_data 呼び出し完了（ローカル）")
+                logger.info("🔍🔍🔍 initialize_equipment_data 呼び出し完了（ローカル）")
                 logger.info("📂 ローカルディレクトリから設備データ初期化完了")
             
-            st.write("🔍🔍🔍 結果処理開始")
+            logger.info("🔍🔍🔍 結果処理開始")
             st.session_state.equipment_data = res["equipment_data"]
             st.session_state.equipment_list = res["equipment_list"]
             st.session_state.category_list = res["category_list"]
             st.session_state.rag_files = res["file_list"]
-            st.write("🔍🔍🔍 セッション状態更新完了")
+            logger.info("🔍🔍🔍 セッション状態更新完了")
 
             logger.info("📂 設備データ初期化完了 — 設備数=%d  ファイル数=%d",
                     len(res["equipment_list"]), len(res["file_list"]))
             
         except Exception as e:
-            st.write(f"🔍🔍🔍 メイン例外キャッチ: {e}")
+            logger.error("🔍🔍🔍 メイン例外キャッチ: %s", e, exc_info=True)
             logger.exception("❌ 設備データ初期化失敗 — %s", e)
             st.error(f"設備データ初期化中にエラーが発生しました: {e}")
     else:
-        st.write("🔍🔍🔍 設備データは既に初期化済み")
+        logger.info("🔍🔍🔍 設備データは既に初期化済み")
 
     # --------------------------------------------------------------------------- #
     #                         ★ 各モード専用プロンプト ★                           #
