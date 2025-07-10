@@ -18,7 +18,11 @@ def download_files_from_drive(folder_id: str) -> List[Dict[str, Any]]:
         credentials_info = st.secrets["gcp_service_account"]
         creds = Credentials.from_service_account_info(
             credentials_info, 
-            scopes=['https://www.googleapis.com/auth/drive.readonly']
+            scopes = [
+                    'https://www.googleapis.com/auth/drive',  # フルアクセス
+                    'https://www.googleapis.com/auth/drive.file',  # ファイルアクセス
+                    'https://www.googleapis.com/auth/drive.readonly'  # 読み取り専用（念のため）
+                ]
         )
         service = build('drive', 'v3', credentials=creds)
         logger.info("🔍 認証成功")
