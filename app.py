@@ -453,21 +453,78 @@ if st.session_state["authentication_status"]:
     logger.info("🔐 login success — user=%s  username=%s", name, username)
 
     # 設備データを input_data から自動初期化
+    # 設備データ初期化
     if st.session_state.get("equipment_data") is None:
         try:
-            res = initialize_equipment_data(input_dir="rag_data")
+            # Google DriveフォルダIDが設定されているかチェック
+            drive_folder_id = None
+            try:
+                drive_folder_id = st.secrets.get("GOOGLE_DRIVE_FOLDER_ID")
+                if drive_folder_id:
+                    drive_folder_id = drive_folder_id.strip()  # 前後の空白を除去
+            except:
+                pass
+            
+            # 初期化実行
+            if drive_folder_id:
+                # Google Driveから読み込み
+                st.info("📁 Google Driveからファイルを読み込み中...")
+                res = initialize_equipment_data(f"gdrive:{drive_folder_id}")
+                logger.info("📂 Google Driveから設備データ初期化完了")
+            else:
+                # ローカルから読み込み（既存処理）
+                st.info("📂 ローカル rag_data フォルダからファイルを読み込み中...")
+                res = initialize_equipment_data("rag_data")
+                logger.info("📂 ローカルディレクトリから設備データ初期化完了")
             
             st.session_state.equipment_data = res["equipment_data"]
             st.session_state.equipment_list = res["equipment_list"]
             st.session_state.category_list = res["category_list"]
-            st.session_state.rag_files = res["file_list"]  # 互換性のため
+            st.session_state.rag_files = res["file_list"]
 
             logger.info("📂 設備データ初期化完了 — 設備数=%d  ファイル数=%d",
                     len(res["equipment_list"]), len(res["file_list"]))
             
         except Exception as e:
             logger.exception("❌ 設備データ初期化失敗 — %s", e)
-            st.warning(f"設備データ初期化中にエラーが発生しました: {e}")
+            st.error(f"設備データ初期化中にエラーが発生しました: {e}")
+            
+            # エラー時の手動設定UI
+            st.markdown("### 🔧 手動設定")
+            drive_folder_id = st.text_input(
+                "Google DriveフォルダID（オプション）",
+                placeholder="1ABC123xyz...",
+                help="設定すると次回からGoogle Driveから自動読み込みします"
+            )
+            
+            if st.button("📁 Google Driveから読み込み") and drive_folder_id:
+                try:
+                    with st.spinner("Google Driveから読み込み中..."):
+                        res = initialize_equipment_data(f"gdrive:{drive_folder_id}")
+                    
+                    st.session_state.equipment_data = res["equipment_data"]
+                    st.session_state.equipment_list = res["equipment_list"]
+                    st.session_state.category_list = res["category_list"]
+                    st.session_state.rag_files = res["file_list"]
+                    
+                    st.success("✅ Google Drive読み込み完了")
+                    st.rerun()
+                except Exception as e2:
+                    st.error(f"Google Drive読み込みエラー: {e2}")
+            
+            if st.button("📂 ローカルディレクトリから読み込み"):
+                try:
+                    res = initialize_equipment_data("rag_data")
+                    
+                    st.session_state.equipment_data = res["equipment_data"]
+                    st.session_state.equipment_list = res["equipment_list"]
+                    st.session_state.category_list = res["category_list"]
+                    st.session_state.rag_files = res["file_list"]
+                    
+                    st.success("✅ ローカル読み込み完了")
+                    st.rerun()
+                except Exception as e2:
+                    st.error(f"ローカル読み込みエラー: {e2}")
 
     # --------------------------------------------------------------------------- #
     #                         ★ 各モード専用プロンプト ★                           #
