@@ -23,13 +23,8 @@ def download_files_from_drive(folder_id: str) -> List[Dict[str, Any]]:
         service = build('drive', 'v3', credentials=creds)
         logger.info("🔍 認証成功")
         
-        # フォルダ情報取得
-        try:
-            folder_info = service.files().get(fileId=folder_id).execute()
-            logger.info("🔍 フォルダ名: %s", folder_info.get('name'))
-        except Exception as e:
-            logger.error("❌ フォルダアクセスエラー: %s", e)
-            return []
+        # フォルダ情報取得をスキップして直接ファイル検索
+        logger.info("🔍 フォルダ内ファイル検索開始")
         
         # ファイル一覧取得
         query = f"'{folder_id}' in parents and trashed=false"
@@ -55,14 +50,15 @@ def download_files_from_drive(folder_id: str) -> List[Dict[str, Any]]:
             file_id = file_info['id']
             mime_type = file_info['mimeType']
             
-            print(f"🔍 処理中: {file_name}")
+            logger.info("🔍 処理中: %s", file_name)
             
             # PDFとテキストファイルのみ処理
             if not (file_name.lower().endswith('.pdf') or file_name.lower().endswith('.txt')):
-                print(f"⏭️ スキップ: {file_name} (拡張子: {file_name.split('.')[-1] if '.' in file_name else 'なし'})")
+                logger.info("⏭️ スキップ: %s (拡張子: %s)", file_name, 
+                           file_name.split('.')[-1] if '.' in file_name else 'なし')
                 continue
             
-            print(f"📄 ダウンロード開始: {file_name}")
+            logger.info("📄 ダウンロード開始: %s", file_name)
             
             # ファイルダウンロード
             request = service.files().get_media(fileId=file_id)
@@ -74,13 +70,29 @@ def download_files_from_drive(folder_id: str) -> List[Dict[str, Any]]:
                 status, done = downloader.next_chunk()
             
             file_data = file_io.getvalue()
-            print(f"📄 ダウンロード完了: {file_name} ({len(file_data)} bytes)")
+            logger.info("📄 ダウンロード完了: %s (%d bytes)", file_name, len(file_data))
             
-            # 以下、既存のコードと同じ...
+            # 設備名を推定
+            from src.equipment_classifier import extract_equipment_from_filename, get_equipment_category
+            equipment_name = extract_equipment_from_filename(file_name)
+            equipment_category = get_equipment_category(equipment_name)
+            
+            # 既存形式に合わせる
+            file_dict = {
+                "name": file_name,
+                "type": mime_type,
+                "size": len(file_data),
+                "data": file_data,
+                "equipment_name": equipment_name,
+                "equipment_category": equipment_category
+            }
+            
+            file_dicts.append(file_dict)
+            logger.info("✅ 完了: %s → 設備: %s", file_name, equipment_name)
         
-        print(f"📊 Google Drive読み込み完了: {len(file_dicts)}ファイル")
+        logger.info("📊 Google Drive読み込み完了: %dファイル", len(file_dicts))
         return file_dicts
         
     except Exception as e:
-        print(f"❌ Google Drive読み込みエラー: {e}")
+        logger.error("❌ Google Drive読み込みエラー: %s", e, exc_info=True)
         return []
