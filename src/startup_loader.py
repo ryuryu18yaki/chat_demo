@@ -5,42 +5,33 @@ from src.rag_preprocess import preprocess_files
 from src.equipment_classifier import extract_equipment_from_filename, get_equipment_category
 from src.gdrive_simple import download_files_from_drive
 
-def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
-    """
-    設備データを初期化し、辞書として返す
-    
-    Args:
-        input_dir: 入力ディレクトリパス、または "gdrive:フォルダID" 形式
-        
-    Returns:
-        設備データ辞書
-    """
-    
-    print(f"🚨🚨🚨 STARTUP_LOADER: 関数呼び出し - input_dir='{input_dir}'")
+from src.logging_utils import init_logger
+logger = init_logger()
+
+def initialize_equipment_data_new(input_dir: str = "rag_data") -> dict:
+    logger.info("🚨🚨🚨 NEW_FUNCTION: 関数呼び出し - input_dir='%s'", input_dir)
     
     # Google Driveからの読み込み判定
     if input_dir.startswith("gdrive:"):
-        print(f"🚨🚨🚨 STARTUP_LOADER: Google Driveモード")
+        logger.info("🚨🚨🚨 NEW_FUNCTION: Google Driveモード")
         folder_id = input_dir.replace("gdrive:", "")
-        print(f"📂 Google Driveから読み込み - フォルダID: {folder_id}")
+        logger.info("📂 Google Driveから読み込み - フォルダID: %s", folder_id)
         
         try:
-            print("🚨🚨🚨 gdrive_simple import開始")
+            logger.info("🚨🚨🚨 gdrive_simple import開始")
             from src.gdrive_simple import download_files_from_drive
-            print("🚨🚨🚨 download_files_from_drive 呼び出し開始")
+            logger.info("🚨🚨🚨 download_files_from_drive 呼び出し開始")
             file_dicts = download_files_from_drive(folder_id)
-            print(f"🚨🚨🚨 download_files_from_drive 結果: {len(file_dicts)}ファイル")
+            logger.info("🚨🚨🚨 download_files_from_drive 結果: %dファイル", len(file_dicts))
             
             if not file_dicts:
-                print("⚠️ Google Driveからファイルが読み込めませんでした")
+                logger.warning("⚠️ Google Driveからファイルが読み込めませんでした")
                 return _create_empty_result()
         except Exception as e:
-            print(f"❌ Google Drive読み込み失敗: {e}")
+            logger.error("❌ Google Drive読み込み失敗: %s", e, exc_info=True)
             return _create_empty_result()
-    
-    # ローカルディレクトリからの読み込み（既存処理）
     else:
-        print(f"🚨🚨🚨 STARTUP_LOADER: ローカルモード - input_dir: {input_dir}")
+        logger.info("🚨🚨🚨 NEW_FUNCTION: ローカルモード - input_dir: %s", input_dir)
         
         input_path = Path(input_dir)
         if not input_path.exists():

@@ -6,30 +6,34 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
+from src.logging_utils import init_logger
+logger = init_logger()
+
 def download_files_from_drive(folder_id: str) -> List[Dict[str, Any]]:
+    logger.info("🔍 Google Drive開始: フォルダID = %s", folder_id)
+    
     try:
-        print(f"🔍 開始: フォルダID = {folder_id}")
-        
         # 認証
+        logger.info("🔍 認証開始")
         credentials_info = st.secrets["gcp_service_account"]
         creds = Credentials.from_service_account_info(
             credentials_info, 
             scopes=['https://www.googleapis.com/auth/drive.readonly']
         )
         service = build('drive', 'v3', credentials=creds)
-        print("🔍 認証成功")
+        logger.info("🔍 認証成功")
         
         # フォルダ情報取得
         try:
             folder_info = service.files().get(fileId=folder_id).execute()
-            print(f"🔍 フォルダ名: {folder_info.get('name')}")
+            logger.info("🔍 フォルダ名: %s", folder_info.get('name'))
         except Exception as e:
-            print(f"❌ フォルダアクセスエラー: {e}")
+            logger.error("❌ フォルダアクセスエラー: %s", e)
             return []
         
-        # フォルダ内のファイル一覧取得
+        # ファイル一覧取得
         query = f"'{folder_id}' in parents and trashed=false"
-        print(f"🔍 検索クエリ: {query}")
+        logger.info("🔍 検索クエリ: %s", query)
         
         results = service.files().list(
             q=query,
@@ -37,14 +41,12 @@ def download_files_from_drive(folder_id: str) -> List[Dict[str, Any]]:
         ).execute()
         
         files = results.get('files', [])
-        print(f"🔍 発見したアイテム数: {len(files)}")
+        logger.info("🔍 発見したアイテム数: %d", len(files))
         
         # 全アイテムの詳細表示
         for i, file_info in enumerate(files):
-            print(f"🔍 [{i+1}] 名前: {file_info['name']}")
-            print(f"🔍 [{i+1}] MIME: {file_info['mimeType']}")
-            print(f"🔍 [{i+1}] サイズ: {file_info.get('size', 'N/A')}")
-            print("---")
+            logger.info("🔍 [%d] 名前: %s", i+1, file_info['name'])
+            logger.info("🔍 [%d] MIME: %s", i+1, file_info['mimeType'])
         
         file_dicts = []
         
