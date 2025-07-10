@@ -34,6 +34,7 @@ def extract_equipment_from_filename(filename: str) -> Optional[str]:
             r"日本火災報知器",
             r"東京消防庁.*自動火災",
             r"能美防災.*警報",
+            r"防災設備",
             r"防災設備.*設置基準",
             r"防災設備.*ハンドブック",
             r"消防法.*防災設備",
