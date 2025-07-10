@@ -18,7 +18,7 @@ def extract_equipment_from_filename(filename: str) -> Optional[str]:
     equipment_patterns = {
         # 自動火災報知設備
         "自動火災報知設備": [
-            r"Panasonic WEBカタログ 設置基準",
+            r"PanasonicWEBカタログ設置基準",
             r"日本火災報知器工業会 自動火災報知設備の設置基準",
             r"東京消防庁 自動火災報知設備",
             r"能美防災 警報設備早見表",
@@ -39,7 +39,7 @@ def extract_equipment_from_filename(filename: str) -> Optional[str]:
         
         # 誘導灯設備
         "誘導灯設備": [
-            r"Panasonic 誘導灯 4P（区分～免除～設置基準～設置）",
+            r"Panasonic誘導灯4P(区分～免除～設置基準～設置)",
             r"東京消防庁 誘導灯及び誘導標識",
             r"誘導灯",
             r"避難誘導"
