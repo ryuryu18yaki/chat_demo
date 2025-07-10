@@ -4,48 +4,65 @@ from pathlib import Path
 from src.rag_preprocess import preprocess_files
 from src.equipment_classifier import extract_equipment_from_filename, get_equipment_category
 
-def initialize_equipment_data(input_dir: str) -> dict:
+def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
     """
-    設備データを初期化し、辞書として返す（ChromaDB不使用）
+    設備データを初期化し、辞書として返す
     
     Args:
-        input_dir: 入力ディレクトリ
+        input_dir: 入力ディレクトリパス、または "gdrive:フォルダID" 形式
         
     Returns:
-        {
-            "equipment_data": Dict[設備名, 設備データ],
-            "file_list": List[ファイル情報],
-            "equipment_list": List[設備名],
-            "category_list": List[カテゴリ名]
-        }
+        設備データ辞書
     """
-    input_path = Path(input_dir)
-    files = list(input_path.glob("**/*.*"))
-
-    print(f"📂 ファイル読み込み開始 - ディレクトリ: {input_dir}")
-    print(f"📁 発見ファイル数: {len(files)}")
-
-    # ファイルを読み込んで設備メタデータ付きの辞書作成
-    file_dicts = []
-    for f in files:
-        # ファイル名から設備名を抽出
-        equipment_name = extract_equipment_from_filename(f.name)
-        equipment_category = get_equipment_category(equipment_name)
+    
+    # Google Driveからの読み込み判定
+    if input_dir.startswith("gdrive:"):
+        folder_id = input_dir.replace("gdrive:", "")
+        print(f"📂 Google Driveから読み込み - フォルダID: {folder_id}")
         
-        file_dict = {
-            "name": f.name,
-            "type": "application/pdf" if f.suffix.lower() == ".pdf" else "text/plain",
-            "size": f.stat().st_size,
-            "data": f.read_bytes(),
-            # 🔥 設備メタデータを追加
-            "equipment_name": equipment_name,
-            "equipment_category": equipment_category
-        }
-        file_dicts.append(file_dict)
+        try:
+            from src.gdrive_simple import download_files_from_drive
+            file_dicts = download_files_from_drive(folder_id)
+            
+            if not file_dicts:
+                print("⚠️ Google Driveからファイルが読み込めませんでした")
+                return _create_empty_result()
+        except Exception as e:
+            print(f"❌ Google Drive読み込み失敗: {e}")
+            return _create_empty_result()
+    
+    # ローカルディレクトリからの読み込み（既存処理）
+    else:
+        print(f"📂 ローカルディレクトリから読み込み - ディレクトリ: {input_dir}")
         
-        print(f"📄 読み込み: {f.name} → 設備: {equipment_name} (カテゴリ: {equipment_category})")
+        input_path = Path(input_dir)
+        if not input_path.exists():
+            print(f"❌ ディレクトリが存在しません: {input_dir}")
+            return _create_empty_result()
+        
+        files = list(input_path.glob("**/*.*"))
+        print(f"📁 発見ファイル数: {len(files)}")
 
-    # 設備ごとに全文結合処理
+        # ファイルを読み込んで設備メタデータ付きの辞書作成
+        file_dicts = []
+        for f in files:
+            # ファイル名から設備名を抽出
+            equipment_name = extract_equipment_from_filename(f.name)
+            equipment_category = get_equipment_category(equipment_name)
+            
+            file_dict = {
+                "name": f.name,
+                "type": "application/pdf" if f.suffix.lower() == ".pdf" else "text/plain",
+                "size": f.stat().st_size,
+                "data": f.read_bytes(),
+                "equipment_name": equipment_name,
+                "equipment_category": equipment_category
+            }
+            file_dicts.append(file_dict)
+            
+            print(f"📄 読み込み: {f.name} → 設備: {equipment_name} (カテゴリ: {equipment_category})")
+
+    # 設備ごとに全文結合処理（既存処理と同じ）
     print(f"\n🔄 設備ごと全文結合処理開始...")
     equipment_data = preprocess_files(file_dicts)
 
@@ -65,10 +82,19 @@ def initialize_equipment_data(input_dir: str) -> dict:
         print(f"   - {equipment_name}: {data['total_files']}ファイル, {data['total_pages']}ページ, {total_chars}文字")
 
     return {
-        "equipment_data": equipment_data,  # メインデータ: Dict[設備名, 設備データ]
-        "file_list": file_dicts,          # 元ファイル情報（互換性のため）
-        "equipment_list": sorted(equipment_list),  # 設備名一覧
-        "category_list": sorted(category_list)     # カテゴリ一覧
+        "equipment_data": equipment_data,
+        "file_list": file_dicts,
+        "equipment_list": sorted(equipment_list),
+        "category_list": sorted(category_list)
+    }
+
+def _create_empty_result() -> dict:
+    """空の結果を返す"""
+    return {
+        "equipment_data": {},
+        "file_list": [],
+        "equipment_list": [],
+        "category_list": []
     }
 
 def get_equipment_names(equipment_data: dict) -> list:
