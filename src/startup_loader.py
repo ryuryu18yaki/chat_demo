@@ -3,17 +3,17 @@
 from pathlib import Path
 from src.rag_preprocess import preprocess_files
 from src.equipment_classifier import extract_equipment_from_filename, get_equipment_category
+from src.gdrive_simple import download_files_from_drive
 
 def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
-    """
-    設備データを初期化し、辞書として返す
+    print(f"🚨🚨🚨 STARTUP_LOADER: 関数呼び出し - input_dir='{input_dir}'")
     
-    Args:
-        input_dir: 入力ディレクトリパス、または "gdrive:フォルダID" 形式
-        
-    Returns:
-        設備データ辞書
-    """
+    # Google Driveからの読み込み判定
+    if input_dir.startswith("gdrive:"):
+        print(f"🚨🚨🚨 STARTUP_LOADER: Google Driveモード")
+        # 以下既存...
+    else:
+        print(f"🚨🚨🚨 STARTUP_LOADER: ローカルモード")
     
     # Google Driveからの読み込み判定
     if input_dir.startswith("gdrive:"):
@@ -21,7 +21,6 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
         print(f"📂 Google Driveから読み込み - フォルダID: {folder_id}")
         
         try:
-            from src.gdrive_simple import download_files_from_drive
             file_dicts = download_files_from_drive(folder_id)
             
             if not file_dicts:
