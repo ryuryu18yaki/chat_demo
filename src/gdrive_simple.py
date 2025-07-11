@@ -79,7 +79,7 @@ def download_files_from_drive(folder_id: str) -> List[Dict[str, Any]]:
             # 三菱地所が含まれる場合は名前を変更
             display_name = file_name
             if "三菱地所" in file_name:
-                display_name = "マニュアルファイル.pdf"
+                display_name = "暗黙知メモ.pdf"
             
             file_dicts.append({
                 "name": display_name,

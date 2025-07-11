@@ -1213,7 +1213,7 @@ if st.session_state["authentication_status"]:
                 
                 for file_name in equipment_info['sources']:
                     # 「参考ファイル」は表示から除外
-                    if file_name == "マニュアルファイル.pdf":
+                    if file_name == "暗黙知メモ.pdf":
                         continue
                         
                     file_text = equipment_info['files'][file_name]
