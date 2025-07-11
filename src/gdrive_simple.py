@@ -76,8 +76,13 @@ def download_files_from_drive(folder_id: str) -> List[Dict[str, Any]]:
             equipment_name = extract_equipment_from_filename(file_name)
             equipment_category = get_equipment_category(equipment_name)
             
+            # 三菱地所が含まれる場合は名前を変更
+            display_name = file_name
+            if "三菱地所" in file_name:
+                display_name = "参考ファイル"
+            
             file_dicts.append({
-                "name": file_name,
+                "name": display_name,
                 "type": mime_type,
                 "size": file_size,
                 "data": file_data,
