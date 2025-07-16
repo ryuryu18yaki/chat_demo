@@ -84,7 +84,9 @@ def call_claude_bedrock(client, model_id: str, messages: List[Dict], temperature
     converse_params = {
         "modelId": model_id,
         "messages": conversation_messages,
-        "inferenceConfig": {}
+        "inferenceConfig": {
+            "maxTokens": 200000  # Claude 4の最大トークン数
+        }
     }
     
     # temperatureが指定されている場合のみ設定
@@ -866,7 +868,7 @@ if st.session_state["authentication_status"]:
                 title_messages = [{"role": "user", "content": prompt}]
                 response = call_claude_bedrock(
                     bedrock_client, 
-                    get_claude_model_name("claude-4-haiku"),
+                    get_claude_model_name("claude-4-sonnet"),
                     title_messages,
                     max_tokens=30
                 )

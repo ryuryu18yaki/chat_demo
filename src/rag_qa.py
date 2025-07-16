@@ -71,7 +71,9 @@ def call_claude_bedrock(client, model_id: str, messages: List[Dict], temperature
     converse_params = {
         "modelId": model_id,
         "messages": conversation_messages,
-        "inferenceConfig": {}
+        "inferenceConfig": {
+            "maxTokens": 200000  # Claude 4の最大トークン数
+        }
     }
     
     # temperatureが指定されている場合のみ設定
