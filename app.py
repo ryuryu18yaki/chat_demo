@@ -990,7 +990,7 @@ if st.session_state["authentication_status"]:
             selected_max_tokens = st.selectbox(
                 "最大応答長",
                 options=list(max_tokens_options.keys()),
-                index=2,
+                index=0,
                 key="max_tokens_select",
                 help="生成される回答の最大トークン数（Claudeデフォルト: 4096）"
             )
