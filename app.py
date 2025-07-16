@@ -56,11 +56,8 @@ def setup_bedrock_client():
 
 # Claude用のモデル名マッピング
 CLAUDE_MODEL_MAPPING = {
-    "claude-4-sonnet": "anthropic.claude-3-5-sonnet-20241022-v2:0",
-    "claude-4-haiku": "anthropic.claude-3-5-haiku-20241022-v1:0",
-    "claude-3-sonnet": "anthropic.claude-3-sonnet-20240229-v1:0",
-    "claude-3-haiku": "anthropic.claude-3-haiku-20240307-v1:0",
-    "claude-3-opus": "anthropic.claude-3-opus-20240229-v1:0"
+    "claude-4-sonnet": "apac.anthropic.claude-sonnet-4-20250514-v1:0",
+    "claude-3.7": "apac.anthropic.claude-3-7-sonnet-20250219-v1:0"
 }
 
 def get_claude_model_name(model_name: str) -> str:
