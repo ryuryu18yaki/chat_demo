@@ -64,8 +64,8 @@ def get_claude_model_name(model_name: str) -> str:
     """Claude表示名をBedrockモデルIDに変換"""
     return CLAUDE_MODEL_MAPPING.get(model_name, model_name)
 
-def call_claude_bedrock(client, model_id: str, messages: List[Dict], temperature: float = None):
-    """AWS Bedrock Converse API経由でClaudeを呼び出し（max_tokensはモデル上限）"""
+def call_claude_bedrock(client, model_id: str, messages: List[Dict], max_tokens: int = 4096, temperature: float = 0.0):
+    """AWS Bedrock Converse API経由でClaudeを呼び出し"""
     
     # メッセージ形式をConverse APIに合わせて変換
     system_prompts = []
@@ -80,18 +80,15 @@ def call_claude_bedrock(client, model_id: str, messages: List[Dict], temperature
                 "content": [{"text": msg["content"]}]
             })
     
-    # Converse API用のパラメータを構築（max_tokensは指定しない＝モデル上限）
+    # Converse API用のパラメータを構築
     converse_params = {
         "modelId": model_id,
         "messages": conversation_messages,
         "inferenceConfig": {
-            "maxTokens": 65536  # Claude 4の最大トークン数
+            "maxTokens": max_tokens,
+            "temperature": temperature
         }
     }
-    
-    # temperatureが指定されている場合のみ設定
-    if temperature is not None and temperature != 0.0:
-        converse_params["inferenceConfig"]["temperature"] = temperature
     
     # システムプロンプトがある場合は追加
     if system_prompts:
@@ -99,6 +96,10 @@ def call_claude_bedrock(client, model_id: str, messages: List[Dict], temperature
     
     # Converse API呼び出し
     response = client.converse(**converse_params)
+    
+    # レスポンスを解析
+    if response.get('stopReason') == 'error':
+        raise Exception(f"Claude API Error: {response.get('output', {}).get('message', 'Unknown error')}")
     
     return response['output']['message']['content'][0]['text']
 
@@ -868,7 +869,7 @@ if st.session_state["authentication_status"]:
                 title_messages = [{"role": "user", "content": prompt}]
                 response = call_claude_bedrock(
                     bedrock_client, 
-                    get_claude_model_name("claude-4-sonnet"),
+                    get_claude_model_name("claude-4-haiku"),
                     title_messages,
                     max_tokens=30
                 )
@@ -976,6 +977,24 @@ if st.session_state["authentication_status"]:
                     step=0.1,
                     key="temperature",
                     help="値が高いほど創造的、低いほど一貫した回答になります（Claudeデフォルト: 0.0）")
+
+            max_tokens_options = {
+                "未設定（モデル上限）": None,
+                "1000": 1000,
+                "2000": 2000,
+                "4000": 4000,
+                "8000": 8000,
+                "16000": 16000,
+                "32000": 32000
+            }
+            selected_max_tokens = st.selectbox(
+                "最大応答長",
+                options=list(max_tokens_options.keys()),
+                index=2,
+                key="max_tokens_select",
+                help="生成される回答の最大トークン数（Claudeデフォルト: 4096）"
+            )
+            st.session_state["max_tokens"] = max_tokens_options[selected_max_tokens]
 
         st.divider()
 
@@ -1487,7 +1506,8 @@ if st.session_state["authentication_status"]:
                         bedrock_client,
                         get_claude_model_name(st.session_state.claude_model),
                         messages,
-                        temperature=temperature if temperature != 0.0 else None
+                        max_tokens=max_tokens,
+                        temperature=temperature
                     )
                     api_elapsed = time.perf_counter() - t_api
                     
