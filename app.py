@@ -1,9 +1,11 @@
+
 import streamlit as st
-from openai import AzureOpenAI
+import boto3
 from typing import List, Dict, Any
 import time, functools
 import os
 import pandas as pd
+import json
 
 from src.rag_preprocess import preprocess_files
 from src.rag_qa import generate_answer_with_equipment, detect_equipment_from_question
@@ -24,43 +26,85 @@ import copy
 import base64
 
 
-st.set_page_config(page_title="GPT + RAG Chatbot", page_icon="💬", layout="wide")
+st.set_page_config(page_title="Claude + RAG Chatbot", page_icon="💬", layout="wide")
 
 logger = init_logger()
 
-# Azure OpenAI設定を追加
-def setup_azure_openai():
-    """Azure OpenAI設定"""
-    # 環境変数から取得（Streamlit Secretsでも可能）
+# AWS Bedrock設定を追加
+def setup_bedrock_client():
+    """AWS Bedrock設定"""
     try:
-        azure_endpoint = st.secrets.get("AZURE_OPENAI_ENDPOINT", os.getenv("AZURE_OPENAI_ENDPOINT"))
-        azure_key = st.secrets.get("AZURE_OPENAI_KEY", os.getenv("AZURE_OPENAI_KEY"))
+        # 環境変数またはStreamlit Secretsから認証情報を取得
+        aws_access_key_id = st.secrets.get("AWS_ACCESS_KEY_ID", os.getenv("AWS_ACCESS_KEY_ID"))
+        aws_secret_access_key = st.secrets.get("AWS_SECRET_ACCESS_KEY", os.getenv("AWS_SECRET_ACCESS_KEY"))
+        aws_region = st.secrets.get("AWS_REGION", os.getenv("AWS_REGION", "us-east-1"))
     except:
-        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-        azure_key = os.getenv("AZURE_OPENAI_KEY")
+        aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
+        aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+        aws_region = os.getenv("AWS_REGION", "us-east-1")
     
-    if not azure_endpoint or not azure_key:
-        st.error("Azure OpenAI の設定が不足しています。環境変数またはSecrets.tomlを確認してください。")
+    if not aws_access_key_id or not aws_secret_access_key:
+        st.error("AWS Bedrock の設定が不足しています。環境変数またはSecrets.tomlを確認してください。")
         st.stop()
     
-    return AzureOpenAI(
-        api_version="2025-04-01-preview",
-        azure_endpoint=azure_endpoint,
-        api_key=azure_key
+    return boto3.client(
+        'bedrock-runtime',
+        aws_access_key_id=aws_access_key_id,
+        aws_secret_access_key=aws_secret_access_key,
+        region_name=aws_region
     )
 
-# Azure用のモデル名マッピング
-AZURE_MODEL_MAPPING = {
-    "gpt-4.1": "gpt-4.1",
-    "gpt-4.1-mini": "gpt-4.1-mini", 
-    "gpt-4.1-nano": "gpt-4.1-nano",
-    "gpt-4o": "gpt-4o",
-    "gpt-4o-mini": "gpt-4o-mini"
+# Claude用のモデル名マッピング
+CLAUDE_MODEL_MAPPING = {
+    "claude-4-sonnet": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+    "claude-4-haiku": "anthropic.claude-3-5-haiku-20241022-v1:0",
+    "claude-3-sonnet": "anthropic.claude-3-sonnet-20240229-v1:0",
+    "claude-3-haiku": "anthropic.claude-3-haiku-20240307-v1:0",
+    "claude-3-opus": "anthropic.claude-3-opus-20240229-v1:0"
 }
 
-def get_azure_model_name(model_name: str) -> str:
-    """OpenAIモデル名をAzureデプロイメント名に変換"""
-    return AZURE_MODEL_MAPPING.get(model_name, model_name)
+def get_claude_model_name(model_name: str) -> str:
+    """Claude表示名をBedrockモデルIDに変換"""
+    return CLAUDE_MODEL_MAPPING.get(model_name, model_name)
+
+def call_claude_bedrock(client, model_id: str, messages: List[Dict], max_tokens: int = 4096, temperature: float = 0.0):
+    """AWS Bedrock Converse API経由でClaudeを呼び出し"""
+    
+    # メッセージ形式をConverse APIに合わせて変換
+    system_prompts = []
+    conversation_messages = []
+    
+    for msg in messages:
+        if msg["role"] == "system":
+            system_prompts.append({"text": msg["content"]})
+        else:
+            conversation_messages.append({
+                "role": msg["role"],
+                "content": [{"text": msg["content"]}]
+            })
+    
+    # Converse API用のパラメータを構築
+    converse_params = {
+        "modelId": model_id,
+        "messages": conversation_messages,
+        "inferenceConfig": {
+            "maxTokens": max_tokens,
+            "temperature": temperature
+        }
+    }
+    
+    # システムプロンプトがある場合は追加
+    if system_prompts:
+        converse_params["system"] = system_prompts
+    
+    # Converse API呼び出し
+    response = client.converse(**converse_params)
+    
+    # レスポンスを解析
+    if response.get('stopReason') == 'error':
+        raise Exception(f"Claude API Error: {response.get('output', {}).get('message', 'Unknown error')}")
+    
+    return response['output']['message']['content'][0]['text']
 
 # =====  認証設定の読み込み ============================================================
 with open('./config.yaml') as file:
@@ -117,15 +161,15 @@ def post_log(
                     username = user_info.get("username", "unknown")
                     design_mode = user_info.get("design_mode", "unknown")
                     session_id = user_info.get("session_id", "unknown")
-                    gpt_model = user_info.get("gpt_model", "unknown")
-                    temperature = user_info.get("temperature", 1.0)
+                    claude_model = user_info.get("claude_model", "unknown")
+                    temperature = user_info.get("temperature", 0.0)
                     max_tokens = user_info.get("max_tokens")
                     use_rag = user_info.get("use_rag", False)
                     chat_title = user_info.get("chat_title", "未設定")
                 else:
                     # フォールバック値
-                    username = design_mode = session_id = gpt_model = "unknown"
-                    temperature = 1.0
+                    username = design_mode = session_id = claude_model = "unknown"
+                    temperature = 0.0
                     max_tokens = None
                     use_rag = False
                     chat_title = "未設定"
@@ -139,7 +183,7 @@ def post_log(
                     user_id=username,
                     session_id=session_id,
                     mode=design_mode,
-                    model=gpt_model,
+                    model=claude_model,
                     temperature=temperature,
                     max_tokens=max_tokens,
                     use_rag=use_rag
@@ -383,21 +427,21 @@ def post_log_async(input_text: str, output_text: str, prompt: str,
         username = st.session_state.get("username") or st.session_state.get("name")
         design_mode = st.session_state.get("design_mode")
         session_id = st.session_state.get("sid")
-        gpt_model = st.session_state.get("gpt_model")
-        temperature = st.session_state.get("temperature", 1.0)
+        claude_model = st.session_state.get("claude_model")
+        temperature = st.session_state.get("temperature", 0.0)
         max_tokens = st.session_state.get("max_tokens")
         use_rag = st.session_state.get("use_rag", False)
         chat_title = st.session_state.get("current_chat", "未設定")
         
         # デバッグログ
-        logger.info("🔍 Session state values — username=%s design_mode=%s gpt_model=%s", 
-                   username, design_mode, gpt_model)
+        logger.info("🔍 Session state values — username=%s design_mode=%s claude_model=%s", 
+                   username, design_mode, claude_model)
         
         user_info = {
             "username": username or "unknown",
             "design_mode": design_mode or "unknown",
             "session_id": session_id or "unknown",
-            "gpt_model": gpt_model or "unknown",
+            "claude_model": claude_model or "unknown",
             "temperature": temperature,
             "max_tokens": max_tokens,
             "use_rag": use_rag,
@@ -440,8 +484,8 @@ def post_log_async(input_text: str, output_text: str, prompt: str,
         except Exception as fallback_error:
             logger.error("❌ Fallback logging also failed — %s", fallback_error)
 
-# =====  基本設定（Azure OpenAI対応）  ============================================================
-client = setup_azure_openai()
+# =====  基本設定（AWS Bedrock対応）  ============================================================
+bedrock_client = setup_bedrock_client()
 
 # =====  ログインUIの表示  ============================================================
 authenticator.login()
@@ -790,14 +834,13 @@ if st.session_state["authentication_status"]:
         st.session_state.design_mode = list(DEFAULT_PROMPTS.keys())[0]
     if "prompts" not in st.session_state:
         st.session_state.prompts = DEFAULT_PROMPTS.copy()
-    if "gpt_model" not in st.session_state:
-        st.session_state.gpt_model = "gpt-4.1"
+    if "claude_model" not in st.session_state:
+        st.session_state.claude_model = "claude-4-sonnet"
     if "selected_equipment" not in st.session_state:
         st.session_state.selected_equipment = None
     if "selection_mode" not in st.session_state:
         st.session_state.selection_mode = "manual"
     
-    # --- どのブランチでも参照できるよう初期化 --------------------
     user_prompt: str | None = None
 
     # =====  ヘルパー  ============================================================
@@ -811,7 +854,6 @@ if st.session_state["authentication_status"]:
         st.session_state.chat_sids[title] = str(uuid.uuid4())
         st.session_state.current_chat = title
         st.session_state.sid = st.session_state.chat_sids[title]
-
         logger.info("➕ new_chat — sid=%s  title='%s'", st.session_state.sid, title)
         st.rerun()
 
@@ -820,7 +862,6 @@ if st.session_state["authentication_status"]:
             st.session_state.chat_sids[title] = str(uuid.uuid4())
         st.session_state.current_chat = title
         st.session_state.sid = st.session_state.chat_sids[title]
-
         logger.info("🔀 switch_chat — sid=%s  title='%s'", st.session_state.sid, title)
         st.rerun()
 
@@ -828,12 +869,14 @@ if st.session_state["authentication_status"]:
         if len(messages) >= 2:
             prompt = f"以下の会話の内容を25文字以内の簡潔なタイトルにしてください:\n{messages[0]['content'][:200]}"
             try:
-                resp = client.chat.completions.create(
-                    model=get_azure_model_name("gpt-4.1-nano"),  # Azure用に変換
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=30,
+                title_messages = [{"role": "user", "content": prompt}]
+                response = call_claude_bedrock(
+                    bedrock_client, 
+                    get_claude_model_name("claude-4-haiku"),
+                    title_messages,
+                    max_tokens=30
                 )
-                return resp.choices[0].message.content.strip('"').strip()
+                return response.strip('"').strip()
             except Exception as e:
                 logger.error(f"Chat title generation failed: {e}")
                 return f"Chat {len(st.session_state.chats) + 1}"
@@ -843,9 +886,7 @@ if st.session_state["authentication_status"]:
     def handle_save_prompt(mode_name, edited_text):
         st.session_state.prompts[mode_name] = edited_text
         st.session_state.edit_target = None
-
         logger.info("✏️ prompt_saved — mode=%s  len=%d", mode_name, len(edited_text))
-        
         st.success(f"「{mode_name}」のプロンプトを更新しました")
         time.sleep(1)
         st.rerun()
@@ -853,9 +894,7 @@ if st.session_state["authentication_status"]:
     def handle_reset_prompt(mode_name):
         if mode_name in DEFAULT_PROMPTS:
             st.session_state.prompts[mode_name] = DEFAULT_PROMPTS[mode_name]
-
             logger.info("🔄 prompt_reset — mode=%s", mode_name)
-
             st.success(f"「{mode_name}」のプロンプトをデフォルトに戻しました")
             time.sleep(1)
             st.rerun()
@@ -919,46 +958,47 @@ if st.session_state["authentication_status"]:
         st.divider()
 
         # ------- モデル選択 -------
-        st.markdown("### 🤖 GPTモデル選択")
+        st.markdown("### 🤖 Claudeモデル選択")
         model_options = {
-            "gpt-4.1": "GPT-4.1 (標準・最新世代)",
-            "gpt-4.1-mini": "GPT-4.1-mini (小・最新世代)",
-            "gpt-4.1-nano": "GPT-4.1-nano (超小型・高速)",
-            "gpt-4o": "GPT-4o (標準・高性能)",
-            "gpt-4o-mini": "GPT-4o-mini (小・軽量)"
+            "claude-4-sonnet": "Claude 4 Sonnet (最高性能・推奨)",
+            "claude-4-haiku": "Claude 4 Haiku (高速・軽量)",
+            "claude-3-sonnet": "Claude 3 Sonnet (高性能)",
+            "claude-3-haiku": "Claude 3 Haiku (高速)",
+            "claude-3-opus": "Claude 3 Opus (最高品質)"
         }
-        st.session_state.gpt_model = st.selectbox(
+        st.session_state.claude_model = st.selectbox(
             "使用するモデルを選択",
             options=list(model_options.keys()),
             format_func=lambda x: model_options[x],
-            index=list(model_options.keys()).index(st.session_state.gpt_model) if st.session_state.gpt_model in model_options else 0,
+            index=list(model_options.keys()).index(st.session_state.claude_model) if st.session_state.claude_model in model_options else 0,
         )
-        st.markdown(f"**🛈 現在のモデル:** `{model_options[st.session_state.gpt_model]}`")
+        st.markdown(f"**🛈 現在のモデル:** `{model_options[st.session_state.claude_model]}`")
 
         # ------- モデル詳細設定 -------
         with st.expander("🔧 詳細設定"):
             st.slider("応答の多様性",
                     min_value=0.0,
-                    max_value=2.0,
+                    max_value=1.0,
                     value=0.0,
                     step=0.1,
                     key="temperature",
-                    help="値が高いほど創造的、低いほど一貫した回答になります（OpenAIデフォルト: 1.0）")
+                    help="値が高いほど創造的、低いほど一貫した回答になります（Claudeデフォルト: 0.0）")
 
             max_tokens_options = {
                 "未設定（モデル上限）": None,
-                "500": 500,
                 "1000": 1000,
                 "2000": 2000,
                 "4000": 4000,
-                "8000": 8000
+                "8000": 8000,
+                "16000": 16000,
+                "32000": 32000
             }
             selected_max_tokens = st.selectbox(
                 "最大応答長",
                 options=list(max_tokens_options.keys()),
-                index=0,
+                index=2,
                 key="max_tokens_select",
-                help="生成される回答の最大トークン数（OpenAIデフォルト: モデル上限）"
+                help="生成される回答の最大トークン数（Claudeデフォルト: 4096）"
             )
             st.session_state["max_tokens"] = max_tokens_options[selected_max_tokens]
 
@@ -1280,110 +1320,9 @@ if st.session_state["authentication_status"]:
                             mime="text/plain",
                             key=f"download_{selected_equipment_for_view}_{file_name}"
                         )
-                
-                # 設備全体のダウンロード
-                st.markdown("##### 📦 設備全体のエクスポート")
-                
-                # 全ファイル結合テキスト
-                all_files_text = "\n\n" + "="*80 + "\n\n".join([
-                    f"設備名: {selected_equipment_for_view}\n"
-                    f"カテゴリ: {equipment_info['equipment_category']}\n"
-                    f"ファイル数: {equipment_info['total_files']}\n"
-                    f"総文字数: {equipment_info['total_chars']:,}\n"
-                    + "="*80 + "\n\n" +
-                    "\n\n".join(equipment_info['files'].values())
-                ])
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.download_button(
-                        label="📥 設備全体をダウンロード",
-                        data=all_files_text,
-                        file_name=f"{selected_equipment_for_view}_全ファイル.txt",
-                        mime="text/plain",
-                        key=f"download_all_{selected_equipment_for_view}"
-                    )
-                
-                with col2:
-                    # JSON形式でのエクスポート
-                    import json
-                    equipment_json = json.dumps(equipment_info, ensure_ascii=False, indent=2)
-                    st.download_button(
-                        label="📄 JSON形式でダウンロード",
-                        data=equipment_json,
-                        file_name=f"{selected_equipment_for_view}_metadata.json",
-                        mime="application/json",
-                        key=f"download_json_{selected_equipment_for_view}"
-                    )
-            
-            # 全設備一括ダウンロード
-            st.markdown("##### 🗂️ 全設備一括操作")
-            
-            if st.button("📊 全設備統計を表示", key="show_all_stats"):
-                st.markdown("#### 📊 全設備詳細統計")
-                
-                # 設備別統計テーブル
-                stats_data = []
-                for eq_name, eq_data in equipment_data.items():
-                    stats_data.append({
-                        "設備名": eq_name,
-                        "カテゴリ": eq_data['equipment_category'],
-                        "ファイル数": eq_data['total_files'],
-                        "ページ数": eq_data['total_pages'],
-                        "文字数": eq_data['total_chars']
-                    })
-                
-                df = pd.DataFrame(stats_data)
-                st.dataframe(df, use_container_width=True)
-                
-                # カテゴリ別統計
-                category_stats = df.groupby('カテゴリ').agg({
-                    '設備名': 'count',
-                    'ファイル数': 'sum',
-                    'ページ数': 'sum',
-                    '文字数': 'sum'
-                }).rename(columns={'設備名': '設備数'})
-                
-                st.markdown("#### 📈 カテゴリ別統計")
-                st.dataframe(category_stats, use_container_width=True)
-            
-            # 資料再読み込み機能
-            if st.button("🔄 資料を再読み込み", key="reload_documents"):
-                with st.spinner("資料を再読み込み中..."):
-                    try:
-                        # 設備データを再初期化
-                        from src.startup_loader import initialize_equipment_data
-                        res = initialize_equipment_data(input_dir="rag_data")
-                        
-                        st.session_state.equipment_data = res["equipment_data"]
-                        st.session_state.equipment_list = res["equipment_list"]
-                        st.session_state.category_list = res["category_list"]
-                        st.session_state.rag_files = res["file_list"]
-                        
-                        st.success("✅ 資料の再読み込みが完了しました")
-                        st.rerun()
-                        
-                    except Exception as e:
-                        st.error(f"❌ 資料の再読み込みに失敗しました: {e}")
         
         else:
             st.error("❌ 設備データが読み込まれていません")
-            if st.button("🚀 設備データを初期化", key="init_equipment_data"):
-                with st.spinner("設備データを初期化中..."):
-                    try:
-                        from src.startup_loader import initialize_equipment_data
-                        res = initialize_equipment_data(input_dir="rag_data")
-                        
-                        st.session_state.equipment_data = res["equipment_data"]
-                        st.session_state.equipment_list = res["equipment_list"]
-                        st.session_state.category_list = res["category_list"]
-                        st.session_state.rag_files = res["file_list"]
-                        
-                        st.success("✅ 設備データの初期化が完了しました")
-                        st.rerun()
-                        
-                    except Exception as e:
-                        st.error(f"❌ 設備データの初期化に失敗しました: {e}")
 
     # =====  プロンプト編集画面  =================================================
     if st.session_state.edit_target:
@@ -1415,9 +1354,9 @@ if st.session_state["authentication_status"]:
 
     # =====  メイン画面表示  ==========================================================
     else:
-        st.title("💬 GPT + 設備資料チャットボット")
+        st.title("💬 Claude + 設備資料チャットボット")
         st.subheader(f"🗣️ {st.session_state.current_chat}")
-        st.markdown(f"**モデル:** {st.session_state.gpt_model} | **モード:** {st.session_state.design_mode}")
+        st.markdown(f"**モデル:** {st.session_state.claude_model} | **モード:** {st.session_state.design_mode}")
 
         # -- メッセージ表示 --
         st.markdown('<div class="chat-body">', unsafe_allow_html=True)
@@ -1448,7 +1387,7 @@ if st.session_state["authentication_status"]:
         # -- 入力欄 --
         user_prompt = st.chat_input("メッセージを入力…")
 
-    # =====  応答生成  ============================================================
+    # =====  応答生成（AWS Bedrock版）  ============================================================
     if user_prompt and not st.session_state.edit_target:
         # メッセージリストに現在の質問を追加
         msgs = get_messages()
@@ -1459,13 +1398,13 @@ if st.session_state["authentication_status"]:
             st.markdown(f'<div class="user-message">{user_prompt}</div>', unsafe_allow_html=True)
 
         # シンプルなステータス表示
-        with st.status(f"🤖 {st.session_state.gpt_model} で回答を生成中...", expanded=True) as status:
+        with st.status(f"🤖 {st.session_state.claude_model} で回答を生成中...", expanded=True) as status:
             # プロンプト取得
             prompt = st.session_state.prompts[st.session_state.design_mode]
 
             logger.info("💬 gen_start — mode=%s model=%s sid=%s",
                 st.session_state.design_mode,
-                st.session_state.gpt_model,
+                st.session_state.claude_model,
                 st.session_state.sid)
 
             try:
@@ -1509,7 +1448,7 @@ if st.session_state["authentication_status"]:
                             "equipment_data": st.session_state.equipment_data,
                             "target_equipment": target_equipment,
                             "selected_files": selected_files,
-                            "model": st.session_state.gpt_model,
+                            "model": st.session_state.claude_model,
                             "chat_history": msgs,
                         }
                         
@@ -1535,9 +1474,6 @@ if st.session_state["authentication_status"]:
                 # === 🔥 新機能: 設備なしモードの処理 ===
                 if not target_equipment:
                     st.info("💭 設備資料なしでの一般的な回答を生成します")
-                    
-                    # Azure OpenAI クライアントを作成
-                    client = setup_azure_openai()
                     
                     # API呼び出しパラメータを準備
                     messages = []
@@ -1566,23 +1502,21 @@ if st.session_state["authentication_status"]:
                     messages.append(user_msg)
                     
                     # API呼び出しパラメータ
-                    params = {
-                        "model": get_azure_model_name(st.session_state.gpt_model),
-                        "messages": messages,
-                    }
-                    
-                    if st.session_state.get("temperature") != 0.0:
-                        params["temperature"] = st.session_state.temperature
-                    if st.session_state.get("max_tokens") is not None:
-                        params["max_tokens"] = st.session_state.max_tokens
+                    max_tokens = st.session_state.get("max_tokens", 4096)
+                    temperature = st.session_state.get("temperature", 0.0)
                     
                     # API呼び出し
                     import time
                     t_api = time.perf_counter()
-                    resp = client.chat.completions.create(**params)
+                    assistant_reply = call_claude_bedrock(
+                        bedrock_client,
+                        get_claude_model_name(st.session_state.claude_model),
+                        messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature
+                    )
                     api_elapsed = time.perf_counter() - t_api
                     
-                    assistant_reply = resp.choices[0].message.content
                     used_equipment = "なし（一般知識による回答）"
                     used_files = []
                     
@@ -1599,9 +1533,9 @@ if st.session_state["authentication_status"]:
                 # モデル情報と使用設備・ファイルを応答に追加
                 if used_files:
                     file_info = f"（{len(used_files)}ファイル使用）"
-                    model_info = f"\n\n---\n*このレスポンスは `{st.session_state.gpt_model}` と設備「{used_equipment}」{file_info}で生成されました*"
+                    model_info = f"\n\n---\n*このレスポンスは `{st.session_state.claude_model}` と設備「{used_equipment}」{file_info}で生成されました*"
                 else:
-                    model_info = f"\n\n---\n*このレスポンスは `{st.session_state.gpt_model}` で生成されました（設備資料なし）*"
+                    model_info = f"\n\n---\n*このレスポンスは `{st.session_state.claude_model}` で生成されました（設備資料なし）*"
                 
                 full_reply = assistant_reply + model_info
                 st.markdown(full_reply)

@@ -1,9 +1,9 @@
-# src/rag_qa.py - シンプル版（設備全文投入方式）
+# src/rag_qa.py - AWS Bedrock Claude版
 
 from __future__ import annotations
 from typing import List, Dict, Any, Optional
-from openai import AzureOpenAI
-from base64 import b64encode
+import boto3
+import json
 import os
 
 try:
@@ -13,47 +13,90 @@ except ImportError:
     STREAMLIT_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
-# Azure OpenAI設定
+# AWS Bedrock設定
 # ---------------------------------------------------------------------------
-def create_azure_openai_client():
-    """Azure OpenAI クライアントを作成"""
+def create_bedrock_client():
+    """AWS Bedrock クライアントを作成"""
     if STREAMLIT_AVAILABLE:
         try:
-            azure_endpoint = st.secrets.get("AZURE_OPENAI_ENDPOINT", os.getenv("AZURE_OPENAI_ENDPOINT"))
-            azure_key = st.secrets.get("AZURE_OPENAI_KEY", os.getenv("AZURE_OPENAI_KEY"))
+            aws_access_key_id = st.secrets.get("AWS_ACCESS_KEY_ID", os.getenv("AWS_ACCESS_KEY_ID"))
+            aws_secret_access_key = st.secrets.get("AWS_SECRET_ACCESS_KEY", os.getenv("AWS_SECRET_ACCESS_KEY"))
+            aws_region = st.secrets.get("AWS_REGION", os.getenv("AWS_REGION", "us-east-1"))
         except:
-            azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-            azure_key = os.getenv("AZURE_OPENAI_KEY")
+            aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
+            aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+            aws_region = os.getenv("AWS_REGION", "us-east-1")
     else:
-        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-        azure_key = os.getenv("AZURE_OPENAI_KEY")
+        aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
+        aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+        aws_region = os.getenv("AWS_REGION", "us-east-1")
     
-    if not azure_endpoint or not azure_key:
-        raise ValueError("Azure OpenAI の設定が不足しています。環境変数を確認してください。")
+    if not aws_access_key_id or not aws_secret_access_key:
+        raise ValueError("AWS Bedrock の設定が不足しています。環境変数を確認してください。")
     
-    return AzureOpenAI(
-        api_version="2025-04-01-preview",
-        azure_endpoint=azure_endpoint,
-        api_key=azure_key
+    return boto3.client(
+        'bedrock-runtime',
+        aws_access_key_id=aws_access_key_id,
+        aws_secret_access_key=aws_secret_access_key,
+        region_name=aws_region
     )
 
-# Azure用のモデル名マッピング
-AZURE_MODEL_MAPPING = {
-    "gpt-4.1": "gpt-4.1",
-    "gpt-4.1-mini": "gpt-4.1-mini", 
-    "gpt-4.1-nano": "gpt-4.1-nano",
-    "gpt-4o": "gpt-4o",
-    "gpt-4o-mini": "gpt-4o-mini"
+# Claude用のモデル名マッピング
+CLAUDE_MODEL_MAPPING = {
+    "claude-4-sonnet": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+    "claude-4-haiku": "anthropic.claude-3-5-haiku-20241022-v1:0", 
+    "claude-3-sonnet": "anthropic.claude-3-sonnet-20240229-v1:0",
+    "claude-3-haiku": "anthropic.claude-3-haiku-20240307-v1:0",
+    "claude-3-opus": "anthropic.claude-3-opus-20240229-v1:0"
 }
 
-def get_azure_model_name(model_name: str) -> str:
-    """OpenAIモデル名をAzureデプロイメント名に変換"""
-    return AZURE_MODEL_MAPPING.get(model_name, model_name)
+def get_claude_model_name(model_name: str) -> str:
+    """Claude表示名をBedrockモデルIDに変換"""
+    return CLAUDE_MODEL_MAPPING.get(model_name, model_name)
+
+def call_claude_bedrock(client, model_id: str, messages: List[Dict], max_tokens: int = 4096, temperature: float = 0.0):
+    """AWS Bedrock Converse API経由でClaudeを呼び出し"""
+    
+    # メッセージ形式をConverse APIに合わせて変換
+    system_prompts = []
+    conversation_messages = []
+    
+    for msg in messages:
+        if msg["role"] == "system":
+            system_prompts.append({"text": msg["content"]})
+        else:
+            conversation_messages.append({
+                "role": msg["role"],
+                "content": [{"text": msg["content"]}]
+            })
+    
+    # Converse API用のパラメータを構築
+    converse_params = {
+        "modelId": model_id,
+        "messages": conversation_messages,
+        "inferenceConfig": {
+            "maxTokens": max_tokens,
+            "temperature": temperature
+        }
+    }
+    
+    # システムプロンプトがある場合は追加
+    if system_prompts:
+        converse_params["system"] = system_prompts
+    
+    # Converse API呼び出し
+    response = client.converse(**converse_params)
+    
+    # レスポンスを解析
+    if response.get('stopReason') == 'error':
+        raise Exception(f"Claude API Error: {response.get('output', {}).get('message', 'Unknown error')}")
+    
+    return response['output']['message']['content'][0]['text']
 
 # ---------------------------------------------------------------------------
 # 設定
 # ---------------------------------------------------------------------------
-_DEFAULT_MODEL = "gpt-4o-mini"
+_DEFAULT_MODEL = "claude-4-sonnet"
 
 # ---------------------------------------------------------------------------
 # 回答生成（設備全文投入版）
@@ -65,14 +108,14 @@ def generate_answer_with_equipment(
         question: str,
         equipment_data: Dict[str, Dict[str, Any]],
         target_equipment: str,
-        selected_files: Optional[List[str]] = None,  # 🔥 新規追加
+        selected_files: Optional[List[str]] = None,
         model: str = _DEFAULT_MODEL,
         chat_history: Optional[List[Dict[str, str]]] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
     """
-    指定された設備の選択ファイルをプロンプトに投入して回答を生成
+    指定された設備の選択ファイルをプロンプトに投入してClaudeで回答を生成
     
     Args:
         prompt: システムプロンプト
@@ -88,8 +131,8 @@ def generate_answer_with_equipment(
     Returns:
         回答結果辞書
     """
-    # Azure OpenAI クライアントを作成
-    client = create_azure_openai_client()
+    # AWS Bedrock クライアントを作成
+    client = create_bedrock_client()
 
     # --- 1) 指定設備のデータを取得 ---
     if target_equipment not in equipment_data:
@@ -173,21 +216,20 @@ def generate_answer_with_equipment(
         messages = [system_msg, user_msg]
     
     # --- 4) API呼び出しパラメータを構築 ---
-    params = {
-        "model": get_azure_model_name(model),
-        "messages": messages,
-    }
+    api_max_tokens = max_tokens if max_tokens is not None else 4096
+    api_temperature = temperature if temperature is not None else 0.0
     
-    if temperature is not None:
-        params["temperature"] = temperature
-    if max_tokens is not None:
-        params["max_tokens"] = max_tokens
-    
-    # --- 5) Azure OpenAI 呼び出し ---
+    # --- 5) AWS Bedrock 呼び出し ---
     try:
-        print(f"🤖 API呼び出し開始 - モデル: {get_azure_model_name(model)}")
-        resp = client.chat.completions.create(**params)
-        answer = resp.choices[0].message.content
+        model_id = get_claude_model_name(model)
+        print(f"🤖 API呼び出し開始 - モデル: {model_id}")
+        answer = call_claude_bedrock(
+            client,
+            model_id, 
+            messages,
+            max_tokens=api_max_tokens,
+            temperature=api_temperature
+        )
         print(f"✅ 回答生成完了 - 回答文字数: {len(answer)}")
         
     except Exception as e:
