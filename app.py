@@ -1566,6 +1566,7 @@ if st.session_state["authentication_status"]:
             except Exception as e:
                 logger.warning("⚠️ Chat title generation failed (non-critical): %s", e)
 
+            time.sleep(2) 
             st.rerun()
 
 elif st.session_state["authentication_status"] is False:
