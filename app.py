@@ -85,7 +85,7 @@ def call_claude_bedrock(client, model_id: str, messages: List[Dict], temperature
         "modelId": model_id,
         "messages": conversation_messages,
         "inferenceConfig": {
-            "maxTokens": 200000  # Claude 4の最大トークン数
+            "maxTokens": 65536  # Claude 4の最大トークン数
         }
     }
     
