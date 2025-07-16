@@ -51,8 +51,8 @@ def get_claude_model_name(model_name: str) -> str:
     """Claude表示名をBedrockモデルIDに変換"""
     return CLAUDE_MODEL_MAPPING.get(model_name, model_name)
 
-def call_claude_bedrock(client, model_id: str, messages: List[Dict], max_tokens: int = 4096, temperature: float = 0.0):
-    """AWS Bedrock Converse API経由でClaudeを呼び出し"""
+def call_claude_bedrock(client, model_id: str, messages: List[Dict], temperature: float = None):
+    """AWS Bedrock Converse API経由でClaudeを呼び出し（max_tokensはモデル上限）"""
     
     # メッセージ形式をConverse APIに合わせて変換
     system_prompts = []
@@ -67,15 +67,16 @@ def call_claude_bedrock(client, model_id: str, messages: List[Dict], max_tokens:
                 "content": [{"text": msg["content"]}]
             })
     
-    # Converse API用のパラメータを構築
+    # Converse API用のパラメータを構築（max_tokensは指定しない＝モデル上限）
     converse_params = {
         "modelId": model_id,
         "messages": conversation_messages,
-        "inferenceConfig": {
-            "maxTokens": max_tokens,
-            "temperature": temperature
-        }
+        "inferenceConfig": {}
     }
+    
+    # temperatureが指定されている場合のみ設定
+    if temperature is not None and temperature != 0.0:
+        converse_params["inferenceConfig"]["temperature"] = temperature
     
     # システムプロンプトがある場合は追加
     if system_prompts:
@@ -83,10 +84,6 @@ def call_claude_bedrock(client, model_id: str, messages: List[Dict], max_tokens:
     
     # Converse API呼び出し
     response = client.converse(**converse_params)
-    
-    # レスポンスを解析
-    if response.get('stopReason') == 'error':
-        raise Exception(f"Claude API Error: {response.get('output', {}).get('message', 'Unknown error')}")
     
     return response['output']['message']['content'][0]['text']
 
@@ -109,7 +106,6 @@ def generate_answer_with_equipment(
         model: str = _DEFAULT_MODEL,
         chat_history: Optional[List[Dict[str, str]]] = None,
         temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
     """
     指定された設備の選択ファイルをプロンプトに投入してClaudeで回答を生成
@@ -212,10 +208,6 @@ def generate_answer_with_equipment(
     else:
         messages = [system_msg, user_msg]
     
-    # --- 4) API呼び出しパラメータを構築 ---
-    api_max_tokens = max_tokens if max_tokens is not None else 4096
-    api_temperature = temperature if temperature is not None else 0.0
-    
     # --- 5) AWS Bedrock 呼び出し ---
     try:
         model_id = get_claude_model_name(model)
@@ -224,8 +216,7 @@ def generate_answer_with_equipment(
             client,
             model_id, 
             messages,
-            max_tokens=api_max_tokens,
-            temperature=api_temperature
+            temperature=temperature if temperature != 0.0 else None
         )
         print(f"✅ 回答生成完了 - 回答文字数: {len(answer)}")
         
