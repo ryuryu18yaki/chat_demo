@@ -2,7 +2,7 @@
 from streamlit import secrets
 from pathlib import Path
 
-from src.rag_preprocess import preprocess_files, apply_fixes_to_equipment_data
+from src.rag_preprocess import preprocess_files, apply_text_replacements_from_fixmap
 from src.equipment_classifier import extract_equipment_from_filename, get_equipment_category
 from src.gdrive_simple import download_files_from_drive, download_fix_files_from_drive
 from src.logging_utils import init_logger
@@ -73,7 +73,7 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
             fixes_files = download_fix_files_from_drive(fixes_folder_id)
             logger.info(f"✅ 補正ファイル取得完了: {len(fixes_files)} 件")
             # 👇 補正適用処理をここで呼び出し
-            equipment_data = apply_fixes_to_equipment_data(equipment_data, fixes_files)
+            equipment_data = apply_text_replacements_from_fixmap(equipment_data, fixes_files)
     except Exception as fix_err:
         logger.warning(f"⚠️ 補正ファイル取得に失敗: {fix_err}")
 
