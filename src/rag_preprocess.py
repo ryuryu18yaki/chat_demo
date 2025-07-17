@@ -197,18 +197,18 @@ def apply_text_replacements_from_fixmap(
 
                 normalized_target = normalize_filename(fix["replacement_file"])
 
-                # 🔍 fixes_files 内で正規化されたファイル名を検索
-                replacement_file = next(
-                    (v for k, v in fixes_files.items() if normalize_filename(k) == normalized_target),
+                # 🔍 fixes_files 内で正規化されたファイル名を検索して取得
+                replacement_filename = next(
+                    (k for k in fixes_files.keys() if normalize_filename(k) == normalized_target),
                     None
                 )
-                if not replacement_file:
+                if not replacement_filename:
                     logger.warning(f"⚠️ replacement_file が見つかりません: {fix['replacement_file']}")
                     continue
 
                 try:
                     replacement_content = ""
-                    raw_data = fixes_files[replacement_file]
+                    raw_data = fixes_files[replacement_filename]
 
                     if fix_type == "txt":
                         replacement_content = raw_data.decode("utf-8")
