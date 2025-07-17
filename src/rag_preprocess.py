@@ -148,6 +148,10 @@ def extract_images_from_pdf(pdf_bytes: bytes) -> List[Dict[str, Any]]:
 
 import json
 import yaml
+import unicodedata
+
+def normalize_filename(name: str) -> str:
+    return unicodedata.normalize("NFC", name)
 
 def apply_text_replacements_from_fixmap(
     equipment_data: dict,
@@ -191,8 +195,15 @@ def apply_text_replacements_from_fixmap(
                 replacement_file = fix["replacement_file"]
                 fix_type = fix["type"]
 
-                if replacement_file not in fixes_files:
-                    logger.info(f"⚠️ replacement_file が見つかりません: {replacement_file}")
+                normalized_target = normalize_filename(fix["replacement_file"])
+
+                # 🔍 fixes_files 内で正規化されたファイル名を検索
+                replacement_file = next(
+                    (v for k, v in fixes_files.items() if normalize_filename(k) == normalized_target),
+                    None
+                )
+                if not replacement_file:
+                    logger.warning(f"⚠️ replacement_file が見つかりません: {fix['replacement_file']}")
                     continue
 
                 try:
