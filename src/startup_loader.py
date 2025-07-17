@@ -68,11 +68,11 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
     try:  # 念のため再確認（Streamlit Cloud用）
         fixes_folder_id = secrets.get("FIXES_FOLDER_ID")
         if fixes_folder_id:
-            print(f"\n📦 fixes フォルダから補正ファイル取得中...（ID: {fixes_folder_id}）")
+            logger.info(f"\n📦 fixes フォルダから補正ファイル取得中...（ID: {fixes_folder_id}）")
             fixes_files = download_fix_files_from_drive(fixes_folder_id)
-            print(f"✅ 補正ファイル取得完了: {len(fixes_files)} 件")
+            logger.info(f"✅ 補正ファイル取得完了: {len(fixes_files)} 件")
     except Exception as fix_err:
-        print(f"⚠️ 補正ファイル取得に失敗: {fix_err}")
+        logger.info(f"⚠️ 補正ファイル取得に失敗: {fix_err}")
 
     # 設備一覧とカテゴリ一覧を生成
     equipment_list = list(equipment_data.keys())
