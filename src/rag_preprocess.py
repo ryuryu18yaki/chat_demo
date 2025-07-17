@@ -10,6 +10,8 @@ from pdfminer.high_level import extract_text  # type: ignore
 from pdfminer.layout import LAParams         # type: ignore
 from pypdf import PdfReader
 from PIL import Image
+from src.logging_utils import init_logger
+logger = init_logger()
 
 __all__ = [
     "extract_text_from_pdf",
@@ -143,6 +145,94 @@ def extract_images_from_pdf(pdf_bytes: bytes) -> List[Dict[str, Any]]:
                 }
             )
     return images
+
+import json
+import yaml
+
+def apply_text_replacements_from_fixmap(
+    equipment_data: dict,
+    fixes_files: dict[str, bytes],
+    target_filename: str = "防災設備ハンドブック_能美防災株式会社_商品本部_2024年7月_ocr済み.pdf"
+) -> dict:
+    """
+    fixes_map.json に従って、equipment_data のテキストを修正する。
+    特定のファイル名（target_filename）のみに適用。
+
+    Args:
+        equipment_data (dict): preprocess_files() の出力
+        fixes_files (dict): download_fix_files_from_drive() の出力
+        target_filename (str): 補正対象とするファイル名（例: "能見防災.pdf"）
+
+    Returns:
+        dict: 修正後の equipment_data
+    """
+    if "fixes_map.json" not in fixes_files:
+        logger.info("⚠️ fixes_map.json が見つかりません。修正をスキップします。")
+        return equipment_data
+
+    logger.info(f"🔧 fixes_map.json を読み込み中...")
+    try:
+        fixmap = json.loads(fixes_files["fixes_map.json"].decode("utf-8"))
+    except Exception as e:
+        logger.info(f"❌ fixes_map.json の読み込みに失敗しました: {e}")
+        return equipment_data
+
+    for equipment_name, eq_data in equipment_data.items():
+        for filename, original_text in eq_data["files"].items():
+            if filename != target_filename:
+                continue  # 対象ファイル名以外はスキップ
+
+            logger.info(f"\n📄 修正対象: {equipment_name} / {filename}")
+            modified_text = original_text
+
+            for fix in fixmap:
+                start_line = fix["start_line"]
+                end_line = fix["end_line"]
+                replacement_file = fix["replacement_file"]
+                fix_type = fix["type"]
+
+                if replacement_file not in fixes_files:
+                    logger.info(f"⚠️ replacement_file が見つかりません: {replacement_file}")
+                    continue
+
+                try:
+                    replacement_content = ""
+                    raw_data = fixes_files[replacement_file]
+
+                    if fix_type == "txt":
+                        replacement_content = raw_data.decode("utf-8")
+                    elif fix_type == "json":
+                        replacement_content = json.dumps(json.loads(raw_data), ensure_ascii=False, indent=2)
+                    elif fix_type == "yaml":
+                        replacement_content = yaml.safe_dump(yaml.safe_load(raw_data), allow_unicode=True)
+                    elif fix_type == "png":
+                        replacement_content = f"[画像参照: {replacement_file}]"
+                    else:
+                        print(f"⚠️ 未対応の type: {fix_type}")
+                        continue
+
+                    # 指定された範囲を置換
+                    start_idx = modified_text.find(start_line)
+                    end_idx = modified_text.find(end_line, start_idx)
+
+                    if start_idx == -1 or end_idx == -1:
+                        logger.info(f"⚠️ 指定された行が見つかりません: '{start_line}' ～ '{end_line}'")
+                        continue
+
+                    end_idx += len(end_line)
+                    before = modified_text[start_idx:end_idx]
+                    modified_text = modified_text[:start_idx] + replacement_content + modified_text[end_idx:]
+
+                    logger.info(f"✅ 置換完了: '{start_line}' ～ '{end_line}' → {replacement_file}")
+
+                except Exception as e:
+                    logger.info(f"❌ 修正失敗: {replacement_file} - {e}")
+
+            # 修正後のテキストを保存
+            equipment_data[equipment_name]["files"][filename] = modified_text
+
+    print(f"\n🎯 テキスト補正完了")
+    return equipment_data
 
 # ---------------------------------------------------------------------------
 # 5) メイン: ファイル→チャンク辞書リスト（大幅修正）
