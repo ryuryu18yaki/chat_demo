@@ -1,10 +1,10 @@
 # src/startup_loader.py (シンプル版 - ChromaDB不使用)
-
+from streamlit import secrets
 from pathlib import Path
+
 from src.rag_preprocess import preprocess_files
 from src.equipment_classifier import extract_equipment_from_filename, get_equipment_category
-from src.gdrive_simple import download_files_from_drive
-
+from src.gdrive_simple import download_files_from_drive, download_fix_files_from_drive
 from src.logging_utils import init_logger
 logger = init_logger()
 
@@ -60,8 +60,20 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
             print(f"📄 読み込み: {f.name} → 設備: {equipment_name} (カテゴリ: {equipment_category})")
 
     # 設備ごとに全文結合処理（既存処理と同じ）
-    print(f"\n🔄 設備ごと全文結合処理開始...")
+    logger.info(f"\n🔄 設備ごと全文結合処理開始...")
     equipment_data = preprocess_files(file_dicts)
+
+    # ✅ fixes フォルダから補正ファイルを取得（任意）
+    logger.info(f"\n🔄 fixフォルダの探索開始")
+    fixes_files = []
+    try:  # 念のため再確認（Streamlit Cloud用）
+        fixes_folder_id = secrets.get("FIXES_DRIVE_FOLDER_ID")
+        if fixes_folder_id:
+            logger.info(f"\n📦 fixes フォルダから補正ファイル取得中...（ID: {fixes_folder_id}）")
+            fixes_files = download_fix_files_from_drive(fixes_folder_id)
+            logger.info(f"✅ 補正ファイル取得完了: {len(fixes_files)} 件")
+    except Exception as fix_err:
+        logger.warning(f"⚠️ 補正ファイル取得に失敗: {fix_err}")
 
     # 設備一覧とカテゴリ一覧を生成
     equipment_list = list(equipment_data.keys())
@@ -82,7 +94,8 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
         "equipment_data": equipment_data,
         "file_list": file_dicts,
         "equipment_list": sorted(equipment_list),
-        "category_list": sorted(category_list)
+        "category_list": sorted(category_list),
+        "fixes_files": fixes_files  # ← 追加！
     }
 
 def _create_empty_result() -> dict:
