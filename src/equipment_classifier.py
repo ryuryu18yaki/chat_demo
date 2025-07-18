@@ -38,7 +38,8 @@ def extract_equipment_from_filename(filename: str) -> Optional[str]:
             r"防災設備.*設置基準",
             r"防災設備.*ハンドブック",
             r"消防法.*防災設備",
-            r"設置基準.*警報"
+            r"設置基準.*警報",
+            r"暗黙知メモ_自動火災報知設備"
         ],
         
         # 非常放送設備
@@ -47,7 +48,8 @@ def extract_equipment_from_filename(filename: str) -> Optional[str]:
             r"TOA 非常用・業務用放送設備システム",
             r"UNI-PEX 非常放送設備",
             r"スピーカ",
-            r"放送設備"
+            r"放送設備",
+            r"暗黙知メモ_非常放送設備"
         ],
         
         # 誘導灯設備
@@ -55,7 +57,8 @@ def extract_equipment_from_filename(filename: str) -> Optional[str]:
             r"Panasonic誘導灯4P(区分～免除～設置基準～設置)",
             r"東京消防庁 誘導灯及び誘導標識",
             r"誘導灯",
-            r"避難誘導"
+            r"避難誘導",
+            r"暗黙知メモ_誘導灯"
         ],
         
         # 非常照明設備  
@@ -72,7 +75,8 @@ def extract_equipment_from_filename(filename: str) -> Optional[str]:
             r"アイリスオーヤマ",
             r"非常照明",
             r"非常用照明",
-            r"照明設計"
+            r"照明設計",
+            r"暗黙知メモ_非常照明設備"
         ]
     }
     
