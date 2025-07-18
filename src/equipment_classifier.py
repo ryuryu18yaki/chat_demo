@@ -54,8 +54,7 @@ def extract_equipment_from_filename(filename: str) -> Optional[str]:
         
         # 誘導灯設備
         "誘導灯設備": [
-            r"Panasonic誘導灯4P(区分～免除～設置基準～設置)",
-            r"東京消防庁 誘導灯及び誘導標識",
+            r"三菱電機 三菱照明総合カタログ",
             r"誘導灯",
             r"避難誘導",
             r"暗黙知メモ_誘導灯"
@@ -63,7 +62,7 @@ def extract_equipment_from_filename(filename: str) -> Optional[str]:
         
         # 非常照明設備  
         "非常照明設備": [
-            r"岩崎電気株式会社 ライティング講座（照明講座）",
+            r"Panasonic 施設・屋外・店舗照明総合カタログ 2025",
             r"アイリスオーヤマ 非常灯（非常用照明器具）の設置基準",
             r"設置基準について.*非常灯.*LED非常用照明器具.*施設用照明.*アイリスオーヤマ",
             r"非常用照明器具",
