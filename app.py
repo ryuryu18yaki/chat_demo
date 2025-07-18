@@ -64,6 +64,9 @@ def get_claude_model_name(model_name: str) -> str:
     """Claude表示名をBedrockモデルIDに変換"""
     return CLAUDE_MODEL_MAPPING.get(model_name, model_name)
 
+def normalize_filename(filename: str) -> str:
+    return filename.strip().lower().replace(" ", "").replace("（", "(").replace("）", ")")
+
 def call_claude_bedrock(client, model_id: str, messages: List[Dict], max_tokens: int = 4096, temperature: float = 0.0):
     """AWS Bedrock Converse API経由でClaudeを呼び出し"""
     
@@ -1247,7 +1250,7 @@ if st.session_state["authentication_status"]:
                 
                 for file_name in equipment_info['sources']:
                     # 「暗黙知メモ」は表示から除外
-                    if file_name in ["暗黙知メモ.pdf", "暗黙知メモ_自動火災報知設備.pdf", "暗黙知メモ_非常放送設備.pdf", "暗黙知メモ_誘導灯.pdf", "暗黙知メモ_非常照明設備.pdf"]:
+                    if "暗黙知メモ" in normalize_filename(file_name):
                         continue
                         
                     file_text = equipment_info['files'][file_name]
