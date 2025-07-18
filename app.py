@@ -1303,7 +1303,7 @@ if st.session_state["authentication_status"]:
                 
                 for file_name in equipment_info['sources']:
                     # 「暗黙知メモ」は表示から除外
-                    if "メモ" in file_name:
+                    if "自動火災報知設備" in file_name:
                         continue
                         
                     file_text = equipment_info['files'][file_name]
