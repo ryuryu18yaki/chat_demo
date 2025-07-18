@@ -190,56 +190,63 @@ def apply_text_replacements_from_fixmap(
             modified_text = original_text
 
             for fix in fixmap:
-                start_line = fix["start_line"]
-                end_line = fix["end_line"]
+                start_line = fix["start_line"].strip()
+                end_line = fix["end_line"].strip()
                 replacement_file = fix["replacement_file"]
                 fix_type = fix["type"]
+                description = fix.get("description", "").strip()
 
-                normalized_target = normalize_filename(fix["replacement_file"])
+                normalized_target = normalize_filename(replacement_file)
 
                 # 🔍 fixes_files 内で正規化されたファイル名を検索して取得
                 replacement_filename = next(
                     (k for k in fixes_files.keys() if normalize_filename(k) == normalized_target),
                     None
                 )
-                if not replacement_filename:
-                    logger.warning(f"⚠️ replacement_file が見つかりません: {fix['replacement_file']}")
-                    continue
 
+                # 🔧 replacement_content の生成
                 try:
-                    replacement_content = ""
-                    raw_data = fixes_files[replacement_filename]
-
-                    if fix_type == "txt":
-                        replacement_content = raw_data.decode("utf-8")
-                    elif fix_type == "json":
-                        replacement_content = json.dumps(json.loads(raw_data), ensure_ascii=False, indent=2)
-                    elif fix_type == "yaml":
-                        replacement_content = yaml.safe_dump(yaml.safe_load(raw_data), allow_unicode=True)
-                    elif fix_type == "png":
-                        replacement_content = f"[画像参照: {replacement_file}]"
+                    if fix_type == "png":
+                        # 🔸 画像ファイルが見つからなくても description だけ出力
+                        replacement_content = f"[画像参照: {replacement_file}]\n{description}"
                     else:
-                        print(f"⚠️ 未対応の type: {fix_type}")
-                        continue
+                        if not replacement_filename:
+                            logger.warning(f"⚠️ replacement_file が見つかりません: {replacement_file}")
+                            continue
 
-                    # 指定された範囲を置換
-                    start_idx = modified_text.find(start_line)
-                    end_idx = modified_text.find(end_line, start_idx)
+                        raw_data = fixes_files[replacement_filename]
+
+                        if fix_type == "txt":
+                            replacement_content = f"{description}\n{raw_data.decode('utf-8')}"
+                        elif fix_type == "json":
+                            json_content = json.dumps(json.loads(raw_data), ensure_ascii=False, indent=2)
+                            replacement_content = f"{description}\n{json_content}"
+                        elif fix_type == "yaml":
+                            yaml_content = yaml.safe_dump(yaml.safe_load(raw_data), allow_unicode=True)
+                            replacement_content = f"{description}\n{yaml_content}"
+                        else:
+                            logger.warning(f"⚠️ 未対応の type: {fix_type}")
+                            continue
+
+                    # 📌 完全一致で行番号を取得
+                    lines = modified_text.splitlines()
+                    start_idx = next((i for i, line in enumerate(lines) if line.strip() == start_line), -1)
+                    end_idx = next((i for i, line in enumerate(lines[start_idx + 1:], start=start_idx + 1)
+                                    if line.strip() == end_line), -1)
 
                     if start_idx == -1 or end_idx == -1:
-                        logger.info(f"⚠️ 指定された行が見つかりません: '{start_line}' ～ '{end_line}'")
+                        logger.info(f"⚠️ 指定された行が見つかりません（完全一致）: '{start_line}' ～ '{end_line}'")
                         continue
 
-                    end_idx += len(end_line)
-                    before = modified_text[start_idx:end_idx]
-                    modified_text = modified_text[:start_idx] + replacement_content + modified_text[end_idx:]
+                    # ✨ 置換
+                    lines = lines[:start_idx] + [replacement_content] + lines[end_idx + 1:]
+                    modified_text = "\n".join(lines)
 
                     logger.info(f"✅ 置換完了: '{start_line}' ～ '{end_line}' → {replacement_file}")
 
                 except Exception as e:
                     logger.info(f"❌ 修正失敗: {replacement_file} - {e}")
 
-            # 修正後のテキストを保存
             equipment_data[equipment_name]["files"][filename] = modified_text
 
     print(f"\n🎯 テキスト補正完了")
