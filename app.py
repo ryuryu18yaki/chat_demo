@@ -1246,8 +1246,8 @@ if st.session_state["authentication_status"]:
                 st.markdown("##### 📄 ファイル一覧")
                 
                 for file_name in equipment_info['sources']:
-                    # 「参考ファイル」は表示から除外
-                    if "暗黙知メモ" in file_name:
+                    # 「暗黙知メモ」は表示から除外
+                    if file_name in ["暗黙知メモ.pdf", "暗黙知メモ_自動火災報知設備.pdf", "暗黙知メモ_非常放送設備.pdf", "暗黙知メモ_誘導灯.pdf", "暗黙知メモ_非常照明設備.pdf"]:
                         continue
                         
                     file_text = equipment_info['files'][file_name]
