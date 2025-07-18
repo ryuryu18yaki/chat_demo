@@ -202,22 +202,25 @@ def apply_text_replacements_from_fixmap(
                     (k for k in fixes_files.keys() if normalize_filename(k) == normalized_target),
                     None
                 )
-                if not replacement_filename:
-                    logger.warning(f"⚠️ replacement_file が見つかりません: {fix['replacement_file']}")
-                    continue
+                # if not replacement_filename:
+                #     logger.warning(f"⚠️ replacement_file が見つかりません: {fix['replacement_file']}")
+                #     continue
 
                 try:
+                    description = fix.get("description", "").strip()
                     replacement_content = ""
                     raw_data = fixes_files[replacement_filename]
 
                     if fix_type == "txt":
                         replacement_content = raw_data.decode("utf-8")
                     elif fix_type == "json":
-                        replacement_content = json.dumps(json.loads(raw_data), ensure_ascii=False, indent=2)
+                        json_content = json.dumps(json.loads(raw_data), ensure_ascii=False, indent=2)
+                        replacement_content = f"{description}\n{json_content}"
                     elif fix_type == "yaml":
-                        replacement_content = yaml.safe_dump(yaml.safe_load(raw_data), allow_unicode=True)
+                        yaml_content = yaml.safe_dump(yaml.safe_load(raw_data), allow_unicode=True)
+                        replacement_content = f"{description}\n{yaml_content}"
                     elif fix_type == "png":
-                        replacement_content = f"[画像参照: {replacement_file}]"
+                        replacement_content = f"{description}"
                     else:
                         print(f"⚠️ 未対応の type: {fix_type}")
                         continue
