@@ -12,6 +12,12 @@ try:
 except ImportError:
     STREAMLIT_AVAILABLE = False
 
+try:
+    from openai import AzureOpenAI
+    AZURE_OPENAI_AVAILABLE = True
+except ImportError:
+    AZURE_OPENAI_AVAILABLE = False
+
 # ---------------------------------------------------------------------------
 # AWS Bedrock設定
 # ---------------------------------------------------------------------------
@@ -41,10 +47,43 @@ def create_bedrock_client():
         region_name=aws_region
     )
 
+def create_azure_client():
+    """Azure OpenAI クライアントを作成"""
+    if not AZURE_OPENAI_AVAILABLE:
+        raise ValueError("Azure OpenAI ライブラリがインストールされていません。pip install openai を実行してください。")
+    
+    if STREAMLIT_AVAILABLE:
+        try:
+            azure_endpoint = st.secrets.get("AZURE_OPENAI_ENDPOINT", os.getenv("AZURE_OPENAI_ENDPOINT"))
+            azure_api_key = st.secrets.get("AZURE_OPENAI_API_KEY", os.getenv("AZURE_OPENAI_API_KEY"))
+            azure_api_version = st.secrets.get("AZURE_OPENAI_API_VERSION", os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview"))
+        except:
+            azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+            azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+            azure_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
+    else:
+        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        azure_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
+    
+    if not azure_endpoint or not azure_api_key:
+        raise ValueError("Azure OpenAI の設定が不足しています。環境変数を確認してください。")
+    
+    return AzureOpenAI(
+        azure_endpoint=azure_endpoint,
+        api_key=azure_api_key,
+        api_version=azure_api_version
+    )
+
 # Claude用のモデル名マッピング
 CLAUDE_MODEL_MAPPING = {
     "claude-4-sonnet": "apac.anthropic.claude-sonnet-4-20250514-v1:0",
     "claude-3.7": "apac.anthropic.claude-3-7-sonnet-20250219-v1:0"
+}
+# Azure OpenAI用のモデル名マッピング（デプロイメント名）
+AZURE_MODEL_MAPPING = {
+    "gpt-4.1": "gpt-4.1",
+    "gpt-4.1-tiny": "gpt-4.1-tiny"
 }
 
 def get_claude_model_name(model_name: str) -> str:
@@ -88,6 +127,29 @@ def call_claude_bedrock(client, model_id: str, messages: List[Dict], temperature
     response = client.converse(**converse_params)
     
     return response['output']['message']['content'][0]['text']
+
+def call_azure_gpt(client, model_name: str, messages: List[Dict], temperature: float = None):
+    """Azure OpenAI経由でGPTを呼び出し"""
+    formatted_messages = []
+    
+    for msg in messages:
+        if msg["role"] in ["system", "user", "assistant"]:
+            formatted_messages.append({
+                "role": msg["role"],
+                "content": msg["content"]
+            })
+    
+    api_params = {
+        "model": AZURE_MODEL_MAPPING.get(model_name, model_name),
+        "messages": formatted_messages,
+        "max_tokens": 65536  # GPTの最大トークン数
+    }
+    
+    if temperature is not None and temperature != 0.0:
+        api_params["temperature"] = temperature
+    
+    response = client.chat.completions.create(**api_params)
+    return response.choices[0].message.content
 
 # ---------------------------------------------------------------------------
 # 設定
@@ -210,16 +272,30 @@ def generate_answer_with_equipment(
     else:
         messages = [system_msg, user_msg]
     
-    # --- 5) AWS Bedrock 呼び出し ---
+    # --- 5) AI モデル呼び出し ---
     try:
-        model_id = get_claude_model_name(model)
-        print(f"🤖 API呼び出し開始 - モデル: {model_id}")
-        answer = call_claude_bedrock(
-            client,
-            model_id, 
-            messages,
-            temperature=temperature if temperature != 0.0 else None
-        )
+        print(f"🤖 API呼び出し開始 - モデル: {model}")
+        
+        if model.startswith("gpt"):
+            # Azure OpenAI GPT
+            azure_client = create_azure_client()
+            answer = call_azure_gpt(
+                azure_client,
+                model,
+                messages,
+                temperature=temperature
+            )
+        else:
+            # AWS Bedrock Claude
+            bedrock_client = create_bedrock_client()
+            model_id = get_claude_model_name(model)
+            answer = call_claude_bedrock(
+                bedrock_client,
+                model_id, 
+                messages,
+                temperature=temperature if temperature != 0.0 else None
+            )
+        
         print(f"✅ 回答生成完了 - 回答文字数: {len(answer)}")
         
     except Exception as e:

@@ -25,6 +25,13 @@ import atexit
 import copy
 import base64
 
+# Azure OpenAI関連のインポートを追加
+try:
+    from openai import AzureOpenAI
+    AZURE_OPENAI_AVAILABLE = True
+except ImportError:
+    AZURE_OPENAI_AVAILABLE = False
+
 
 st.set_page_config(page_title="Claude + RAG Chatbot", page_icon="💬", layout="wide")
 
@@ -54,10 +61,42 @@ def setup_bedrock_client():
         region_name=aws_region
     )
 
+# Azure OpenAI設定を追加
+def setup_azure_client():
+    """Azure OpenAI設定"""
+    if not AZURE_OPENAI_AVAILABLE:
+        st.error("Azure OpenAI ライブラリがインストールされていません。pip install openai を実行してください。")
+        st.stop()
+    
+    try:
+        azure_endpoint = st.secrets.get("AZURE_OPENAI_ENDPOINT", os.getenv("AZURE_OPENAI_ENDPOINT"))
+        azure_api_key = st.secrets.get("AZURE_OPENAI_API_KEY", os.getenv("AZURE_OPENAI_API_KEY"))
+        azure_api_version = st.secrets.get("AZURE_OPENAI_API_VERSION", os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview"))
+    except:
+        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        azure_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
+    
+    if not azure_endpoint or not azure_api_key:
+        st.error("Azure OpenAI の設定が不足しています。環境変数またはSecrets.tomlを確認してください。")
+        st.stop()
+    
+    return AzureOpenAI(
+        azure_endpoint=azure_endpoint,
+        api_key=azure_api_key,
+        api_version=azure_api_version
+    )
+
 # Claude用のモデル名マッピング
 CLAUDE_MODEL_MAPPING = {
     "claude-4-sonnet": "apac.anthropic.claude-sonnet-4-20250514-v1:0",
     "claude-3.7": "apac.anthropic.claude-3-7-sonnet-20250219-v1:0"
+}
+
+# Azure OpenAI用のモデル名マッピングを追加
+AZURE_MODEL_MAPPING = {
+    "gpt-4.1": "gpt-4.1",
+    "gpt-4o": "gpt-4o"
 }
 
 def get_claude_model_name(model_name: str) -> str:
@@ -105,6 +144,26 @@ def call_claude_bedrock(client, model_id: str, messages: List[Dict], max_tokens:
         raise Exception(f"Claude API Error: {response.get('output', {}).get('message', 'Unknown error')}")
     
     return response['output']['message']['content'][0]['text']
+
+def call_azure_gpt(client, model_name: str, messages: List[Dict], max_tokens: int = 4096, temperature: float = 0.0):
+    """Azure OpenAI経由でGPTを呼び出し"""
+    formatted_messages = []
+    
+    for msg in messages:
+        if msg["role"] in ["system", "user", "assistant"]:
+            formatted_messages.append({
+                "role": msg["role"],
+                "content": msg["content"]
+            })
+    
+    response = client.chat.completions.create(
+        model=AZURE_MODEL_MAPPING.get(model_name, model_name),
+        messages=formatted_messages,
+        max_tokens=max_tokens,
+        temperature=temperature
+    )
+    
+    return response.choices[0].message.content
 
 # =====  認証設定の読み込み ============================================================
 with open('./config.yaml') as file:
@@ -1011,10 +1070,12 @@ if st.session_state["authentication_status"]:
         st.divider()
 
         # ------- モデル選択 -------
-        st.markdown("### 🤖 Claudeモデル選択")
+        st.markdown("### 🤖 モデル選択")
         model_options = {
             "claude-4-sonnet": "Claude 4 Sonnet (最高性能・推奨)",
-            "claude-3.7": "Claude 3.7 Sonnet (高性能)"
+            "claude-3.7": "Claude 3.7 Sonnet (高性能)",
+            "gpt-4.1": "GPT-4.1 (最新・高性能)",
+            "gpt-4o": "GPT-4o(高性能)"
         }
         st.session_state.claude_model = st.selectbox(
             "使用するモデルを選択",
@@ -1521,7 +1582,7 @@ if st.session_state["authentication_status"]:
                         logger.info("💬 設備全文投入完了 — equipment=%s  files=%d  api_elapsed=%.2fs  回答文字数=%d",
                                     used_equipment, len(used_files), api_elapsed, len(assistant_reply))
 
-                # === 🔥 新機能: 設備なしモードの処理 ===
+                # 設備なしモードの処理
                 if not target_equipment:
                     st.info("💭 設備資料なしでの一般的な回答を生成します")
                     
@@ -1555,16 +1616,30 @@ if st.session_state["authentication_status"]:
                     max_tokens = st.session_state.get("max_tokens", 4096)
                     temperature = st.session_state.get("temperature", 0.0)
                     
-                    # API呼び出し
+                    # モデルに応じてAPI呼び出し
                     import time
                     t_api = time.perf_counter()
-                    assistant_reply = call_claude_bedrock(
-                        bedrock_client,
-                        get_claude_model_name(st.session_state.claude_model),
-                        messages,
-                        max_tokens=max_tokens,
-                        temperature=temperature
-                    )
+                    
+                    if st.session_state.claude_model.startswith("gpt"):
+                        # Azure OpenAI GPT
+                        azure_client = setup_azure_client()
+                        assistant_reply = call_azure_gpt(
+                            azure_client,
+                            st.session_state.claude_model,
+                            messages,
+                            max_tokens=max_tokens,
+                            temperature=temperature
+                        )
+                    else:
+                        # AWS Bedrock Claude
+                        assistant_reply = call_claude_bedrock(
+                            bedrock_client,
+                            get_claude_model_name(st.session_state.claude_model),
+                            messages,
+                            max_tokens=max_tokens,
+                            temperature=temperature
+                        )
+                    
                     api_elapsed = time.perf_counter() - t_api
                     
                     used_equipment = "なし（一般知識による回答）"
