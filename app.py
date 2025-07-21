@@ -1613,7 +1613,7 @@ if st.session_state["authentication_status"]:
                     messages.append(user_msg)
                     
                     # API呼び出しパラメータ
-                    max_tokens = st.session_state.get("max_tokens", 4096)
+                    max_tokens = st.session_state.get("max_tokens") or 4096
                     temperature = st.session_state.get("temperature", 0.0)
                     
                     # モデルに応じてAPI呼び出し

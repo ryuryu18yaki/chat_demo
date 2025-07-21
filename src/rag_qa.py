@@ -1,4 +1,4 @@
-# src/rag_qa.py - AWS Bedrock Claude版
+# src/rag_qa.py - AWS Bedrock Claude + Azure OpenAI GPT版
 
 from __future__ import annotations
 from typing import List, Dict, Any, Optional
@@ -12,6 +12,7 @@ try:
 except ImportError:
     STREAMLIT_AVAILABLE = False
 
+# Azure OpenAI関連のインポートを追加
 try:
     from openai import AzureOpenAI
     AZURE_OPENAI_AVAILABLE = True
@@ -47,6 +48,9 @@ def create_bedrock_client():
         region_name=aws_region
     )
 
+# ---------------------------------------------------------------------------
+# Azure OpenAI設定
+# ---------------------------------------------------------------------------
 def create_azure_client():
     """Azure OpenAI クライアントを作成"""
     if not AZURE_OPENAI_AVAILABLE:
@@ -75,23 +79,28 @@ def create_azure_client():
         api_version=azure_api_version
     )
 
+# ---------------------------------------------------------------------------
+# モデル管理
+# ---------------------------------------------------------------------------
+
 # Claude用のモデル名マッピング
 CLAUDE_MODEL_MAPPING = {
     "claude-4-sonnet": "apac.anthropic.claude-sonnet-4-20250514-v1:0",
     "claude-3.7": "apac.anthropic.claude-3-7-sonnet-20250219-v1:0"
 }
-# Azure OpenAI用のモデル名マッピング（デプロイメント名）
+
+# Azure OpenAI用のモデル名マッピングを追加
 AZURE_MODEL_MAPPING = {
     "gpt-4.1": "gpt-4.1",
-    "gpt-4.1-tiny": "gpt-4.1-tiny"
+    "gpt-4o": "gpt-4o"
 }
 
 def get_claude_model_name(model_name: str) -> str:
     """Claude表示名をBedrockモデルIDに変換"""
     return CLAUDE_MODEL_MAPPING.get(model_name, model_name)
 
-def call_claude_bedrock(client, model_id: str, messages: List[Dict], temperature: float = None):
-    """AWS Bedrock Converse API経由でClaudeを呼び出し（max_tokensはモデル上限）"""
+def call_claude_bedrock(client, model_id: str, messages: List[Dict], max_tokens: int = None, temperature: float = None):
+    """AWS Bedrock Converse API経由でClaudeを呼び出し"""
     
     # メッセージ形式をConverse APIに合わせて変換
     system_prompts = []
@@ -106,12 +115,12 @@ def call_claude_bedrock(client, model_id: str, messages: List[Dict], temperature
                 "content": [{"text": msg["content"]}]
             })
     
-    # Converse API用のパラメータを構築（max_tokensは指定しない＝モデル上限）
+    # Converse API用のパラメータを構築
     converse_params = {
         "modelId": model_id,
         "messages": conversation_messages,
         "inferenceConfig": {
-            "maxTokens": 65536  # Claude 4の最大トークン数
+            "maxTokens": max_tokens or 4096  # max_tokensが指定されていればそれを使用、なければ4096
         }
     }
     
@@ -128,7 +137,7 @@ def call_claude_bedrock(client, model_id: str, messages: List[Dict], temperature
     
     return response['output']['message']['content'][0]['text']
 
-def call_azure_gpt(client, model_name: str, messages: List[Dict], temperature: float = None):
+def call_azure_gpt(client, model_name: str, messages: List[Dict], max_tokens: int = None, temperature: float = None):
     """Azure OpenAI経由でGPTを呼び出し"""
     formatted_messages = []
     
@@ -142,7 +151,7 @@ def call_azure_gpt(client, model_name: str, messages: List[Dict], temperature: f
     api_params = {
         "model": AZURE_MODEL_MAPPING.get(model_name, model_name),
         "messages": formatted_messages,
-        "max_tokens": 65536  # GPTの最大トークン数
+        "max_tokens": max_tokens or 4096  # Noneの場合は4096をデフォルトに
     }
     
     if temperature is not None and temperature != 0.0:
@@ -170,9 +179,10 @@ def generate_answer_with_equipment(
         model: str = _DEFAULT_MODEL,
         chat_history: Optional[List[Dict[str, str]]] = None,
         temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
     """
-    指定された設備の選択ファイルをプロンプトに投入してClaudeで回答を生成
+    指定された設備の選択ファイルをプロンプトに投入してAIで回答を生成
     
     Args:
         prompt: システムプロンプト
@@ -188,9 +198,7 @@ def generate_answer_with_equipment(
     Returns:
         回答結果辞書
     """
-    # AWS Bedrock クライアントを作成
-    client = create_bedrock_client()
-
+    
     # --- 1) 指定設備のデータを取得 ---
     if target_equipment not in equipment_data:
         available_equipment = list(equipment_data.keys())
@@ -272,7 +280,7 @@ def generate_answer_with_equipment(
     else:
         messages = [system_msg, user_msg]
     
-    # --- 5) AI モデル呼び出し ---
+    # --- 4) AI モデル呼び出し ---
     try:
         print(f"🤖 API呼び出し開始 - モデル: {model}")
         
@@ -283,6 +291,7 @@ def generate_answer_with_equipment(
                 azure_client,
                 model,
                 messages,
+                max_tokens=max_tokens,
                 temperature=temperature
             )
         else:
@@ -293,6 +302,7 @@ def generate_answer_with_equipment(
                 bedrock_client,
                 model_id, 
                 messages,
+                max_tokens=max_tokens,
                 temperature=temperature if temperature != 0.0 else None
             )
         
