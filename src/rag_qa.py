@@ -1,4 +1,4 @@
-# src/rag_qa.py - AWS Bedrock Claude版
+# src/rag_qa.py - AWS Bedrock Claude + Azure OpenAI GPT版
 
 from __future__ import annotations
 from typing import List, Dict, Any, Optional
@@ -11,6 +11,13 @@ try:
     STREAMLIT_AVAILABLE = True
 except ImportError:
     STREAMLIT_AVAILABLE = False
+
+# Azure OpenAI関連のインポートを追加
+try:
+    from openai import AzureOpenAI
+    AZURE_OPENAI_AVAILABLE = True
+except ImportError:
+    AZURE_OPENAI_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # AWS Bedrock設定
@@ -41,18 +48,59 @@ def create_bedrock_client():
         region_name=aws_region
     )
 
+# ---------------------------------------------------------------------------
+# Azure OpenAI設定
+# ---------------------------------------------------------------------------
+def create_azure_client():
+    """Azure OpenAI クライアントを作成"""
+    if not AZURE_OPENAI_AVAILABLE:
+        raise ValueError("Azure OpenAI ライブラリがインストールされていません。pip install openai を実行してください。")
+    
+    if STREAMLIT_AVAILABLE:
+        try:
+            azure_endpoint = st.secrets.get("AZURE_OPENAI_ENDPOINT", os.getenv("AZURE_OPENAI_ENDPOINT"))
+            azure_api_key = st.secrets.get("AZURE_OPENAI_API_KEY", os.getenv("AZURE_OPENAI_API_KEY"))
+            azure_api_version = st.secrets.get("AZURE_OPENAI_API_VERSION", os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview"))
+        except:
+            azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+            azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+            azure_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
+    else:
+        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        azure_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
+    
+    if not azure_endpoint or not azure_api_key:
+        raise ValueError("Azure OpenAI の設定が不足しています。環境変数を確認してください。")
+    
+    return AzureOpenAI(
+        azure_endpoint=azure_endpoint,
+        api_key=azure_api_key,
+        api_version=azure_api_version
+    )
+
+# ---------------------------------------------------------------------------
+# モデル管理
+# ---------------------------------------------------------------------------
+
 # Claude用のモデル名マッピング
 CLAUDE_MODEL_MAPPING = {
     "claude-4-sonnet": "apac.anthropic.claude-sonnet-4-20250514-v1:0",
     "claude-3.7": "apac.anthropic.claude-3-7-sonnet-20250219-v1:0"
 }
 
+# Azure OpenAI用のモデル名マッピングを追加
+AZURE_MODEL_MAPPING = {
+    "gpt-4.1": "gpt-4.1",
+    "gpt-4o": "gpt-4o"
+}
+
 def get_claude_model_name(model_name: str) -> str:
     """Claude表示名をBedrockモデルIDに変換"""
     return CLAUDE_MODEL_MAPPING.get(model_name, model_name)
 
-def call_claude_bedrock(client, model_id: str, messages: List[Dict], temperature: float = None):
-    """AWS Bedrock Converse API経由でClaudeを呼び出し（max_tokensはモデル上限）"""
+def call_claude_bedrock(client, model_id: str, messages: List[Dict], max_tokens: int = None, temperature: float = None):
+    """AWS Bedrock Converse API経由でClaudeを呼び出し"""
     
     # メッセージ形式をConverse APIに合わせて変換
     system_prompts = []
@@ -67,12 +115,12 @@ def call_claude_bedrock(client, model_id: str, messages: List[Dict], temperature
                 "content": [{"text": msg["content"]}]
             })
     
-    # Converse API用のパラメータを構築（max_tokensは指定しない＝モデル上限）
+    # Converse API用のパラメータを構築
     converse_params = {
         "modelId": model_id,
         "messages": conversation_messages,
         "inferenceConfig": {
-            "maxTokens": 65536  # Claude 4の最大トークン数
+            "maxTokens": max_tokens or 4096  # max_tokensが指定されていればそれを使用、なければ4096
         }
     }
     
@@ -88,6 +136,29 @@ def call_claude_bedrock(client, model_id: str, messages: List[Dict], temperature
     response = client.converse(**converse_params)
     
     return response['output']['message']['content'][0]['text']
+
+def call_azure_gpt(client, model_name: str, messages: List[Dict], max_tokens: int = None, temperature: float = None):
+    """Azure OpenAI経由でGPTを呼び出し"""
+    formatted_messages = []
+    
+    for msg in messages:
+        if msg["role"] in ["system", "user", "assistant"]:
+            formatted_messages.append({
+                "role": msg["role"],
+                "content": msg["content"]
+            })
+    
+    api_params = {
+        "model": AZURE_MODEL_MAPPING.get(model_name, model_name),
+        "messages": formatted_messages,
+        "max_tokens": max_tokens or 4096  # Noneの場合は4096をデフォルトに
+    }
+    
+    if temperature is not None and temperature != 0.0:
+        api_params["temperature"] = temperature
+    
+    response = client.chat.completions.create(**api_params)
+    return response.choices[0].message.content
 
 # ---------------------------------------------------------------------------
 # 設定
@@ -108,9 +179,10 @@ def generate_answer_with_equipment(
         model: str = _DEFAULT_MODEL,
         chat_history: Optional[List[Dict[str, str]]] = None,
         temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
     """
-    指定された設備の選択ファイルをプロンプトに投入してClaudeで回答を生成
+    指定された設備の選択ファイルをプロンプトに投入してAIで回答を生成
     
     Args:
         prompt: システムプロンプト
@@ -126,9 +198,7 @@ def generate_answer_with_equipment(
     Returns:
         回答結果辞書
     """
-    # AWS Bedrock クライアントを作成
-    client = create_bedrock_client()
-
+    
     # --- 1) 指定設備のデータを取得 ---
     if target_equipment not in equipment_data:
         available_equipment = list(equipment_data.keys())
@@ -210,16 +280,32 @@ def generate_answer_with_equipment(
     else:
         messages = [system_msg, user_msg]
     
-    # --- 5) AWS Bedrock 呼び出し ---
+    # --- 4) AI モデル呼び出し ---
     try:
-        model_id = get_claude_model_name(model)
-        print(f"🤖 API呼び出し開始 - モデル: {model_id}")
-        answer = call_claude_bedrock(
-            client,
-            model_id, 
-            messages,
-            temperature=temperature if temperature != 0.0 else None
-        )
+        print(f"🤖 API呼び出し開始 - モデル: {model}")
+        
+        if model.startswith("gpt"):
+            # Azure OpenAI GPT
+            azure_client = create_azure_client()
+            answer = call_azure_gpt(
+                azure_client,
+                model,
+                messages,
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+        else:
+            # AWS Bedrock Claude
+            bedrock_client = create_bedrock_client()
+            model_id = get_claude_model_name(model)
+            answer = call_claude_bedrock(
+                bedrock_client,
+                model_id, 
+                messages,
+                max_tokens=max_tokens,
+                temperature=temperature if temperature != 0.0 else None
+            )
+        
         print(f"✅ 回答生成完了 - 回答文字数: {len(answer)}")
         
     except Exception as e:
