@@ -78,8 +78,10 @@ def download_files_from_drive(folder_id: str) -> List[Dict[str, Any]]:
             
             # 三菱地所が含まれる場合は名前を変更
             display_name = file_name
-            if "三菱地所" in file_name:
-                display_name = "暗黙知メモ.pdf"
+            if "170301_新ビル設計ガイドライン 電気細則(秘)_OCR処理済み" in file_name:
+                display_name = "新暗黙知メモ.pdf"
+            elif "001-取扱い注意_改修工事図面作成要領(案)H11年3月三菱地所㈱リニューアル建築部_OCR済み" in file_name:
+                display_name = "旧暗黙知メモ.pdf"
             
             file_dicts.append({
                 "name": display_name,
