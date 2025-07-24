@@ -345,7 +345,7 @@ def preprocess_files(
                             formatted_page = f"\n--- ページ {page_num} ---\n{page_text}"
                         else:
                             # ページ番号を含めない場合はそのまま
-                            formatted_page = ""
+                            formatted_page = f"\n{page_text}" 
                         page_texts.append(formatted_page)
                         file_pages += 1
                 
