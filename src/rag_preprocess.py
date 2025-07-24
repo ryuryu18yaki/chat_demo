@@ -10,6 +10,7 @@ from pdfminer.high_level import extract_text  # type: ignore
 from pdfminer.layout import LAParams         # type: ignore
 from pypdf import PdfReader
 from PIL import Image
+import re
 from src.logging_utils import init_logger
 logger = init_logger()
 
@@ -56,6 +57,105 @@ def extract_text_from_pdf_by_pages(data: bytes) -> List[Dict[str, Any]]:
                     "page": page_num
                 })
     return pages_text
+
+def should_include_page_numbers(filename: str) -> bool:
+    """
+    ファイル名に基づいてページ番号を含めるかどうかを決定
+    必要に応じてロジックをカスタマイズしてください
+    """
+    # 例：特定のキーワードを含むファイルはページ番号なし
+    no_page_keywords = ["暗黙知メモ"]
+    filename_lower = filename.lower()
+    
+    for keyword in no_page_keywords:
+        if keyword in filename_lower:
+            return False
+    
+    # デフォルトはページ番号あり
+    return True
+
+def is_numeric_string(text):
+    """より包括的な数字判定"""
+    try:
+        int(text)  # intに変換できるかテスト
+        return True
+    except ValueError:
+        return False
+
+def remove_page_numbers_from_text(text: str, page_num: int) -> str:
+    """
+    最終行が数字のみの場合は削除
+    """
+    if not text.strip():
+        return text
+    
+    lines = text.split('\n')
+    if not lines:
+        return text
+    
+    print(f"    📄 ページ {page_num} の処理開始")
+    
+    # 後ろから順番に空でない行を探す
+    for i in range(min(3, len(lines))):
+        line_index = -(i + 1)  # -1, -2, -3
+        
+        if abs(line_index) > len(lines):
+            break
+            
+        original_line = lines[line_index]
+        
+        # 空行チェック
+        if not original_line.strip():
+            print(f"    ⏭️  行 {line_index}: 空行のためスキップ")
+            continue
+        
+        print(f"    🔍 行 {line_index} (元): '{original_line}'")
+        
+        # 正規化処理
+        normalized_line = normalize_line(original_line)
+        print(f"    🔧 正規化後: '{normalized_line}'")
+        
+        # 数字のみかどうかをチェック
+        if is_numeric_string(normalized_line):
+            print(f"    ✅ 数字のみの行として削除: '{normalized_line}'")
+            
+            # 該当行を削除
+            lines.pop(line_index)
+            
+            # 削除後の空行も除去
+            while lines and not lines[-1].strip():
+                lines.pop()
+            
+            return '\n'.join(lines)
+        else:
+            print(f"    ❌ 数字のみではない: '{normalized_line}'")
+            # 最初の非空行が数字でなければ終了
+            break
+    
+    print(f"    ⚠️  数字行が見つかりませんでした")
+    return text
+
+def normalize_line(line: str) -> str:
+    """
+    行の正規化：全角→半角、全スペース・ハイフン削除
+    """
+    # 全角数字を半角数字に変換
+    normalized = line.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+    
+    # 全角英字を半角英字に変換
+    normalized = normalized.translate(str.maketrans("ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ", 
+                                               "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"))
+    
+    # 全角ハイフンを半角ハイフンに変換
+    normalized = normalized.translate(str.maketrans("－−‐", "---"))
+    
+    # 全角スペースを半角スペースに変換
+    normalized = normalized.replace('　', ' ')
+    
+    # 全てのスペース（空白文字）とハイフンを削除
+    normalized = re.sub(r'[\s-]', '', normalized)
+    
+    return normalized
 
 # ---------------------------------------------------------------------------
 # 2) チャンク化ユーティリティ（修正版）
@@ -297,6 +397,7 @@ def preprocess_files(
         # ファイルごとのテキスト抽出
         file_text = ""
         file_pages = 0
+        include_pages = should_include_page_numbers(name)
         
         # テキストファイルの処理
         if mime == "text/plain" or name.lower().endswith(".txt"):
@@ -324,7 +425,13 @@ def preprocess_files(
                     
                     if page_text:  # 空ページをスキップ
                         # ページ情報を含めてテキストを整形
-                        formatted_page = f"\n--- ページ {page_num} ---\n{page_text}"
+                        if include_pages:
+                            # ページ情報を含める場合（元のテキストをそのまま使用）
+                            formatted_page = f"\n--- ページ {page_num} ---\n{page_text}"
+                        else:
+                            # ページ番号を含めない場合（ここでページ番号削除を実行）
+                            cleaned_text = remove_page_numbers_from_text(page_text, page_num)
+                            formatted_page = f"\n{cleaned_text}"
                         page_texts.append(formatted_page)
                         file_pages += 1
                 

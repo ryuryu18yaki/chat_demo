@@ -78,8 +78,10 @@ def download_files_from_drive(folder_id: str) -> List[Dict[str, Any]]:
             
             # 三菱地所が含まれる場合は名前を変更
             display_name = file_name
-            if "三菱地所" in file_name:
-                display_name = "暗黙知メモ.pdf"
+            if "170301" in file_name:
+                display_name = "新暗黙知メモ.pdf"
+            elif "001-取扱い注意_改修工事図面作成要領(案)H11年3月三菱地所㈱リニューアル建築部_OCR済み" in file_name:
+                display_name = "旧暗黙知メモ.pdf"
             
             file_dicts.append({
                 "name": display_name,
@@ -136,7 +138,7 @@ def download_fix_files_from_drive(fixes_folder_id: str) -> Dict[str, bytes]:
             file_name = file_info["name"]
             file_id = file_info["id"]
 
-            if not file_name.lower().endswith((".json", ".txt", ".yaml", ".yml")):
+            if not file_name.lower().endswith((".json", ".txt", ".yaml", ".yml", ".png")):
                 logger.debug("📁 スキップ（対象外）: %s", file_name)
                 continue
 

@@ -248,6 +248,8 @@ def generate_answer_with_equipment(
 【参考資料】設備: {target_equipment} (カテゴリ: {equipment_info['equipment_category']})
 使用ファイル: {', '.join(sources)}
 使用ファイル数: {len(sources)}/{len(all_sources)}
+【注意事項】
+**暗黙知メモに関して、ページ番号などの情報は出力を禁止します。**
 
 【資料内容】
 {combined_text}
