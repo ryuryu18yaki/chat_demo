@@ -10,6 +10,7 @@ from pdfminer.high_level import extract_text  # type: ignore
 from pdfminer.layout import LAParams         # type: ignore
 from pypdf import PdfReader
 from PIL import Image
+import re
 from src.logging_utils import init_logger
 logger = init_logger()
 
@@ -72,6 +73,48 @@ def should_include_page_numbers(filename: str) -> bool:
     
     # デフォルトはページ番号あり
     return True
+
+def remove_page_numbers_from_text(text: str, page_num: int) -> str:
+    """
+    テキストの最終行からページ番号を自動削除
+    """
+    if not text.strip():
+        return text
+    
+    lines = text.split('\n')
+    if not lines:
+        return text
+    
+    last_line = lines[-1].strip()
+    
+    # ページ番号のパターンを定義
+    page_patterns = [
+        rf'^{page_num}$',                    # 単純な数字（例: "1", "2"）
+        rf'^-\s*{page_num}\s*-$',           # ハイフン付き（例: "- 1 -", "-2-"）
+        rf'^Page\s+{page_num}$',            # Page付き（例: "Page 1"）
+        rf'^p\.\s*{page_num}$',             # p.付き（例: "p. 1", "p.2"）
+        rf'^{page_num}\s*/\s*\d+$',         # 分数形式（例: "1 / 10", "2/15"）
+        rf'^{page_num}\s*頁$',              # 日本語（例: "1頁", "2 頁"）
+        rf'^第\s*{page_num}\s*頁$',         # 日本語（例: "第1頁", "第 2 頁"）
+        rf'^\[\s*{page_num}\s*\]$',         # 角括弧（例: "[1]", "[ 2 ]"）
+        rf'^\(\s*{page_num}\s*\)$',         # 丸括弧（例: "(1)", "( 2 )"）
+        rf'^{page_num}\s*$',                # 数字＋空白
+        rf'^\s*{page_num}\s*$',             # 前後空白付き数字
+    ]
+    
+    # 最終行がページ番号パターンに一致するかチェック
+    for pattern in page_patterns:
+        if re.match(pattern, last_line, re.IGNORECASE):
+            # ページ番号行を除去
+            lines = lines[:-1]
+            print(f"    🔍 ページ番号削除: '{last_line}' → ページ {page_num}")
+            break
+    
+    # ページ番号削除後の空行も除去
+    while lines and not lines[-1].strip():
+        lines = lines[:-1]
+    
+    return '\n'.join(lines)
 
 # ---------------------------------------------------------------------------
 # 2) チャンク化ユーティリティ（修正版）
@@ -342,10 +385,12 @@ def preprocess_files(
                     if page_text:  # 空ページをスキップ
                         # ページ情報を含めてテキストを整形
                         if include_pages:
+                            # ページ情報を含める場合（元のテキストをそのまま使用）
                             formatted_page = f"\n--- ページ {page_num} ---\n{page_text}"
                         else:
-                            # ページ番号を含めない場合はそのまま
-                            formatted_page = f"\n{page_text}" 
+                            # ページ番号を含めない場合（ここでページ番号削除を実行）
+                            cleaned_text = remove_page_numbers_from_text(page_text, page_num)
+                            formatted_page = f"\n{cleaned_text}"
                         page_texts.append(formatted_page)
                         file_pages += 1
                 
