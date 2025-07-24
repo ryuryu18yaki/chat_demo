@@ -45,29 +45,17 @@ def extract_text_from_txt(data: bytes, encoding: str | None = None) -> str:
     return data.decode(encoding)
 
 # 🔥 修正版: ページ別テキスト抽出
-def extract_text_from_pdf_by_pages(data: bytes, remove_page_nums: bool = False) -> List[Dict[str, Any]]:
-    """PDFからページ別にテキストを抽出（ページ番号削除オプション付き）"""
+def extract_text_from_pdf_by_pages(data: bytes) -> List[Dict[str, Any]]:
+    """PDFからページ別にテキストを抽出"""
     pages_text = []
-    
     with pdfplumber.open(BytesIO(data)) as pdf:
         for page_num, page in enumerate(pdf.pages, start=1):
             page_text = page.extract_text() or ""
-            
             if page_text.strip():  # 空ページをスキップ
-                # ページ番号削除が有効な場合、ここで処理
-                if remove_page_nums:
-                    print(f"    🔍 ページ {page_num} の番号削除処理")
-                    print(f"    📄 削除前最終行: '{page_text.split(chr(10))[-1].strip()}'")
-                    
-                    page_text = remove_page_numbers_from_text(page_text, page_num)
-                    
-                    print(f"    ✅ 削除後最終行: '{page_text.split(chr(10))[-1].strip()}'")
-                
                 pages_text.append({
                     "text": page_text,
                     "page": page_num
                 })
-    
     return pages_text
 
 def should_include_page_numbers(filename: str) -> bool:
@@ -88,7 +76,7 @@ def should_include_page_numbers(filename: str) -> bool:
 
 def remove_page_numbers_from_text(text: str, page_num: int) -> str:
     """
-    テキストの最終行からページ番号を自動削除
+    正規化ベースのページ番号削除
     """
     if not text.strip():
         return text
@@ -96,59 +84,70 @@ def remove_page_numbers_from_text(text: str, page_num: int) -> str:
     lines = text.split('\n')
     if not lines:
         return text
-    # 最後の数行をチェック（OCRでは空行が混入することがある）
+    
+    print(f"    📄 ページ {page_num} の処理開始")
+    
+    # 後ろから順番に空でない行を探す
     for i in range(min(3, len(lines))):
         line_index = -(i + 1)  # -1, -2, -3
-        if len(lines) + line_index < 0:
+        
+        if abs(line_index) > len(lines):
             break
             
-        last_line = lines[line_index]
+        original_line = lines[line_index]
         
-        # デバッグ出力を追加
-        logger.info(f"    🔍 チェック行 {line_index}: '{last_line}'")
-        logger.info(f"    📏 文字数: {len(last_line)}")
-        logger.info(f"    🔤 文字詳細: {[ord(c) for c in last_line]}")
-        logger.info(f"    ✂️  trim後: '{last_line.strip()}'")
-
-        # OCR対応の包括的なページ番号パターン
-        trimmed_line = last_line.strip()
+        # 空行チェック
+        if not original_line.strip():
+            print(f"    ⏭️  行 {line_index}: 空行のためスキップ")
+            continue
         
-        # より柔軟なパターンマッチング
-        page_patterns = [
-            rf'^{page_num}$',                           # 単純な数字
-            rf'^{page_num}\s*$',                        # 数字+空白
-            rf'^\s*{page_num}\s*$',                     # 前後空白
-            rf'^.*{page_num}\s*$',                      # 何かの後に数字
-            rf'^{page_num}.*$',                         # 数字の後に何か
-            # 全角数字対応
-            rf'^{str(page_num).translate(str.maketrans("0123456789", "０１２３４５６７８９"))}$',
-            # その他のパターン
-            rf'^-\s*{page_num}\s*-$',
-            rf'^\[\s*{page_num}\s*\]$',
-            rf'^\(\s*{page_num}\s*\)$',
-        ]
+        print(f"    🔍 行 {line_index} (元): '{original_line}'")
         
-        for j, pattern in enumerate(page_patterns):
-            if re.match(pattern, trimmed_line, re.IGNORECASE):
-                print(f"    ✅ パターン {j} にマッチ: {pattern}")
-                print(f"    🗑️  削除する行: '{last_line}'")
-                
-                # 該当行を削除
-                lines.pop(line_index)
-                
-                # 削除後の空行も除去
-                while lines and not lines[-1].strip():
-                    lines.pop()
-                
-                return '\n'.join(lines)
-            else:
-                logger.info(f"    ❌ パターン {j} マッチせず: {pattern}")
-
-    # # ページ番号削除後の空行も除去
-    # while lines and not lines[-1].strip():
-    #     lines = lines[:-1]
+        # 正規化処理
+        normalized_line = normalize_line(original_line)
+        print(f"    🔧 正規化後: '{normalized_line}'")
+        
+        # ページ番号判定
+        if normalized_line == str(page_num):
+            print(f"    ✅ ページ番号 {page_num} として削除")
+            
+            # 該当行を削除
+            lines.pop(line_index)
+            
+            # 削除後の空行も除去
+            while lines and not lines[-1].strip():
+                lines.pop()
+            
+            return '\n'.join(lines)
+        else:
+            print(f"    ❌ ページ番号ではない: '{normalized_line}' ≠ '{page_num}'")
+            # 最初の非空行がページ番号でなければ終了
+            break
     
-    return '\n'.join(lines)
+    print(f"    ⚠️  ページ番号が見つかりませんでした")
+    return text
+
+def normalize_line(line: str) -> str:
+    """
+    行の正規化：全角→半角、空白削除
+    """
+    # 全角数字を半角数字に変換
+    normalized = line.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+    
+    # 全角英字を半角英字に変換（必要に応じて）
+    normalized = normalized.translate(str.maketrans("ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ", 
+                                               "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"))
+    
+    # 全角スペースを半角スペースに変換
+    normalized = normalized.replace('　', ' ')
+    
+    # 前後の空白を削除
+    normalized = normalized.strip()
+    
+    # 内部の連続空白を単一空白に
+    normalized = re.sub(r'\s+', ' ', normalized)
+    
+    return normalized
 
 # ---------------------------------------------------------------------------
 # 2) チャンク化ユーティリティ（修正版）
@@ -407,7 +406,7 @@ def preprocess_files(
         elif mime == "application/pdf" or name.lower().endswith(".pdf"):
             try:
                 # ページ別にテキストを抽出
-                pages_data = extract_text_from_pdf_by_pages(data, remove_page_nums=not include_pages)
+                pages_data = extract_text_from_pdf_by_pages(data)
                 
                 # 全ページのテキストを結合（ファイル単位）
                 page_texts = [f"=== ファイル: {name} ==="]  # ファイルヘッダー
@@ -423,8 +422,8 @@ def preprocess_files(
                             formatted_page = f"\n--- ページ {page_num} ---\n{page_text}"
                         else:
                             # ページ番号を含めない場合（ここでページ番号削除を実行）
-                            # cleaned_text = remove_page_numbers_from_text(page_text, page_num)
-                            formatted_page = f"\n{page_text}"
+                            cleaned_text = remove_page_numbers_from_text(page_text, page_num)
+                            formatted_page = f"\n{cleaned_text}"
                         page_texts.append(formatted_page)
                         file_pages += 1
                 
