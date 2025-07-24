@@ -76,7 +76,7 @@ def should_include_page_numbers(filename: str) -> bool:
 
 def remove_page_numbers_from_text(text: str, page_num: int) -> str:
     """
-    正規化ベースのページ番号削除
+    最終行が数字のみの場合は削除
     """
     if not text.strip():
         return text
@@ -107,9 +107,9 @@ def remove_page_numbers_from_text(text: str, page_num: int) -> str:
         normalized_line = normalize_line(original_line)
         print(f"    🔧 正規化後: '{normalized_line}'")
         
-        # ページ番号判定
-        if is_page_number_pattern(normalized_line, page_num):
-            print(f"    ✅ ページ番号パターンとして削除: '{normalized_line}'")
+        # 数字のみかどうかをチェック
+        if normalized_line.isdigit():
+            print(f"    ✅ 数字のみの行として削除: '{normalized_line}'")
             
             # 該当行を削除
             lines.pop(line_index)
@@ -120,16 +120,16 @@ def remove_page_numbers_from_text(text: str, page_num: int) -> str:
             
             return '\n'.join(lines)
         else:
-            print(f"    ❌ ページ番号ではない: '{normalized_line}' ≠ '{page_num}'")
-            # 最初の非空行がページ番号でなければ終了
+            print(f"    ❌ 数字のみではない: '{normalized_line}'")
+            # 最初の非空行が数字でなければ終了
             break
     
-    print(f"    ⚠️  ページ番号が見つかりませんでした")
+    print(f"    ⚠️  数字行が見つかりませんでした")
     return text
 
 def normalize_line(line: str) -> str:
     """
-    行の正規化：全角→半角、全スペース削除
+    行の正規化：全角→半角、全スペース・ハイフン削除
     """
     # 全角数字を半角数字に変換
     normalized = line.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
@@ -138,26 +138,16 @@ def normalize_line(line: str) -> str:
     normalized = normalized.translate(str.maketrans("ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ", 
                                                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"))
     
+    # 全角ハイフンを半角ハイフンに変換
+    normalized = normalized.translate(str.maketrans("－−‐", "---"))
+    
     # 全角スペースを半角スペースに変換
     normalized = normalized.replace('　', ' ')
     
-    # 全てのスペース（空白文字）を削除
-    normalized = re.sub(r'\s', '', normalized)
+    # 全てのスペース（空白文字）とハイフンを削除
+    normalized = re.sub(r'[\s-]', '', normalized)
     
     return normalized
-
-def is_page_number_pattern(normalized_line: str, page_num: int) -> bool:
-    """
-    スペース削除後のパターンマッチング
-    """
-    page_str = str(page_num+2)
-    
-    patterns = [
-        page_str,                    # "1"
-        f"-{page_str}-",            # "-1-"
-    ]
-    
-    return normalized_line in patterns
 
 # ---------------------------------------------------------------------------
 # 2) チャンク化ユーティリティ（修正版）
