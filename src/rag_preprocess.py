@@ -74,6 +74,14 @@ def should_include_page_numbers(filename: str) -> bool:
     # デフォルトはページ番号あり
     return True
 
+def is_numeric_string(text):
+    """より包括的な数字判定"""
+    try:
+        int(text)  # intに変換できるかテスト
+        return True
+    except ValueError:
+        return False
+
 def remove_page_numbers_from_text(text: str, page_num: int) -> str:
     """
     最終行が数字のみの場合は削除
@@ -108,7 +116,7 @@ def remove_page_numbers_from_text(text: str, page_num: int) -> str:
         print(f"    🔧 正規化後: '{normalized_line}'")
         
         # 数字のみかどうかをチェック
-        if normalized_line.isdigit():
+        if is_numeric_string(normalized_line):
             print(f"    ✅ 数字のみの行として削除: '{normalized_line}'")
             
             # 該当行を削除
