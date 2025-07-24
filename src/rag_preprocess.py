@@ -129,23 +129,20 @@ def remove_page_numbers_from_text(text: str, page_num: int) -> str:
 
 def normalize_line(line: str) -> str:
     """
-    行の正規化：全角→半角、空白削除
+    行の正規化：全角→半角、全スペース削除
     """
     # 全角数字を半角数字に変換
     normalized = line.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
     
-    # 全角英字を半角英字に変換（必要に応じて）
+    # 全角英字を半角英字に変換
     normalized = normalized.translate(str.maketrans("ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ", 
                                                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"))
     
     # 全角スペースを半角スペースに変換
     normalized = normalized.replace('　', ' ')
     
-    # 前後の空白を削除
-    normalized = normalized.strip()
-    
-    # 内部の連続空白を単一空白に
-    normalized = re.sub(r'\s+', ' ', normalized)
+    # 全てのスペース（空白文字）を削除
+    normalized = re.sub(r'\s', '', normalized)
     
     return normalized
 
