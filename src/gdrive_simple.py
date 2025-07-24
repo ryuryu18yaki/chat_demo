@@ -78,7 +78,7 @@ def download_files_from_drive(folder_id: str) -> List[Dict[str, Any]]:
             
             # 三菱地所が含まれる場合は名前を変更
             display_name = file_name
-            if "新ビル設計ガイドライン" in file_name:
+            if "170301" in file_name:
                 display_name = "新暗黙知メモ.pdf"
             elif "001-取扱い注意_改修工事図面作成要領(案)H11年3月三菱地所㈱リニューアル建築部_OCR済み" in file_name:
                 display_name = "旧暗黙知メモ.pdf"
