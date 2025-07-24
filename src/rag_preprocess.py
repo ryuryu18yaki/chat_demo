@@ -57,6 +57,22 @@ def extract_text_from_pdf_by_pages(data: bytes) -> List[Dict[str, Any]]:
                 })
     return pages_text
 
+def should_include_page_numbers(filename: str) -> bool:
+    """
+    ファイル名に基づいてページ番号を含めるかどうかを決定
+    必要に応じてロジックをカスタマイズしてください
+    """
+    # 例：特定のキーワードを含むファイルはページ番号なし
+    no_page_keywords = ["暗黙知メモ"]
+    filename_lower = filename.lower()
+    
+    for keyword in no_page_keywords:
+        if keyword in filename_lower:
+            return False
+    
+    # デフォルトはページ番号あり
+    return True
+
 # ---------------------------------------------------------------------------
 # 2) チャンク化ユーティリティ（修正版）
 # ---------------------------------------------------------------------------
@@ -297,6 +313,7 @@ def preprocess_files(
         # ファイルごとのテキスト抽出
         file_text = ""
         file_pages = 0
+        include_pages = should_include_page_numbers(name)
         
         # テキストファイルの処理
         if mime == "text/plain" or name.lower().endswith(".txt"):
@@ -324,7 +341,11 @@ def preprocess_files(
                     
                     if page_text:  # 空ページをスキップ
                         # ページ情報を含めてテキストを整形
-                        formatted_page = f"\n--- ページ {page_num} ---\n{page_text}"
+                        if include_pages:
+                            formatted_page = f"\n--- ページ {page_num} ---\n{page_text}"
+                        else:
+                            # ページ番号を含めない場合はそのまま
+                            formatted_page = ""
                         page_texts.append(formatted_page)
                         file_pages += 1
                 
