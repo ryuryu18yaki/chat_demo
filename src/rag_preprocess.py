@@ -108,8 +108,8 @@ def remove_page_numbers_from_text(text: str, page_num: int) -> str:
         print(f"    🔧 正規化後: '{normalized_line}'")
         
         # ページ番号判定
-        if normalized_line == str(page_num):
-            print(f"    ✅ ページ番号 {page_num} として削除")
+        if is_page_number_pattern(normalized_line, page_num):
+            print(f"    ✅ ページ番号パターンとして削除: '{normalized_line}'")
             
             # 該当行を削除
             lines.pop(line_index)
@@ -145,6 +145,19 @@ def normalize_line(line: str) -> str:
     normalized = re.sub(r'\s', '', normalized)
     
     return normalized
+
+def is_page_number_pattern(normalized_line: str, page_num: int) -> bool:
+    """
+    スペース削除後のパターンマッチング
+    """
+    page_str = str(page_num)
+    
+    patterns = [
+        page_str,                    # "1"
+        f"-{page_str}-",            # "-1-"
+    ]
+    
+    return normalized_line in patterns
 
 # ---------------------------------------------------------------------------
 # 2) チャンク化ユーティリティ（修正版）
