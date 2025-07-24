@@ -150,7 +150,7 @@ def is_page_number_pattern(normalized_line: str, page_num: int) -> bool:
     """
     スペース削除後のパターンマッチング
     """
-    page_str = str(page_num)
+    page_str = str(page_num+2)
     
     patterns = [
         page_str,                    # "1"
