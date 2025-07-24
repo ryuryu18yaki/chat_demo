@@ -45,17 +45,29 @@ def extract_text_from_txt(data: bytes, encoding: str | None = None) -> str:
     return data.decode(encoding)
 
 # 🔥 修正版: ページ別テキスト抽出
-def extract_text_from_pdf_by_pages(data: bytes) -> List[Dict[str, Any]]:
-    """PDFからページ別にテキストを抽出"""
+def extract_text_from_pdf_by_pages(data: bytes, remove_page_nums: bool = False) -> List[Dict[str, Any]]:
+    """PDFからページ別にテキストを抽出（ページ番号削除オプション付き）"""
     pages_text = []
+    
     with pdfplumber.open(BytesIO(data)) as pdf:
         for page_num, page in enumerate(pdf.pages, start=1):
             page_text = page.extract_text() or ""
+            
             if page_text.strip():  # 空ページをスキップ
+                # ページ番号削除が有効な場合、ここで処理
+                if remove_page_nums:
+                    print(f"    🔍 ページ {page_num} の番号削除処理")
+                    print(f"    📄 削除前最終行: '{page_text.split(chr(10))[-1].strip()}'")
+                    
+                    page_text = remove_page_numbers_from_text(page_text, page_num)
+                    
+                    print(f"    ✅ 削除後最終行: '{page_text.split(chr(10))[-1].strip()}'")
+                
                 pages_text.append({
                     "text": page_text,
                     "page": page_num
                 })
+    
     return pages_text
 
 def should_include_page_numbers(filename: str) -> bool:
@@ -395,7 +407,7 @@ def preprocess_files(
         elif mime == "application/pdf" or name.lower().endswith(".pdf"):
             try:
                 # ページ別にテキストを抽出
-                pages_data = extract_text_from_pdf_by_pages(data)
+                pages_data = extract_text_from_pdf_by_pages(data, remove_page_nums=not include_pages)
                 
                 # 全ページのテキストを結合（ファイル単位）
                 page_texts = [f"=== ファイル: {name} ==="]  # ファイルヘッダー
@@ -411,8 +423,8 @@ def preprocess_files(
                             formatted_page = f"\n--- ページ {page_num} ---\n{page_text}"
                         else:
                             # ページ番号を含めない場合（ここでページ番号削除を実行）
-                            cleaned_text = remove_page_numbers_from_text(page_text, page_num)
-                            formatted_page = f"\n{cleaned_text}"
+                            # cleaned_text = remove_page_numbers_from_text(page_text, page_num)
+                            formatted_page = f"\n{page_text}"
                         page_texts.append(formatted_page)
                         file_pages += 1
                 
