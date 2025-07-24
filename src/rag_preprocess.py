@@ -107,9 +107,11 @@ def remove_page_numbers_from_text(text: str, page_num: int) -> str:
         if re.match(pattern, last_line, re.IGNORECASE):
             # ページ番号行を除去
             lines = lines[:-1]
-            print(f"    🔍 ページ番号削除: '{last_line}' → ページ {page_num}")
+            logger.info(f"    🔍 ページ番号削除: '{last_line}' → ページ {page_num}")
             break
-    
+        else:
+            logger.info(f"デバッグ: マッチせず: {pattern}")
+
     # ページ番号削除後の空行も除去
     while lines and not lines[-1].strip():
         lines = lines[:-1]
