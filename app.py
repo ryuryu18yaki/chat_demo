@@ -1136,9 +1136,13 @@ if st.session_state["authentication_status"]:
             col1, col2 = st.columns([3, 1])
             
             with col1:
+                # 初期設定：max_tokensが未設定の場合は4096を設定
+                if "max_tokens" not in st.session_state or st.session_state.get("max_tokens") is None:
+                    st.session_state["max_tokens"] = 4096
+                
                 max_tokens_text = st.text_input(
                     "最大応答長（トークン数）",
-                    value=str(st.session_state.get("max_tokens", 4096)) if st.session_state.get("max_tokens") is not None else "",
+                    value=str(st.session_state.get("max_tokens", 4096)),
                     placeholder="例: 4096, 8000, 16000 （空欄=モデル上限使用）",
                     key="max_tokens_text",
                     help="数値を入力してください。空欄にするとモデルの上限値を使用します。"
@@ -1146,7 +1150,7 @@ if st.session_state["authentication_status"]:
             
             with col2:
                 st.markdown("<br>", unsafe_allow_html=True)  # ボタンの位置調整
-                apply_button = st.button("適用", key="apply_max_tokens")
+                apply_button = st.button("✅ 適用", key="apply_max_tokens")
             
             # 現在の設定を表示
             current_max_tokens = st.session_state.get("max_tokens")
