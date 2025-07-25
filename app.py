@@ -1146,7 +1146,7 @@ if st.session_state["authentication_status"]:
             
             with col2:
                 st.markdown("<br>", unsafe_allow_html=True)  # ボタンの位置調整
-                apply_button = st.button("✅ 適用", key="apply_max_tokens")
+                apply_button = st.button("適用", key="apply_max_tokens")
             
             # 現在の設定を表示
             current_max_tokens = st.session_state.get("max_tokens")
