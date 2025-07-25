@@ -1132,23 +1132,57 @@ if st.session_state["authentication_status"]:
                     key="temperature",
                     help="値が高いほど創造的、低いほど一貫した回答になります（Claudeデフォルト: 0.0）")
 
-            max_tokens_options = {
-                "未設定（モデル上限）": None,
-                "1000": 1000,
-                "2000": 2000,
-                "4000": 4000,
-                "8000": 8000,
-                "16000": 16000,
-                "32000": 32000
-            }
-            selected_max_tokens = st.selectbox(
-                "最大応答長",
-                options=list(max_tokens_options.keys()),
-                index=0,
-                key="max_tokens_select",
-                help="生成される回答の最大トークン数（Claudeデフォルト: 4096）"
-            )
-            st.session_state["max_tokens"] = max_tokens_options[selected_max_tokens]
+            # max_tokensのキーボード自由入力欄
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                max_tokens_text = st.text_input(
+                    "最大応答長（トークン数）",
+                    value=str(st.session_state.get("max_tokens", 4096)) if st.session_state.get("max_tokens") is not None else "",
+                    placeholder="例: 4096, 8000, 16000 （空欄=モデル上限使用）",
+                    key="max_tokens_text",
+                    help="数値を入力してください。空欄にするとモデルの上限値を使用します。"
+                )
+            
+            with col2:
+                st.markdown("<br>", unsafe_allow_html=True)  # ボタンの位置調整
+                apply_button = st.button("適用", key="apply_max_tokens")
+            
+            # 現在の設定を表示
+            current_max_tokens = st.session_state.get("max_tokens")
+            if current_max_tokens is None:
+                st.info("💡 現在の設定: モデル上限値を使用")
+            else:
+                st.info(f"💡 現在の設定: {current_max_tokens:,} トークン")
+            
+            # 適用ボタンが押された場合の処理
+            if apply_button:
+                if max_tokens_text.strip() == "":
+                    # 空欄の場合はモデル上限を使用
+                    st.session_state["max_tokens"] = None
+                    st.success("✅ モデル上限値に設定しました")
+                    st.rerun()
+                else:
+                    try:
+                        # 数値に変換を試行
+                        max_tokens_value = int(max_tokens_text.strip())
+                        
+                        # 妥当性チェック
+                        if max_tokens_value <= 0:
+                            st.error("❌ 1以上の数値を入力してください")
+                        elif max_tokens_value > 200000:
+                            st.warning("⚠️ 200,000を超える値ですが設定しました")
+                            st.session_state["max_tokens"] = max_tokens_value
+                            st.success(f"✅ 最大トークン数を {max_tokens_value:,} に設定しました")
+                            st.rerun()
+                        else:
+                            st.session_state["max_tokens"] = max_tokens_value
+                            st.success(f"✅ 最大トークン数を {max_tokens_value:,} に設定しました")
+                            st.rerun()
+                            
+                    except ValueError:
+                        # 数値以外が入力された場合
+                        st.error("❌ 有効な数値を入力してください（例: 4096）")
 
         st.divider()
 
