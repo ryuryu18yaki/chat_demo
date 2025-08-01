@@ -54,8 +54,8 @@ def download_files_from_drive(folder_id: str) -> List[Dict[str, Any]]:
             mime_type = file_info["mimeType"]
             file_size = file_info.get("size", 0)
 
-            # PDF / TXT だけ対象
-            if not file_name.lower().endswith((".pdf", ".txt")):
+            # PDF / TXT / JSON だけ対象
+            if not file_name.lower().endswith((".pdf", ".txt", ".json")):
                 continue
 
             logger.info("⬇️ ダウンロード開始: %s", file_name)
@@ -137,7 +137,7 @@ def download_fix_files_from_drive(fixes_folder_id: str) -> Dict[str, bytes]:
         for file_info in files:
             file_name = file_info["name"]
             file_id = file_info["id"]
-
+            
             if not file_name.lower().endswith((".json", ".txt", ".yaml", ".yml", ".png")):
                 logger.debug("📁 スキップ（対象外）: %s", file_name)
                 continue

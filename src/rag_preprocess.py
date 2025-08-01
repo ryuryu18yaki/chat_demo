@@ -255,17 +255,15 @@ def normalize_filename(name: str) -> str:
 
 def apply_text_replacements_from_fixmap(
     equipment_data: dict,
-    fixes_files: dict[str, bytes],
-    target_filename: str = "防災設備ハンドブック_能美防災株式会社_商品本部_2024年7月_ocr済み.pdf"
+    fixes_files: dict[str, bytes]
 ) -> dict:
     """
     fixes_map.json に従って、equipment_data のテキストを修正する。
-    特定のファイル名（target_filename）のみに適用。
+    新形式：各修正項目で target フィールドによりファイルを指定
 
     Args:
         equipment_data (dict): preprocess_files() の出力
         fixes_files (dict): download_fix_files_from_drive() の出力
-        target_filename (str): 補正対象とするファイル名（例: "能見防災.pdf"）
 
     Returns:
         dict: 修正後の equipment_data
@@ -278,23 +276,48 @@ def apply_text_replacements_from_fixmap(
     try:
         fixmap = json.loads(fixes_files["fixes_map.json"].decode("utf-8"))
     except Exception as e:
-        logger.info(f"❌ fixes_map.json の読み込みに失敗しました: {e}")
+        logger.error(f"❌ fixes_map.json の読み込みに失敗しました: {e}")
         return equipment_data
+
+    # 修正対象のファイルを収集
+    target_files = {}
+    for fix in fixmap:
+        target = fix.get("target", "").strip()
+        if target:
+            target_files[target] = target_files.get(target, 0) + 1
+    
+    logger.info(f"📋 修正対象ファイル: {list(target_files.keys())}")
 
     for equipment_name, eq_data in equipment_data.items():
         for filename, original_text in eq_data["files"].items():
-            if filename != target_filename:
-                continue  # 対象ファイル名以外はスキップ
-
+            # ファイル名に対象文字列が含まれるかチェック
+            matching_targets = [target for target in target_files.keys() 
+                              if target in filename]
+            
+            if not matching_targets:
+                continue  # 対象外のファイルはスキップ
+            
             logger.info(f"\n📄 修正対象: {equipment_name} / {filename}")
+            logger.info(f"   マッチした対象: {matching_targets}")
+            
             modified_text = original_text
 
+            # 該当するファイルの修正項目のみを処理
             for fix in fixmap:
+                target = fix.get("target", "").strip()
+                
+                # このファイルが対象でない場合はスキップ
+                if not any(target in filename for target in [target] if target):
+                    continue
+                
                 start_line = fix["start_line"].strip()
                 end_line = fix["end_line"].strip()
                 replacement_file = fix["replacement_file"]
                 fix_type = fix["type"]
                 description = fix.get("description", "").strip()
+
+                logger.info(f"🔄 修正項目処理: {target}")
+                logger.info(f"   範囲: '{start_line[:30]}...' ～ '{end_line[:30]}...'")
 
                 normalized_target = normalize_filename(replacement_file)
 
@@ -309,6 +332,8 @@ def apply_text_replacements_from_fixmap(
                     if fix_type == "png":
                         # 🔸 画像ファイルが見つからなくても description だけ出力
                         replacement_content = f"[画像参照: {replacement_file}]\n{description}"
+                        if replacement_filename and replacement_filename in fixes_files:
+                            replacement_content += f"\n[画像データ: {len(fixes_files[replacement_filename])} bytes]"
                     else:
                         if not replacement_filename:
                             logger.warning(f"⚠️ replacement_file が見つかりません: {replacement_file}")
@@ -317,13 +342,14 @@ def apply_text_replacements_from_fixmap(
                         raw_data = fixes_files[replacement_filename]
 
                         if fix_type == "txt":
-                            replacement_content = f"{description}\n{raw_data.decode('utf-8')}"
+                            txt_content = raw_data.decode('utf-8')
+                            replacement_content = f"{description}\n{txt_content}" if description else txt_content
                         elif fix_type == "json":
                             json_content = json.dumps(json.loads(raw_data), ensure_ascii=False, indent=2)
-                            replacement_content = f"{description}\n{json_content}"
+                            replacement_content = f"{description}\n{json_content}" if description else json_content
                         elif fix_type == "yaml":
                             yaml_content = yaml.safe_dump(yaml.safe_load(raw_data), allow_unicode=True)
-                            replacement_content = f"{description}\n{yaml_content}"
+                            replacement_content = f"{description}\n{yaml_content}" if description else yaml_content
                         else:
                             logger.warning(f"⚠️ 未対応の type: {fix_type}")
                             continue
@@ -331,25 +357,33 @@ def apply_text_replacements_from_fixmap(
                     # 📌 完全一致で行番号を取得
                     lines = modified_text.splitlines()
                     start_idx = next((i for i, line in enumerate(lines) if line.strip() == start_line), -1)
+                    
+                    if start_idx == -1:
+                        logger.warning(f"⚠️ 開始行が見つかりません: '{start_line[:50]}...'")
+                        continue
+                    
                     end_idx = next((i for i, line in enumerate(lines[start_idx + 1:], start=start_idx + 1)
                                     if line.strip() == end_line), -1)
-
-                    if start_idx == -1 or end_idx == -1:
-                        logger.info(f"⚠️ 指定された行が見つかりません（完全一致）: '{start_line}' ～ '{end_line}'")
+                    
+                    if end_idx == -1:
+                        logger.warning(f"⚠️ 終了行が見つかりません: '{end_line[:50]}...'")
                         continue
 
-                    # ✨ 置換
+                    # ✨ 置換実行
                     lines = lines[:start_idx] + [replacement_content] + lines[end_idx + 1:]
                     modified_text = "\n".join(lines)
 
-                    logger.info(f"✅ 置換完了: '{start_line}' ～ '{end_line}' → {replacement_file}")
+                    logger.info(f"✅ 置換完了: {replacement_file} ({fix_type})")
 
                 except Exception as e:
-                    logger.info(f"❌ 修正失敗: {replacement_file} - {e}")
+                    logger.error(f"❌ 修正失敗: {replacement_file} - {e}")
 
-            equipment_data[equipment_name]["files"][filename] = modified_text
+            # 修正されたテキストを保存
+            if modified_text != original_text:
+                equipment_data[equipment_name]["files"][filename] = modified_text
+                logger.info(f"💾 ファイル更新完了: {filename}")
 
-    print(f"\n🎯 テキスト補正完了")
+    logger.info(f"\n🎯 テキスト補正完了")
     return equipment_data
 
 # ---------------------------------------------------------------------------

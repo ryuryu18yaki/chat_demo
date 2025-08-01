@@ -1,10 +1,11 @@
-# src/startup_loader.py (シンプル版 - ChromaDB不使用)
+# src/startup_loader.py (ビル情報統合版)
 from streamlit import secrets
 from pathlib import Path
 
 from src.rag_preprocess import preprocess_files, apply_text_replacements_from_fixmap
 from src.equipment_classifier import extract_equipment_from_filename, get_equipment_category
 from src.gdrive_simple import download_files_from_drive, download_fix_files_from_drive
+from src.building_manager import initialize_building_manager, get_building_manager  # 🔥 新規追加
 from src.logging_utils import init_logger
 logger = init_logger()
 
@@ -65,17 +66,41 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
 
     # ✅ fixes フォルダから補正ファイルを取得（任意）
     logger.info(f"\n🔄 fixフォルダの探索開始")
-    fixes_files = []
+    fixes_files = {}  # 🔥 初期化を確実に
+    
     try:  # 念のため再確認（Streamlit Cloud用）
         fixes_folder_id = secrets.get("FIXES_DRIVE_FOLDER_ID")
         if fixes_folder_id:
             logger.info(f"\n📦 fixes フォルダから補正ファイル取得中...（ID: {fixes_folder_id}）")
             fixes_files = download_fix_files_from_drive(fixes_folder_id)
             logger.info(f"✅ 補正ファイル取得完了: {len(fixes_files)} 件")
+            
             # 👇 補正適用処理をここで呼び出し
             equipment_data = apply_text_replacements_from_fixmap(equipment_data, fixes_files)
+            
     except Exception as fix_err:
         logger.warning(f"⚠️ 補正ファイル取得に失敗: {fix_err}")
+
+    # 🔥 ビル情報マネージャーを初期化（file_dictsを使用）
+    logger.info(f"\n🏢 ビル情報マネージャー初期化中...")
+    logger.info("🔍 file_dicts 詳細情報:")
+    logger.info("   - file_dicts 型: %s", type(file_dicts))
+    logger.info("   - file_dicts 長さ: %d", len(file_dicts) if file_dicts else 0)
+    
+    if file_dicts:
+        logger.info("   - 最初の3ファイル:")
+        for i, file_dict in enumerate(file_dicts[:3]):
+            name = file_dict.get("name", "N/A")
+            size = file_dict.get("size", 0)
+            logger.info("     %d. %s (%d bytes)", i+1, name, size)
+    
+    building_manager = initialize_building_manager(file_dicts)
+    
+    if building_manager.available:
+        building_count = len(building_manager.get_building_list())
+        logger.info(f"✅ ビル情報初期化完了: {building_count}件のビル情報")
+    else:
+        logger.warning("⚠️ ビル情報の初期化に失敗しました")
 
     # 設備一覧とカテゴリ一覧を生成
     equipment_list = list(equipment_data.keys())
@@ -87,6 +112,13 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
     print(f"   - 設備数: {len(equipment_list)}")
     print(f"   - カテゴリ数: {len(category_list)}")
     
+    # 🔥 ビル情報統計を追加
+    building_manager = get_building_manager()
+    if building_manager and building_manager.available:
+        building_count = len(building_manager.get_building_list())
+        print(f"   - ビル情報数: {building_count}")
+        print(f"   - 利用可能ビル: {', '.join(building_manager.get_building_list()[:5])}...")  # 最初の5件のみ表示
+    
     for equipment_name in sorted(equipment_list):
         data = equipment_data[equipment_name]
         total_chars = data.get('total_chars', 0)
@@ -97,7 +129,8 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
         "file_list": file_dicts,
         "equipment_list": sorted(equipment_list),
         "category_list": sorted(category_list),
-        "fixes_files": fixes_files  # ← 追加！
+        "fixes_files": fixes_files,  # ← 既存
+        "building_manager": building_manager if 'building_manager' in locals() else None  # 🔥 新規追加
     }
 
 def _create_empty_result() -> dict:
@@ -106,9 +139,25 @@ def _create_empty_result() -> dict:
         "equipment_data": {},
         "file_list": [],
         "equipment_list": [],
-        "category_list": []
+        "category_list": [],
+        "fixes_files": {},  # 🔥 追加
+        "building_manager": None  # 🔥 追加
     }
 
+# 🔥 ビル情報関連の便利関数を追加
+def get_available_buildings() -> list:
+    """利用可能なビル一覧を取得"""
+    manager = get_building_manager()
+    return manager.get_building_list() if manager and manager.available else []
+
+def get_building_info_for_prompt(building_name: str = None) -> str:
+    """ビル情報をプロンプト用にフォーマット"""
+    manager = get_building_manager()
+    if manager and manager.available:
+        return manager.format_building_info_for_prompt(building_name)
+    return "【ビル情報】利用可能なビル情報がありません。"
+
+# 既存の関数は変更なし
 def get_equipment_names(equipment_data: dict) -> list:
     """利用可能な設備名一覧を取得"""
     return sorted(equipment_data.keys())
