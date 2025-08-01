@@ -113,25 +113,86 @@ class BuildingManager:
             
             self.building_data = json_data
             
-            # ビル一覧を生成（キーまたは略称から）
+            # 🔥 JSONデータ構造を詳細に調査
+            logger.info("📊 JSONデータ構造調査:")
+            logger.info("  - データ型: %s", type(json_data))
+            
             if isinstance(json_data, dict):
-                # ビル名をキーとした辞書の場合
-                self.building_list = list(json_data.keys())
-                logger.info("📄 辞書形式のJSONデータ - キー数: %d", len(self.building_list))
+                logger.info("  - 辞書のキー数: %d", len(json_data))
+                logger.info("  - キー一覧: %s", list(json_data.keys())[:10])  # 最初の10個のキー
+                
+                # 🔥 修正: 辞書形式でも各ビルの詳細情報から名前を取得
+                self.building_list = []
+                for key, building_info in json_data.items():
+                    logger.info("  - キー '%s' の値の型: %s", key, type(building_info))
+                    
+                    if isinstance(building_info, dict):
+                        logger.info("    - 内包するキー: %s", list(building_info.keys())[:5])
+                        
+                        # 優先順位: 略称 → toko建物コード → キー名
+                        if "略称" in building_info and building_info["略称"]:
+                            name = building_info["略称"]
+                            logger.info("    - 略称を使用: %s", name)
+                        elif "toko建物コード" in building_info and building_info["toko建物コード"]:
+                            name = building_info["toko建物コード"]
+                            logger.info("    - toko建物コードを使用: %s", name)
+                        elif "toko建物コードNo." in building_info and building_info["toko建物コードNo."]:
+                            name = f"ビル{building_info['toko建物コードNo.']}"
+                            logger.info("    - toko建物コードNo.を使用: %s", name)
+                        else:
+                            name = key  # フォールバック: キー名
+                            logger.info("    - キー名を使用: %s", name)
+                        
+                        self.building_list.append(name)
+                    else:
+                        # 値が辞書でない場合はキー名を使用
+                        self.building_list.append(key)
+                        logger.warning("    - 値が辞書でないためキー名を使用: %s", key)
+                
+                logger.info("📄 辞書形式のJSONデータ - 抽出されたビル名数: %d", len(self.building_list))
+                
             elif isinstance(json_data, list):
+                logger.info("  - リストの要素数: %d", len(json_data))
+                
+                # 最初の要素の構造を確認
+                if len(json_data) > 0:
+                    first_item = json_data[0]
+                    logger.info("  - 最初の要素の型: %s", type(first_item))
+                    if isinstance(first_item, dict):
+                        logger.info("  - 最初の要素のキー: %s", list(first_item.keys()))
+                        # 略称があるかチェック
+                        if "略称" in first_item:
+                            logger.info("  - 最初の要素の略称: %s", first_item["略称"])
+                
                 # ビル情報のリストの場合
-                self.building_list = [
-                    building.get("略称", f"ビル{i+1}")
-                    for i, building in enumerate(json_data)
-                ]
+                self.building_list = []
+                for i, building in enumerate(json_data):
+                    if isinstance(building, dict):
+                        # 略称を最優先、なければtoko建物コード、なければインデックス
+                        if "略称" in building and building["略称"]:
+                            name = building["略称"]
+                        elif "toko建物コード" in building and building["toko建物コード"]:
+                            name = building["toko建物コード"]
+                        elif "toko建物コードNo." in building and building["toko建物コードNo."]:
+                            name = f"ビル{building['toko建物コードNo.']}"
+                        else:
+                            name = f"ビル{i+1}"
+                        
+                        self.building_list.append(name)
+                        logger.info("  - ビル %d: %s", i+1, name)
+                    else:
+                        logger.warning("  - 要素 %d は辞書ではありません: %s", i, type(building))
+                
                 logger.info("📄 リスト形式のJSONデータ - 要素数: %d", len(self.building_list))
+                
             else:
                 logger.warning("⚠️ 予期しないJSONデータ形式: %s", type(json_data))
+                logger.info("📊 データの内容（最初の200文字）: %s", str(json_data)[:200])
                 return
             
             self.available = True
             logger.info("✅ ビルマスターデータ読み込み成功: %d件のビル情報", len(self.building_list))
-            logger.info("📋 ビル一覧: %s", self.building_list[:5])  # 最初の5件のみ表示
+            logger.info("📋 ビル一覧: %s", self.building_list[:10])  # 最初の10件を表示
             
         except json.JSONDecodeError as e:
             logger.error("❌ JSON解析エラー: %s", e)
