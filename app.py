@@ -1789,6 +1789,7 @@ if st.session_state["authentication_status"]:
             # プロンプト取得
             # 🔥 既存のプロンプト取得の後に以下を追加
             base_prompt = st.session_state.prompts[st.session_state.design_mode]
+            target_equipment = st.session_state.get("selected_equipment")
 
             if st.session_state.design_mode == "暗黙知法令チャットモード":
                 # 設備特化プロンプトを生成（設備未選択でもblind_knowledge処理のため実行）
