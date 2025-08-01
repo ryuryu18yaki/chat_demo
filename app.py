@@ -1337,6 +1337,123 @@ if st.session_state["authentication_status"]:
                         st.markdown(f"- **選択ファイル統計**:")
                         st.markdown(f"  - ファイル数: {selected_count}/{total_count} ({100*selected_count/total_count:.1f}%)")
                         st.markdown(f"  - 文字数: {selected_chars:,}/{eq_info['total_chars']:,} ({char_ratio:.1f}%)")
+        st.divider()
+
+        # ------- ビル情報選択 -------
+        st.markdown("### 🏢 対象ビル選択")
+
+        available_buildings = get_available_buildings()
+
+        if not available_buildings:
+            st.error("❌ ビル情報が読み込まれていません")
+            st.session_state["selected_building"] = None
+            st.session_state["include_building_info"] = False
+        else:
+            st.info(f"📊 利用可能ビル数: {len(available_buildings)}")
+            
+            # ビル情報を含めるかどうかのチェックボックス
+            include_building = st.checkbox(
+                "ビル情報をプロンプトに含める",
+                value=st.session_state.get("include_building_info", True),
+                help="チェックを入れると、選択されたビルの詳細情報が回答生成時に使用されます"
+            )
+            st.session_state["include_building_info"] = include_building
+            
+            if include_building:
+                # ビル選択方式
+                building_selection_mode = st.radio(
+                    "ビル選択方式",
+                    ["特定ビルを選択", "全ビル情報を使用", "自動推定"],
+                    index=st.session_state.get("building_selection_mode_index", 0),
+                    help="質問に使用するビル情報の選択方法"
+                )
+                
+                # 選択状態を保存
+                mode_options = ["特定ビルを選択", "全ビル情報を使用", "自動推定"]
+                st.session_state["building_selection_mode_index"] = mode_options.index(building_selection_mode)
+                
+                if building_selection_mode == "特定ビルを選択":
+                    # 🔥 検索ボックスを追加
+                    search_query = st.text_input(
+                        "🔍 ビル名で検索",
+                        placeholder="ビル名の一部を入力...",
+                        help="入力した文字でビル一覧をフィルタリングできます"
+                    )
+                    
+                    # 🔥 検索結果でフィルタリング
+                    if search_query:
+                        filtered_buildings = [
+                            building for building in available_buildings 
+                            if search_query.lower() in building.lower()
+                        ]
+                        st.info(f"🔍 検索結果: {len(filtered_buildings)}件")
+                    else:
+                        filtered_buildings = available_buildings
+                    
+                    # フィルタリングされたリストでセレクトボックス表示
+                    if filtered_buildings:
+                        selected_building = st.selectbox(
+                            "ビルを選択してください",
+                            options=[""] + filtered_buildings,
+                            index=0,
+                            help="上の検索ボックスで絞り込むか、直接選択してください"
+                        )
+                    else:
+                        st.warning("⚠️ 検索条件に一致するビルが見つかりません")
+                        selected_building = None
+                    
+                    st.session_state["selected_building"] = selected_building if selected_building else None
+                    st.session_state["building_mode"] = "specific"
+                    
+                elif building_selection_mode == "全ビル情報を使用":
+                    st.info("🏢 全ビルの情報を使用して回答します")
+                    st.session_state["selected_building"] = None
+                    st.session_state["building_mode"] = "all"
+                    
+                else:  # 自動推定
+                    st.info("🤖 質問文からビルを自動推定して回答します")
+                    st.session_state["selected_building"] = None
+                    st.session_state["building_mode"] = "auto"
+            
+            else:
+                st.session_state["selected_building"] = None
+                st.session_state["building_mode"] = "none"
+            
+            # 現在の選択状態を表示
+            if include_building:
+                current_building = st.session_state.get("selected_building")
+                building_mode = st.session_state.get("building_mode", "none")
+                
+                if building_mode == "specific" and current_building:
+                    st.success(f"✅ 選択中: **{current_building}**")
+                    
+                    # ビル詳細情報の表示（折りたたみ）
+                    with st.expander("🏢 ビル詳細情報", expanded=False):
+                        building_info_text = get_building_info_for_prompt(current_building)
+                        st.text_area(
+                            "ビル情報プレビュー",
+                            value=building_info_text,
+                            height=300,
+                            key=f"building_preview_{current_building}"
+                        )
+                        
+                elif building_mode == "all":
+                    st.success("✅ 全ビル情報を使用")
+                    
+                    # 全ビル情報のプレビュー
+                    with st.expander("🏢 全ビル情報プレビュー", expanded=False):
+                        all_building_info = get_building_info_for_prompt()
+                        st.text_area(
+                            "全ビル情報プレビュー",
+                            value=all_building_info,
+                            height=400,
+                            key="all_buildings_preview"
+                        )
+                        
+                elif building_mode == "auto":
+                    st.success("✅ 自動推定モード")
+            else:
+                st.info("ℹ️ ビル情報は使用しません")
 
         st.divider()
 
@@ -1439,8 +1556,8 @@ if st.session_state["authentication_status"]:
                 
                 for file_name in equipment_info['sources']:
                     # 「暗黙知メモ」は表示から除外
-                    # if "暗黙知メモ" in file_name:
-                        # continue
+                    if "暗黙知メモ" in file_name:
+                        continue
                         
                     file_text = equipment_info['files'][file_name]
                     file_chars = len(file_text)
@@ -1506,123 +1623,6 @@ if st.session_state["authentication_status"]:
                             mime="text/plain",
                             key=f"download_{selected_equipment_for_view}_{file_name}"
                         )
-            st.divider()
-
-            # ------- ビル情報選択 -------
-            st.markdown("### 🏢 対象ビル選択")
-
-            available_buildings = get_available_buildings()
-
-            if not available_buildings:
-                st.error("❌ ビル情報が読み込まれていません")
-                st.session_state["selected_building"] = None
-                st.session_state["include_building_info"] = False
-            else:
-                st.info(f"📊 利用可能ビル数: {len(available_buildings)}")
-                
-                # ビル情報を含めるかどうかのチェックボックス
-                include_building = st.checkbox(
-                    "ビル情報をプロンプトに含める",
-                    value=st.session_state.get("include_building_info", True),
-                    help="チェックを入れると、選択されたビルの詳細情報が回答生成時に使用されます"
-                )
-                st.session_state["include_building_info"] = include_building
-                
-                if include_building:
-                    # ビル選択方式
-                    building_selection_mode = st.radio(
-                        "ビル選択方式",
-                        ["特定ビルを選択", "全ビル情報を使用", "自動推定"],
-                        index=st.session_state.get("building_selection_mode_index", 0),
-                        help="質問に使用するビル情報の選択方法"
-                    )
-                    
-                    # 選択状態を保存
-                    mode_options = ["特定ビルを選択", "全ビル情報を使用", "自動推定"]
-                    st.session_state["building_selection_mode_index"] = mode_options.index(building_selection_mode)
-                    
-                    if building_selection_mode == "特定ビルを選択":
-                        # 🔥 検索ボックスを追加
-                        search_query = st.text_input(
-                            "🔍 ビル名で検索",
-                            placeholder="ビル名の一部を入力...",
-                            help="入力した文字でビル一覧をフィルタリングできます"
-                        )
-                        
-                        # 🔥 検索結果でフィルタリング
-                        if search_query:
-                            filtered_buildings = [
-                                building for building in available_buildings 
-                                if search_query.lower() in building.lower()
-                            ]
-                            st.info(f"🔍 検索結果: {len(filtered_buildings)}件")
-                        else:
-                            filtered_buildings = available_buildings
-                        
-                        # フィルタリングされたリストでセレクトボックス表示
-                        if filtered_buildings:
-                            selected_building = st.selectbox(
-                                "ビルを選択してください",
-                                options=[""] + filtered_buildings,
-                                index=0,
-                                help="上の検索ボックスで絞り込むか、直接選択してください"
-                            )
-                        else:
-                            st.warning("⚠️ 検索条件に一致するビルが見つかりません")
-                            selected_building = None
-                        
-                        st.session_state["selected_building"] = selected_building if selected_building else None
-                        st.session_state["building_mode"] = "specific"
-                        
-                    elif building_selection_mode == "全ビル情報を使用":
-                        st.info("🏢 全ビルの情報を使用して回答します")
-                        st.session_state["selected_building"] = None
-                        st.session_state["building_mode"] = "all"
-                        
-                    else:  # 自動推定
-                        st.info("🤖 質問文からビルを自動推定して回答します")
-                        st.session_state["selected_building"] = None
-                        st.session_state["building_mode"] = "auto"
-                
-                else:
-                    st.session_state["selected_building"] = None
-                    st.session_state["building_mode"] = "none"
-                
-                # 現在の選択状態を表示
-                if include_building:
-                    current_building = st.session_state.get("selected_building")
-                    building_mode = st.session_state.get("building_mode", "none")
-                    
-                    if building_mode == "specific" and current_building:
-                        st.success(f"✅ 選択中: **{current_building}**")
-                        
-                        # ビル詳細情報の表示（折りたたみ）
-                        with st.expander("🏢 ビル詳細情報", expanded=False):
-                            building_info_text = get_building_info_for_prompt(current_building)
-                            st.text_area(
-                                "ビル情報プレビュー",
-                                value=building_info_text,
-                                height=300,
-                                key=f"building_preview_{current_building}"
-                            )
-                            
-                    elif building_mode == "all":
-                        st.success("✅ 全ビル情報を使用")
-                        
-                        # 全ビル情報のプレビュー
-                        with st.expander("🏢 全ビル情報プレビュー", expanded=False):
-                            all_building_info = get_building_info_for_prompt()
-                            st.text_area(
-                                "全ビル情報プレビュー",
-                                value=all_building_info,
-                                height=400,
-                                key="all_buildings_preview"
-                            )
-                            
-                    elif building_mode == "auto":
-                        st.success("✅ 自動推定モード")
-                else:
-                    st.info("ℹ️ ビル情報は使用しません")
         else:
             st.error("❌ 設備データが読み込まれていません")
 
