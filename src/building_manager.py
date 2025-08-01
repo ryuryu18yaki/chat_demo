@@ -217,24 +217,92 @@ class BuildingManager:
             ビル情報辞書またはNone
         """
         if not self.available:
+            logger.warning("🔍 get_building_info: データが利用できません")
             return None
+        
+        logger.info("🔍 get_building_info: 検索対象='%s'", building_name)
+        logger.info("🔍 利用可能なビル一覧: %s", self.building_list)
         
         if isinstance(self.building_data, dict):
             if building_name is None:
                 # 最初のビルを返す
-                return next(iter(self.building_data.values())) if self.building_data else None
-            return self.building_data.get(building_name)
+                first_value = next(iter(self.building_data.values())) if self.building_data else None
+                logger.info("🔍 最初のビルを返却: %s", first_value is not None)
+                return first_value
+            
+            # 🔥 複数の方法でビル情報を検索
+            logger.info("🔍 辞書形式での検索開始")
+            
+            # 方法1: 直接キーで検索
+            if building_name in self.building_data:
+                logger.info("✅ 直接キーで発見: %s", building_name)
+                return self.building_data[building_name]
+            
+            # 方法2: 各ビル情報の略称・コードで検索
+            for key, building_info in self.building_data.items():
+                if isinstance(building_info, dict):
+                    # 略称での検索
+                    if "略称" in building_info and building_info["略称"] == building_name:
+                        logger.info("✅ 略称で発見: key='%s', 略称='%s'", key, building_info["略称"])
+                        return building_info
+                    
+                    # toko建物コードでの検索
+                    if "toko建物コード" in building_info and building_info["toko建物コード"] == building_name:
+                        logger.info("✅ toko建物コードで発見: key='%s', コード='%s'", key, building_info["toko建物コード"])
+                        return building_info
+                    
+                    # toko建物コードNo.での検索
+                    if "toko建物コードNo." in building_info:
+                        expected_name = f"ビル{building_info['toko建物コードNo.']}"
+                        if expected_name == building_name:
+                            logger.info("✅ toko建物コードNo.で発見: key='%s', No.='%s'", key, building_info["toko建物コードNo."])
+                            return building_info
+            
+            # 方法3: 部分一致検索
+            for key, building_info in self.building_data.items():
+                if isinstance(building_info, dict):
+                    # 略称での部分一致
+                    if "略称" in building_info and building_info["略称"]:
+                        if building_name in building_info["略称"] or building_info["略称"] in building_name:
+                            logger.info("🔍 略称部分一致で発見: key='%s', 略称='%s'", key, building_info["略称"])
+                            return building_info
+            
+            logger.warning("❌ 辞書形式で見つかりません: %s", building_name)
+            return None
         
         elif isinstance(self.building_data, list):
             if building_name is None:
                 # 最初のビルを返す
-                return self.building_data[0] if self.building_data else None
+                first_item = self.building_data[0] if self.building_data else None
+                logger.info("🔍 最初のビルを返却: %s", first_item is not None)
+                return first_item
             
-            # 略称で検索
-            for building in self.building_data:
-                if building.get("略称") == building_name:
-                    return building
+            # 🔥 リスト形式での検索
+            logger.info("🔍 リスト形式での検索開始")
+            
+            for i, building in enumerate(self.building_data):
+                if isinstance(building, dict):
+                    # 略称での検索
+                    if "略称" in building and building["略称"] == building_name:
+                        logger.info("✅ 略称で発見: index=%d, 略称='%s'", i, building["略称"])
+                        return building
+                    
+                    # toko建物コードでの検索
+                    if "toko建物コード" in building and building["toko建物コード"] == building_name:
+                        logger.info("✅ toko建物コードで発見: index=%d, コード='%s'", i, building["toko建物コード"])
+                        return building
+                    
+                    # toko建物コードNo.での検索
+                    if "toko建物コードNo." in building:
+                        expected_name = f"ビル{building['toko建物コードNo.']}"
+                        if expected_name == building_name:
+                            logger.info("✅ toko建物コードNo.で発見: index=%d, No.='%s'", i, building["toko建物コードNo."])
+                            return building
+            
+            logger.warning("❌ リスト形式で見つかりません: %s", building_name)
+            return None
         
+        logger.warning("❌ 未対応のデータ形式")
         return None
     
     def get_all_buildings_info(self) -> Dict[str, Any]:
