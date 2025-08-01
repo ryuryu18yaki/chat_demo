@@ -19,6 +19,9 @@ try:
 except ImportError:
     AZURE_OPENAI_AVAILABLE = False
 
+# 🔥 ビル情報マネージャーのインポートを追加
+from src.building_manager import get_building_manager
+
 # ---------------------------------------------------------------------------
 # AWS Bedrock設定
 # ---------------------------------------------------------------------------
@@ -180,6 +183,8 @@ def generate_answer_with_equipment(
         chat_history: Optional[List[Dict[str, str]]] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        include_building_info: bool = True,  # 🔥 新規追加
+        target_building: Optional[str] = None,  # 🔥 新規追加
     ) -> Dict[str, Any]:
     """
     指定された設備の選択ファイルをプロンプトに投入してAIで回答を生成
@@ -194,6 +199,8 @@ def generate_answer_with_equipment(
         chat_history: チャット履歴
         temperature: 温度パラメータ
         max_tokens: 最大トークン数
+        include_building_info: ビル情報を含めるかどうか  # 🔥 新規追加
+        target_building: 対象ビル名（Noneなら全ビル情報）  # 🔥 新規追加
     
     Returns:
         回答結果辞書
@@ -243,7 +250,30 @@ def generate_answer_with_equipment(
         print(f"📄 全ファイル使用: {', '.join(sources)}")
         print(f"📝 結合後文字数: {len(combined_text)}")
     
-    # --- 2) プロンプト組み立て ---
+    # 🔥 --- 2) ビル情報を取得してプロンプトに追加 ---
+    building_info_text = ""
+    if include_building_info:
+        building_manager = get_building_manager()
+        if building_manager and building_manager.available:
+            if target_building:
+                building_info_text = building_manager.format_building_info_for_prompt(target_building)
+                print(f"🏢 対象ビル情報: {target_building}")
+            else:
+                building_info_text = building_manager.format_building_info_for_prompt()
+                building_count = len(building_manager.get_building_list())
+                print(f"🏢 全ビル情報使用: {building_count}件")
+        else:
+            print("⚠️ ビル情報が利用できません")
+            building_info_text = "【ビル情報】利用可能なビル情報がありません。"
+    
+    # --- 3) プロンプト組み立て ---
+    context_parts = []
+    
+    # ビル情報を最初に配置
+    if building_info_text:
+        context_parts.append(building_info_text)
+    
+    # 設備資料情報
     equipment_context = f"""
 【参考資料】設備: {target_equipment} (カテゴリ: {equipment_info['equipment_category']})
 使用ファイル: {', '.join(sources)}
@@ -254,6 +284,10 @@ def generate_answer_with_equipment(
 【資料内容】
 {combined_text}
 """
+    context_parts.append(equipment_context)
+    
+    # 全体のコンテキストを結合
+    full_context = "\n\n".join(context_parts)
     
     system_msg = {
         "role": "system",
@@ -262,10 +296,10 @@ def generate_answer_with_equipment(
     
     user_msg = {
         "role": "user", 
-        "content": f"{equipment_context}\n\n【質問】\n{question}\n\n上記の資料を参考に、日本語で回答してください。"
+        "content": f"{full_context}\n\n【質問】\n{question}\n\n上記のビル情報と資料を参考に、日本語で回答してください。"
     }
     
-    # --- 3) Messages 組み立て ---
+    # --- 4) Messages 組み立て ---
     messages: List[Dict[str, Any]] = []
     
     # チャット履歴があれば追加
@@ -282,7 +316,7 @@ def generate_answer_with_equipment(
     else:
         messages = [system_msg, user_msg]
     
-    # --- 4) AI モデル呼び出し ---
+    # --- 5) AI モデル呼び出し ---
     try:
         print(f"🤖 API呼び出し開始 - モデル: {model}")
         
@@ -314,15 +348,133 @@ def generate_answer_with_equipment(
         print(f"❌ API呼び出しエラー: {e}")
         raise
     
-    return {
+    # 🔥 結果にビル情報も含める
+    result = {
         "answer": answer,
         "used_equipment": target_equipment,
         "equipment_info": equipment_info,
         "sources": sources,
-        "selected_files": selected_files,  # 🔥 選択ファイル情報を追加
-        "context_length": len(combined_text),
+        "selected_files": selected_files,
+        "context_length": len(full_context),  # 🔥 ビル情報込みの長さ
+        "building_info_included": include_building_info,  # 🔥 新規追加
+        "target_building": target_building,  # 🔥 新規追加
         "images": []  # 現バージョンでは画像は対応しない
     }
+    
+    return result
+
+# 🔥 ビル情報なしでの回答生成関数も追加
+def generate_answer_without_rag(
+        *,
+        prompt: str,
+        question: str,
+        model: str = _DEFAULT_MODEL,
+        chat_history: Optional[List[Dict[str, str]]] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        include_building_info: bool = True,  # 🔥 新規追加
+        target_building: Optional[str] = None,  # 🔥 新規追加
+    ) -> Dict[str, Any]:
+    """
+    設備資料なしでビル情報のみを使用して回答生成
+    """
+    
+    # 🔥 ビル情報を取得
+    building_info_text = ""
+    if include_building_info:
+        building_manager = get_building_manager()
+        if building_manager and building_manager.available:
+            if target_building:
+                building_info_text = building_manager.format_building_info_for_prompt(target_building)
+                print(f"🏢 対象ビル情報: {target_building}")
+            else:
+                building_info_text = building_manager.format_building_info_for_prompt()
+                building_count = len(building_manager.get_building_list())
+                print(f"🏢 全ビル情報使用: {building_count}件")
+        else:
+            print("⚠️ ビル情報が利用できません")
+            building_info_text = "【ビル情報】利用可能なビル情報がありません。"
+    
+    # API呼び出しパラメータを準備
+    messages = []
+    
+    # システムプロンプト
+    system_msg = {
+        "role": "system",
+        "content": prompt
+    }
+    messages.append(system_msg)
+    
+    # チャット履歴があれば追加
+    if chat_history and len(chat_history) > 1:
+        safe_history = [
+            {"role": m.get("role"), "content": m.get("content")}
+            for m in chat_history[:-1]  # 最後の質問は除く
+            if isinstance(m, dict) and m.get("role") and m.get("content")
+        ]
+        messages.extend(safe_history)
+    
+    # 現在の質問（ビル情報付き）
+    if building_info_text:
+        question_with_building = f"{building_info_text}\n\n【質問】\n{question}\n\n上記のビル情報を参考に、あなたの知識に基づいて回答してください。"
+    else:
+        question_with_building = f"【質問】\n{question}\n\nビル情報は利用せず、あなたの知識に基づいて回答してください。"
+    
+    user_msg = {
+        "role": "user",
+        "content": question_with_building
+    }
+    messages.append(user_msg)
+    
+    # API呼び出しパラメータ
+    api_params = {
+        "max_tokens": max_tokens or 4096,
+        "temperature": temperature or 0.0
+    }
+    
+    # モデルに応じてAPI呼び出し
+    try:
+        print(f"🤖 ビル情報のみでの回答生成開始 - モデル: {model}")
+        
+        if model.startswith("gpt"):
+            # Azure OpenAI GPT
+            azure_client = create_azure_client()
+            answer = call_azure_gpt(
+                azure_client,
+                model,
+                messages,
+                max_tokens=api_params["max_tokens"],
+                temperature=api_params["temperature"]
+            )
+        else:
+            # AWS Bedrock Claude
+            bedrock_client = create_bedrock_client()
+            model_id = get_claude_model_name(model)
+            answer = call_claude_bedrock(
+                bedrock_client,
+                model_id,
+                messages,
+                max_tokens=api_params["max_tokens"],
+                temperature=api_params["temperature"] if api_params["temperature"] != 0.0 else None
+            )
+        
+        print(f"✅ ビル情報のみでの回答生成完了 - 回答文字数: {len(answer)}")
+        
+        return {
+            "answer": answer,
+            "used_equipment": "なし（ビル情報のみ使用）",
+            "equipment_info": {},
+            "sources": [],
+            "selected_files": [],
+            "context_length": len(building_info_text),
+            "building_info_included": include_building_info,
+            "target_building": target_building,
+            "images": []
+        }
+        
+    except Exception as e:
+        print(f"❌ ビル情報のみでの回答生成エラー: {e}")
+        raise
 
 # ---------------------------------------------------------------------------
 # 質問から設備を自動推定する関数
@@ -367,6 +519,43 @@ def detect_equipment_from_question(question: str, available_equipment: List[str]
                     return equipment
     
     print("❓ 設備を自動推定できませんでした")
+    return None
+
+# 🔥 質問からビルを自動推定する関数を追加
+def detect_building_from_question(question: str) -> Optional[str]:
+    """
+    質問文から対象ビルを推定
+    
+    Args:
+        question: ユーザーの質問文
+        
+    Returns:
+        推定されたビル名または None
+    """
+    building_manager = get_building_manager()
+    if not building_manager or not building_manager.available:
+        return None
+    
+    # 利用可能なビル一覧を取得
+    available_buildings = building_manager.get_building_list()
+    
+    # 質問文を正規化
+    question_lower = question.lower()
+    
+    # 各ビルについてキーワード検索
+    for building_name in available_buildings:
+        # ビル名で直接検索
+        if building_name.lower() in question_lower:
+            print(f"🏢 ビル名推定: '{building_name}'")
+            return building_name
+        
+        # キーワード検索を実行
+        matched_buildings = building_manager.search_building_by_keyword(building_name)
+        if matched_buildings:
+            print(f"🏢 キーワード推定: '{building_name}' → {matched_buildings[0]}")
+            return matched_buildings[0]
+    
+    print("❓ ビルを自動推定できませんでした")
     return None
 
 # ---------------------------------------------------------------------------

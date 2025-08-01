@@ -137,7 +137,7 @@ def download_fix_files_from_drive(fixes_folder_id: str) -> Dict[str, bytes]:
         for file_info in files:
             file_name = file_info["name"]
             file_id = file_info["id"]
-
+            
             if not file_name.lower().endswith((".json", ".txt", ".yaml", ".yml", ".png")):
                 logger.debug("📁 スキップ（対象外）: %s", file_name)
                 continue

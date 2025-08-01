@@ -8,10 +8,10 @@ import pandas as pd
 import json
 
 from src.rag_preprocess import preprocess_files
-from src.rag_qa import generate_answer_with_equipment, detect_equipment_from_question
-from src.startup_loader import initialize_equipment_data
+from src.startup_loader import initialize_equipment_data, get_available_buildings, get_building_info_for_prompt
 from src.logging_utils import init_logger
 from src.sheets_manager import log_to_sheets, get_sheets_manager, send_prompt_to_model_comparison
+from src.rag_qa import generate_answer_with_equipment, detect_equipment_from_question, detect_building_from_question, generate_answer_without_rag
 
 import yaml
 import streamlit_authenticator as stauth
@@ -1506,7 +1506,100 @@ if st.session_state["authentication_status"]:
                             mime="text/plain",
                             key=f"download_{selected_equipment_for_view}_{file_name}"
                         )
-        
+            st.divider()
+
+            # ------- ビル情報選択 -------
+            st.markdown("### 🏢 対象ビル選択")
+
+            available_buildings = get_available_buildings()
+
+            if not available_buildings:
+                st.error("❌ ビル情報が読み込まれていません")
+                st.session_state["selected_building"] = None
+                st.session_state["include_building_info"] = False
+            else:
+                st.info(f"📊 利用可能ビル数: {len(available_buildings)}")
+                
+                # ビル情報を含めるかどうかのチェックボックス
+                include_building = st.checkbox(
+                    "ビル情報をプロンプトに含める",
+                    value=st.session_state.get("include_building_info", True),
+                    help="チェックを入れると、選択されたビルの詳細情報が回答生成時に使用されます"
+                )
+                st.session_state["include_building_info"] = include_building
+                
+                if include_building:
+                    # ビル選択方式
+                    building_selection_mode = st.radio(
+                        "ビル選択方式",
+                        ["特定ビルを選択", "全ビル情報を使用", "自動推定"],
+                        index=st.session_state.get("building_selection_mode_index", 0),
+                        help="質問に使用するビル情報の選択方法"
+                    )
+                    
+                    # 選択状態を保存
+                    mode_options = ["特定ビルを選択", "全ビル情報を使用", "自動推定"]
+                    st.session_state["building_selection_mode_index"] = mode_options.index(building_selection_mode)
+                    
+                    if building_selection_mode == "特定ビルを選択":
+                        selected_building = st.selectbox(
+                            "ビルを選択してください",
+                            options=[""] + available_buildings,
+                            index=0,
+                            help="この特定のビルの情報のみを使用して回答を生成します"
+                        )
+                        st.session_state["selected_building"] = selected_building if selected_building else None
+                        st.session_state["building_mode"] = "specific"
+                        
+                    elif building_selection_mode == "全ビル情報を使用":
+                        st.info("🏢 全ビルの情報を使用して回答します")
+                        st.session_state["selected_building"] = None
+                        st.session_state["building_mode"] = "all"
+                        
+                    else:  # 自動推定
+                        st.info("🤖 質問文からビルを自動推定して回答します")
+                        st.session_state["selected_building"] = None
+                        st.session_state["building_mode"] = "auto"
+                
+                else:
+                    st.session_state["selected_building"] = None
+                    st.session_state["building_mode"] = "none"
+                
+                # 現在の選択状態を表示
+                if include_building:
+                    current_building = st.session_state.get("selected_building")
+                    building_mode = st.session_state.get("building_mode", "none")
+                    
+                    if building_mode == "specific" and current_building:
+                        st.success(f"✅ 選択中: **{current_building}**")
+                        
+                        # ビル詳細情報の表示（折りたたみ）
+                        with st.expander("🏢 ビル詳細情報", expanded=False):
+                            building_info_text = get_building_info_for_prompt(current_building)
+                            st.text_area(
+                                "ビル情報プレビュー",
+                                value=building_info_text,
+                                height=300,
+                                key=f"building_preview_{current_building}"
+                            )
+                            
+                    elif building_mode == "all":
+                        st.success("✅ 全ビル情報を使用")
+                        
+                        # 全ビル情報のプレビュー
+                        with st.expander("🏢 全ビル情報プレビュー", expanded=False):
+                            all_building_info = get_building_info_for_prompt()
+                            st.text_area(
+                                "全ビル情報プレビュー",
+                                value=all_building_info,
+                                height=400,
+                                key="all_buildings_preview"
+                            )
+                            
+                    elif building_mode == "auto":
+                        st.success("✅ 自動推定モード")
+                else:
+                    st.info("ℹ️ ビル情報は使用しません")
         else:
             st.error("❌ 設備データが読み込まれていません")
 
@@ -1586,7 +1679,32 @@ if st.session_state["authentication_status"]:
         # シンプルなステータス表示
         with st.status(f"🤖 {st.session_state.claude_model} で回答を生成中...", expanded=True) as status:
             # プロンプト取得
+            # 🔥 既存のプロンプト取得の後に以下を追加
             prompt = st.session_state.prompts[st.session_state.design_mode]
+            
+            # ビル情報設定の取得
+            include_building_info = st.session_state.get("include_building_info", False)
+            building_mode = st.session_state.get("building_mode", "none")
+            selected_building = st.session_state.get("selected_building")
+            
+            # ビル情報の決定
+            target_building = None
+            if include_building_info:
+                if building_mode == "specific":
+                    target_building = selected_building
+                    if target_building:
+                        st.info(f"🏢 使用ビル: {target_building}")
+                elif building_mode == "all":
+                    target_building = None  # 全ビル情報
+                    st.info("🏢 全ビル情報を使用")
+                elif building_mode == "auto":
+                    # 自動推定を実行
+                    target_building = detect_building_from_question(user_prompt)
+                    if target_building:
+                        st.info(f"🤖 自動推定されたビル: {target_building}")
+                    else:
+                        st.info("🏢 ビルを推定できませんでした。全ビル情報を使用します")
+                        target_building = None
 
             logger.info("💬 gen_start — mode=%s model=%s sid=%s",
                 st.session_state.design_mode,
@@ -1636,6 +1754,8 @@ if st.session_state["authentication_status"]:
                             "selected_files": selected_files,
                             "model": st.session_state.claude_model,
                             "chat_history": msgs,
+                            "include_building_info": include_building_info,  # 🔥 新規追加
+                            "target_building": target_building,  # 🔥 新規追加
                         }
                         
                         # カスタム設定があれば追加
@@ -1654,73 +1774,105 @@ if st.session_state["authentication_status"]:
                         used_equipment = rag_res["used_equipment"]
                         used_files = rag_res.get("selected_files", [])
                         
-                        logger.info("💬 設備全文投入完了 — equipment=%s  files=%d  api_elapsed=%.2fs  回答文字数=%d",
-                                    used_equipment, len(used_files), api_elapsed, len(assistant_reply))
+                        logger.info("💬 設備+ビル情報での回答完了 — equipment=%s building=%s files=%d api_elapsed=%.2fs 回答文字数=%d",
+                                used_equipment, target_building or "全ビル", len(used_files), api_elapsed, len(assistant_reply))
 
                 # 設備なしモードの処理
                 if not target_equipment:
-                    st.info("💭 設備資料なしでの一般的な回答を生成します")
+                    if include_building_info:
+                        st.info("🏢 ビル情報のみでの回答を生成します")
+                        
+                        # ビル情報のみでの回答生成
+                        without_rag_params = {
+                            "prompt": prompt,
+                            "question": user_prompt,
+                            "model": st.session_state.claude_model,
+                            "chat_history": msgs,
+                            "include_building_info": include_building_info,
+                            "target_building": target_building,
+                        }
+                        
+                        # カスタム設定があれば追加
+                        if st.session_state.get("temperature") != 0.0:
+                            without_rag_params["temperature"] = st.session_state.temperature
+                        if st.session_state.get("max_tokens") is not None:
+                            without_rag_params["max_tokens"] = st.session_state.max_tokens
+                        
+                        import time
+                        t_api = time.perf_counter()
+                        no_rag_res = generate_answer_without_rag(**without_rag_params)
+                        api_elapsed = time.perf_counter() - t_api
+                        
+                        assistant_reply = no_rag_res["answer"]
+                        used_equipment = "なし（ビル情報のみ使用）"
+                        used_files = []
+                        
+                        logger.info("💬 ビル情報のみでの回答完了 — building=%s api_elapsed=%.2fs 回答文字数=%d",
+                                target_building or "全ビル", api_elapsed, len(assistant_reply))
                     
-                    # API呼び出しパラメータを準備
-                    messages = []
-                    
-                    # システムプロンプト
-                    system_msg = {
-                        "role": "system",
-                        "content": prompt
-                    }
-                    messages.append(system_msg)
-                    
-                    # チャット履歴があれば追加
-                    if len(msgs) > 1:
-                        safe_history = [
-                            {"role": m.get("role"), "content": m.get("content")}
-                            for m in msgs[:-1]  # 最後の質問は除く
-                            if isinstance(m, dict) and m.get("role") and m.get("content")
-                        ]
-                        messages.extend(safe_history)
-                    
-                    # 現在の質問
-                    user_msg = {
-                        "role": "user",
-                        "content": f"【質問】\n{user_prompt}\n\n設備資料は利用せず、あなたの知識に基づいて回答してください。"
-                    }
-                    messages.append(user_msg)
-                    
-                    # API呼び出しパラメータ
-                    max_tokens = st.session_state.get("max_tokens") or 4096
-                    temperature = st.session_state.get("temperature", 0.0)
-                    
-                    # モデルに応じてAPI呼び出し
-                    import time
-                    t_api = time.perf_counter()
-                    
-                    if st.session_state.claude_model.startswith("gpt"):
-                        # Azure OpenAI GPT
-                        azure_client = setup_azure_client()
-                        assistant_reply = call_azure_gpt(
-                            azure_client,
-                            st.session_state.claude_model,
-                            messages,
-                            max_tokens=max_tokens,
-                            temperature=temperature
-                        )
                     else:
-                        # AWS Bedrock Claude
-                        assistant_reply = call_claude_bedrock(
-                            bedrock_client,
-                            get_claude_model_name(st.session_state.claude_model),
-                            messages,
-                            max_tokens=max_tokens,
-                            temperature=temperature
-                        )
-                    
-                    api_elapsed = time.perf_counter() - t_api
-                    
-                    used_equipment = "なし（一般知識による回答）"
-                    used_files = []
-                    
-                    logger.info("💬 一般回答完了 — api_elapsed=%.2fs  回答文字数=%d",
+                        st.info("💭 設備資料なしでの一般的な回答を生成します")
+                        
+                        # 既存の一般回答処理をそのまま使用
+                        # API呼び出しパラメータを準備
+                        messages = []
+                        
+                        # システムプロンプト
+                        if prompt:
+                            messages.append({
+                                "role": "system",
+                                "content": prompt
+                            })
+                        
+                        # チャット履歴があれば追加
+                        if len(msgs) > 1:
+                            safe_history = [
+                                {"role": m.get("role"), "content": m.get("content")}
+                                for m in msgs[:-1]  # 最後のメッセージ以外
+                                if isinstance(m, dict) and m.get("role") and m.get("content")
+                            ]
+                            messages.extend(safe_history)
+                        
+                        # 現在のユーザー入力
+                        messages.append({
+                            "role": "user",
+                            "content": f"【質問】\n{user_prompt}\n\n設備資料は利用せず、あなたの知識に基づいて回答してください。"
+                        })
+                        
+                        # API呼び出しパラメータ
+                        max_tokens = st.session_state.get("max_tokens") or 4096
+                        temperature = st.session_state.get("temperature", 0.0)
+                        
+                        # モデルに応じてAPI呼び出し
+                        import time
+                        t_api = time.perf_counter()
+                        
+                        if st.session_state.claude_model.startswith("gpt"):
+                            # Azure OpenAI GPT
+                            azure_client = setup_azure_client()
+                            assistant_reply = call_azure_gpt(
+                                azure_client,
+                                st.session_state.claude_model,
+                                messages,
+                                max_tokens=max_tokens,
+                                temperature=temperature
+                            )
+                        else:
+                            # AWS Bedrock Claude
+                            assistant_reply = call_claude_bedrock(
+                                bedrock_client,
+                                get_claude_model_name(st.session_state.claude_model),
+                                messages,
+                                max_tokens=max_tokens,
+                                temperature=temperature
+                            )
+                        
+                        api_elapsed = time.perf_counter() - t_api
+                        
+                        used_equipment = "なし（一般知識による回答）"
+                        used_files = []
+                        
+                        logger.info("💬 一般回答完了 — api_elapsed=%.2fs  回答文字数=%d",
                                 api_elapsed, len(assistant_reply))
 
             except Exception as e:
