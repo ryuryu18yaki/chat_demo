@@ -1542,12 +1542,35 @@ if st.session_state["authentication_status"]:
                     st.session_state["building_selection_mode_index"] = mode_options.index(building_selection_mode)
                     
                     if building_selection_mode == "特定ビルを選択":
-                        selected_building = st.selectbox(
-                            "ビルを選択してください",
-                            options=[""] + available_buildings,
-                            index=0,
-                            help="この特定のビルの情報のみを使用して回答を生成します"
+                        # 🔥 検索ボックスを追加
+                        search_query = st.text_input(
+                            "🔍 ビル名で検索",
+                            placeholder="ビル名の一部を入力...",
+                            help="入力した文字でビル一覧をフィルタリングできます"
                         )
+                        
+                        # 🔥 検索結果でフィルタリング
+                        if search_query:
+                            filtered_buildings = [
+                                building for building in available_buildings 
+                                if search_query.lower() in building.lower()
+                            ]
+                            st.info(f"🔍 検索結果: {len(filtered_buildings)}件")
+                        else:
+                            filtered_buildings = available_buildings
+                        
+                        # フィルタリングされたリストでセレクトボックス表示
+                        if filtered_buildings:
+                            selected_building = st.selectbox(
+                                "ビルを選択してください",
+                                options=[""] + filtered_buildings,
+                                index=0,
+                                help="上の検索ボックスで絞り込むか、直接選択してください"
+                            )
+                        else:
+                            st.warning("⚠️ 検索条件に一致するビルが見つかりません")
+                            selected_building = None
+                        
                         st.session_state["selected_building"] = selected_building if selected_building else None
                         st.session_state["building_mode"] = "specific"
                         
