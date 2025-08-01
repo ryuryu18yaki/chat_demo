@@ -1,3 +1,5 @@
+# src/building_manager.py（簡素化版）
+
 import json
 from typing import Dict, List, Any, Optional
 from src.logging_utils import init_logger
@@ -24,38 +26,64 @@ class BuildingManager:
     def _load_building_data(self, file_dicts: List[Dict[str, Any]]):
         """ファイルからビルマスターJSONを読み込み"""
         
+        logger.info("🔍 ビルマスター検索開始 - ファイル数: %d", len(file_dicts))
+        
+        # デバッグ: 全ファイル名を表示
+        for i, file_dict in enumerate(file_dicts):
+            filename = file_dict.get("name", "")
+            logger.info("🔍 ファイル %d: %s", i+1, filename)
+        
         # 三菱地所ビルマスター.jsonを探す
         building_master_file = None
         for file_dict in file_dicts:
             filename = file_dict.get("name", "")
+            logger.info("🔍 チェック中: %s", filename)
+            
             if "三菱地所ビルマスター" in filename and filename.endswith(".json"):
+                logger.info("✅ ビルマスターファイル発見: %s", filename)
                 building_master_file = file_dict
                 break
+            else:
+                logger.info("❌ マッチしない: %s", filename)
         
         if not building_master_file:
             logger.warning("⚠️ 三菱地所ビルマスター.json が見つかりません")
+            logger.warning("📝 検索条件: ファイル名に'三菱地所ビルマスター'を含み、'.json'で終わるファイル")
             return
         
         try:
             # JSONデータを読み込み
             file_data = building_master_file.get("data", b"")
+            logger.info("📄 JSONデータサイズ: %d bytes", len(file_data))
+            
             json_data = json.loads(file_data.decode("utf-8"))
+            logger.info("📄 JSON解析成功")
+            
             self.building_data = json_data
             
             # ビル一覧を生成（キーまたは略称から）
             if isinstance(json_data, dict):
                 # ビル名をキーとした辞書の場合
                 self.building_list = list(json_data.keys())
+                logger.info("📄 辞書形式のJSONデータ - キー数: %d", len(self.building_list))
             elif isinstance(json_data, list):
                 # ビル情報のリストの場合
                 self.building_list = [
                     building.get("略称", f"ビル{i+1}")
                     for i, building in enumerate(json_data)
                 ]
+                logger.info("📄 リスト形式のJSONデータ - 要素数: %d", len(self.building_list))
+            else:
+                logger.warning("⚠️ 予期しないJSONデータ形式: %s", type(json_data))
+                return
             
             self.available = True
             logger.info("✅ ビルマスターデータ読み込み成功: %d件のビル情報", len(self.building_list))
+            logger.info("📋 ビル一覧: %s", self.building_list[:5])  # 最初の5件のみ表示
             
+        except json.JSONDecodeError as e:
+            logger.error("❌ JSON解析エラー: %s", e)
+            self.available = False
         except Exception as e:
             logger.error("❌ ビルマスターデータ読み込み失敗: %s", e)
             self.available = False

@@ -83,6 +83,17 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
 
     # 🔥 ビル情報マネージャーを初期化（file_dictsを使用）
     logger.info(f"\n🏢 ビル情報マネージャー初期化中...")
+    logger.info("🔍 file_dicts 詳細情報:")
+    logger.info("   - file_dicts 型: %s", type(file_dicts))
+    logger.info("   - file_dicts 長さ: %d", len(file_dicts) if file_dicts else 0)
+    
+    if file_dicts:
+        logger.info("   - 最初の3ファイル:")
+        for i, file_dict in enumerate(file_dicts[:3]):
+            name = file_dict.get("name", "N/A")
+            size = file_dict.get("size", 0)
+            logger.info("     %d. %s (%d bytes)", i+1, name, size)
+    
     building_manager = initialize_building_manager(file_dicts)
     
     if building_manager.available:
