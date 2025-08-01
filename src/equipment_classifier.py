@@ -79,11 +79,7 @@ def extract_equipment_from_filename(filename: str) -> Optional[str]:
         ],
 
         "電灯設備": [
-            r"照明設計資料",
-            r"照明設計",
             r"電灯設備",
-            r"照明器具",
-            r"照明",
             r"LED照明"
         ],
 
@@ -116,7 +112,7 @@ def extract_equipment_from_filename(filename: str) -> Optional[str]:
 
         "テレビ共聴設備": [
             r"テレビ共聴",
-            r"共同受信設備",
+            r"共聴",
             r"テレビアンテナ",
             r"地上デジタル放送"
         ],
@@ -126,7 +122,7 @@ def extract_equipment_from_filename(filename: str) -> Optional[str]:
             r"電話",
             r"LAN"
         ],
-        
+
         "動力設備": [
             r"動力設備"
         ]
