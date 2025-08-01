@@ -39,16 +39,37 @@ class BuildingManager:
             filename = file_dict.get("name", "")
             logger.info("🔍 チェック中: %s", filename)
             
-            if "三菱地所ビルマスター" in filename and filename.endswith(".json"):
+            # 🔥 修正: より確実な検索条件
+            filename_lower = filename.lower()
+            
+            # 条件1: 三菱地所ビルマスター が含まれている
+            contains_master = "三菱地所ビルマスター" in filename
+            # 条件2: .json で終わる
+            is_json = filename.endswith(".json")
+            
+            logger.info("🔍   - '三菱地所ビルマスター' 含有: %s", contains_master)
+            logger.info("🔍   - '.json' 終了: %s", is_json)
+            
+            if contains_master and is_json:
                 logger.info("✅ ビルマスターファイル発見: %s", filename)
                 building_master_file = file_dict
                 break
             else:
                 logger.info("❌ マッチしない: %s", filename)
+                
+                # 🔥 追加: より緩い検索も試行
+                if "ビルマスター" in filename and ".json" in filename:
+                    logger.info("🔍 緩い条件でマッチ: %s", filename)
+                    building_master_file = file_dict
+                    break
         
         if not building_master_file:
             logger.warning("⚠️ 三菱地所ビルマスター.json が見つかりません")
             logger.warning("📝 検索条件: ファイル名に'三菱地所ビルマスター'を含み、'.json'で終わるファイル")
+            
+            # 🔥 追加: JSONファイルの一覧を表示
+            json_files = [f.get("name", "") for f in file_dicts if f.get("name", "").endswith(".json")]
+            logger.warning("📝 利用可能なJSONファイル: %s", json_files)
             return
         
         try:
@@ -56,7 +77,21 @@ class BuildingManager:
             file_data = building_master_file.get("data", b"")
             logger.info("📄 JSONデータサイズ: %d bytes", len(file_data))
             
-            json_data = json.loads(file_data.decode("utf-8"))
+            if len(file_data) == 0:
+                logger.error("❌ JSONファイルが空です")
+                return
+            
+            # 文字エンコーディングを試行
+            try:
+                json_text = file_data.decode("utf-8")
+            except UnicodeDecodeError:
+                logger.warning("⚠️ UTF-8デコードに失敗、shift_jisを試行")
+                json_text = file_data.decode("shift_jis")
+            
+            logger.info("📄 JSON文字列長: %d", len(json_text))
+            logger.info("📄 JSON先頭100文字: %s", json_text[:100])
+            
+            json_data = json.loads(json_text)
             logger.info("📄 JSON解析成功")
             
             self.building_data = json_data
@@ -83,6 +118,7 @@ class BuildingManager:
             
         except json.JSONDecodeError as e:
             logger.error("❌ JSON解析エラー: %s", e)
+            logger.error("❌ JSON文字列の一部: %s", json_text[:200] if 'json_text' in locals() else "取得できません")
             self.available = False
         except Exception as e:
             logger.error("❌ ビルマスターデータ読み込み失敗: %s", e)
