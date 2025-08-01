@@ -7,28 +7,29 @@ logger = init_logger()
 class BuildingManager:
     """三菱地所ビルマスター.jsonを管理するクラス"""
     
-    def __init__(self, fixes_files: Dict[str, bytes] = None):
+    def __init__(self, file_dicts: List[Dict[str, Any]]):
         """
         初期化
         
         Args:
-            fixes_files: download_fix_files_from_drive の結果
+            file_dicts: download_files_from_drive の結果
         """
         self.building_data: Dict[str, Any] = {}
         self.building_list: List[str] = []
         self.available = False
         
-        if fixes_files:
-            self._load_building_data(fixes_files)
+        if file_dicts:
+            self._load_building_data(file_dicts)
     
-    def _load_building_data(self, fixes_files: Dict[str, bytes]):
-        """ビルマスターJSONを読み込み"""
+    def _load_building_data(self, file_dicts: List[Dict[str, Any]]):
+        """ファイルからビルマスターJSONを読み込み"""
         
         # 三菱地所ビルマスター.jsonを探す
         building_master_file = None
-        for filename in fixes_files.keys():
+        for file_dict in file_dicts:
+            filename = file_dict.get("name", "")
             if "三菱地所ビルマスター" in filename and filename.endswith(".json"):
-                building_master_file = filename
+                building_master_file = file_dict
                 break
         
         if not building_master_file:
@@ -37,7 +38,8 @@ class BuildingManager:
         
         try:
             # JSONデータを読み込み
-            json_data = json.loads(fixes_files[building_master_file].decode("utf-8"))
+            file_data = building_master_file.get("data", b"")
+            json_data = json.loads(file_data.decode("utf-8"))
             self.building_data = json_data
             
             # ビル一覧を生成（キーまたは略称から）
@@ -261,10 +263,10 @@ def get_building_manager() -> Optional[BuildingManager]:
     """BuildingManagerのインスタンスを取得"""
     return _building_manager
 
-def initialize_building_manager(fixes_files: Dict[str, bytes]) -> BuildingManager:
+def initialize_building_manager(file_dicts: List[Dict[str, Any]]) -> BuildingManager:
     """BuildingManagerを初期化"""
     global _building_manager
-    _building_manager = BuildingManager(fixes_files)
+    _building_manager = BuildingManager(file_dicts)
     return _building_manager
 
 def format_all_buildings_for_prompt() -> str:

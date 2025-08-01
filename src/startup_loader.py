@@ -1,3 +1,4 @@
+# src/startup_loader.py (ビル情報統合版)
 from streamlit import secrets
 from pathlib import Path
 
@@ -77,18 +78,18 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
             # 👇 補正適用処理をここで呼び出し
             equipment_data = apply_text_replacements_from_fixmap(equipment_data, fixes_files)
             
-            # 🔥 ビル情報マネージャーを初期化
-            logger.info(f"\n🏢 ビル情報マネージャー初期化中...")
-            building_manager = initialize_building_manager(fixes_files)
-            
-            if building_manager.available:
-                building_count = len(building_manager.get_building_list())
-                logger.info(f"✅ ビル情報初期化完了: {building_count}件のビル情報")
-            else:
-                logger.warning("⚠️ ビル情報の初期化に失敗しました")
-                
     except Exception as fix_err:
         logger.warning(f"⚠️ 補正ファイル取得に失敗: {fix_err}")
+
+    # 🔥 ビル情報マネージャーを初期化（file_dictsを使用）
+    logger.info(f"\n🏢 ビル情報マネージャー初期化中...")
+    building_manager = initialize_building_manager(file_dicts)
+    
+    if building_manager.available:
+        building_count = len(building_manager.get_building_list())
+        logger.info(f"✅ ビル情報初期化完了: {building_count}件のビル情報")
+    else:
+        logger.warning("⚠️ ビル情報の初期化に失敗しました")
 
     # 設備一覧とカテゴリ一覧を生成
     equipment_list = list(equipment_data.keys())
