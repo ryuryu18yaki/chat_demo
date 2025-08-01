@@ -39,33 +39,50 @@ class BuildingManager:
             filename = file_dict.get("name", "")
             logger.info("🔍 チェック中: %s", filename)
             
-            # 🔥 修正: より確実な検索条件
+            # 🔥 文字コード詳細デバッグ
+            logger.info("🔍 ファイル名の文字コード詳細:")
+            for i, char in enumerate(filename):
+                logger.info("  文字 %d: '%s' (ord=%d)", i, char, ord(char))
+            
+            # 🔥 検索文字列の文字コード
+            search_text = "三菱地所ビルマスター"
+            logger.info("🔍 検索文字列の文字コード詳細:")
+            for i, char in enumerate(search_text):
+                logger.info("  文字 %d: '%s' (ord=%d)", i, char, ord(char))
+            
+            # 🔥 修正: 非常に緩い検索条件
             filename_lower = filename.lower()
             
-            # 条件1: 三菱地所ビルマスター が含まれている
-            contains_master = "三菱地所ビルマスター" in filename
-            # 条件2: .json で終わる
-            is_json = filename.endswith(".json")
+            # 条件: "ビルマスター" が含まれているだけでOK
+            contains_master = "ビルマスター" in filename
             
-            logger.info("🔍   - '三菱地所ビルマスター' 含有: %s", contains_master)
-            logger.info("🔍   - '.json' 終了: %s", is_json)
+            logger.info("🔍   - 'ビルマスター' 含有: %s", contains_master)
             
-            if contains_master and is_json:
+            # 🔥 さらに詳細デバッグ
+            if "ビルマスター" in filename:
                 logger.info("✅ ビルマスターファイル発見: %s", filename)
                 building_master_file = file_dict
                 break
             else:
                 logger.info("❌ マッチしない: %s", filename)
                 
-                # 🔥 追加: より緩い検索も試行
-                if "ビルマスター" in filename:
-                    logger.info("🔍 緩い条件でマッチ: %s", filename)
+                # 🔥 文字ごとの部分一致も試行
+                if "ビル" in filename:
+                    logger.info("🔍 'ビル' は含まれています")
+                if "マスター" in filename:
+                    logger.info("🔍 'マスター' は含まれています")
+                if ".json" in filename:
+                    logger.info("🔍 '.json' は含まれています")
+                
+                # 🔥 最終手段: ファイル名に json が含まれていれば対象とする
+                if ".json" in filename.lower():
+                    logger.info("🎯 JSONファイルとして強制採用: %s", filename)
                     building_master_file = file_dict
                     break
         
         if not building_master_file:
             logger.warning("⚠️ 三菱地所ビルマスター.json が見つかりません")
-            logger.warning("📝 検索条件: ファイル名に'三菱地所ビルマスター'を含むファイル")
+            logger.warning("📝 検索条件: ファイル名に'三菱地所ビルマスター'を含み、'.json'で終わるファイル")
             
             # 🔥 追加: JSONファイルの一覧を表示
             json_files = [f.get("name", "") for f in file_dicts if f.get("name", "").endswith(".json")]
