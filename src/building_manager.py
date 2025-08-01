@@ -58,14 +58,14 @@ class BuildingManager:
                 logger.info("❌ マッチしない: %s", filename)
                 
                 # 🔥 追加: より緩い検索も試行
-                if "ビルマスター" in filename and ".json" in filename:
+                if "ビルマスター" in filename:
                     logger.info("🔍 緩い条件でマッチ: %s", filename)
                     building_master_file = file_dict
                     break
         
         if not building_master_file:
             logger.warning("⚠️ 三菱地所ビルマスター.json が見つかりません")
-            logger.warning("📝 検索条件: ファイル名に'三菱地所ビルマスター'を含み、'.json'で終わるファイル")
+            logger.warning("📝 検索条件: ファイル名に'三菱地所ビルマスター'を含むファイル")
             
             # 🔥 追加: JSONファイルの一覧を表示
             json_files = [f.get("name", "") for f in file_dicts if f.get("name", "").endswith(".json")]
