@@ -306,20 +306,48 @@ class BuildingManager:
         return None
     
     def get_all_buildings_info(self) -> Dict[str, Any]:
-        """全ビル情報を取得"""
+        """全ビル情報を取得（修正版）"""
         if not self.available:
             return {}
         
-        if isinstance(self.building_data, dict):
-            return self.building_data.copy()
-        elif isinstance(self.building_data, list):
-            # リスト形式の場合は略称をキーとした辞書に変換
-            return {
-                building.get("略称", f"ビル{i+1}"): building
-                for i, building in enumerate(self.building_data)
-            }
+        all_buildings = {}
         
-        return {}
+        # 🎯 修正：リストであることを前提とした処理
+        if isinstance(self.building_data, list):
+            logger.info("🔍 リスト形式で全ビル処理開始")
+            
+            # ✅ 特定ビル検索と同じロジックを使用
+            for i, building in enumerate(self.building_data):
+                if isinstance(building, dict):
+                    # ビル名を決定（特定ビル検索と同じ優先順位）
+                    building_name = None
+                    
+                    if "toko建物コード" in building and building["toko建物コード"]:
+                        building_name = building["toko建物コード"]
+                    elif "略称" in building and building["略称"]:
+                        building_name = building["略称"]
+                    elif "toko建物コードNo." in building and building["toko建物コードNo."]:
+                        building_name = f"ビル{building['toko建物コードNo.']}"
+                    else:
+                        building_name = f"ビル{i+1}"
+                    
+                    # ✅ 完全なビル情報辞書をそのまま使用
+                    all_buildings[building_name] = building
+                    logger.info(f"  - 追加: {building_name}")
+        
+        else:
+            # 🔥 この分岐は基本的に実行されないはず
+            logger.warning("⚠️ 予期しないデータ形式: %s", type(self.building_data))
+            logger.warning("⚠️ リスト形式を想定していましたが、違う形式でした")
+            
+            # フォールバック：辞書形式として処理を試行
+            if isinstance(self.building_data, dict):
+                for key, value in self.building_data.items():
+                    if isinstance(value, dict):
+                        all_buildings[key] = value
+        
+        logger.info("🔍 get_all_buildings_info結果: %d件", len(all_buildings))
+        return all_buildings
     
     def format_building_info_for_prompt(self, building_name: str = None) -> str:
         """
