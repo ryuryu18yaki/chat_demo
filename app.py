@@ -655,58 +655,6 @@ if st.session_state["authentication_status"]:
     - **C工事**：入居者が独自に施工する工事（電話・LAN・防犯設備など）
     - 本システムでは、C工事設備については配管類の数量算出のみを行います
     ────────────────────────────────
-    ## 【今回の設計対象ビル】
-    - ビル正式名称: 丸の内ビルディング
-    - ビル略称: （記載なし）
-    - 床面積: 1,949.00㎡ (589.57坪)～2,284.00㎡ (690.91坪)
-    - 床荷重: 500kg/㎡HDZ(重荷重対応)800kg/㎡
-    - 天井高: 2,800mm（ＯＡフロア設置後）
-    - コンセント容量: 75VA/㎡ 増設対応可能
-    - OAフロア: 高さ100mm
-    - トイレ: 男女各1カ所
-    - 給湯室: 各2カ所
-    - 管轄の消防本部/局:東京消防庁
-    - 管轄の消防署:丸の内消防署
-    - 自火報設備（基準階） メーカー: 能美防災㈱
-    - 自火報設備（基準階） 型　番: （記載なし）
-    - 自火報設備（基準階） 感知器種別: 煙感知器
-    - 自火報設備（基準階） 受信機 更新時期: （記載なし）
-    - 自火報設備（基準階） 請負対象: （記載なし）
-    - 非常放送（基準階） メーカー: ホーチキ(株)(TOA)
-    - 非常放送（基準階） 型　番: （記載なし）
-    - 非常放送（基準階） 放送設備 更新時期: （記載なし）
-    - 非常照明（基準階） メーカー: パナソニック
-    - 非常照明（基準階） 型　番: （記載なし）
-    - 非常照明（基準階） バッテリー 内臓・別置型: 内臓・別置
-    - 非常照明（基準階） 店舗　BAT　(白図): 店舗　BAT　(白図)
-    - 誘導灯（基準階） メーカー: パナソニック
-    - 誘導灯（基準階） 型　番: （記載なし）
-    - 誘導灯（基準階） 型式 B級・C級: B級 BH型
-    - 誘導灯（基準階） 東京消防庁基準: 出入口や誘導灯が障害物により視認できない場合であっても、人が概ね５ｍ移動することにより出入 口や誘導灯を視認できる場合は、容易に見とおしできるものとみなす
-    - 所在地: 東京都千代田区丸の内二丁目4番1号
-    - アクセス: JR各線、丸ノ内線「東京駅」 直結
-    - 竣工年月: 2002年8月
-    - リニューアル年月: 2025年2月
-    - 規模地上: 37階・地下 4階・塔屋 2階
-    - 構造: 鉄骨造・一部鉄骨鉄筋コンクリート造
-    - 延床面積: 159,901.38㎡ (48,370.17坪)
-    - 有効面積: 49,195.720㎡ (14,881.71坪)
-    - 敷地面積: 10,029.45㎡ (3,033.91坪)
-    - 建物高さ: 最高部 179.0ｍ
-    - 設計監理: 三菱地所設計
-    - エレベーター: 乗用 23台　貨物用 2台
-    - 空調設備: 各階8分割にゾーニング
-    - 基準冷暖房供給時間（事務所）: 平日 8:30-19:00、土曜 設定無し、日祝 設定無し
-    - 基準冷暖房供給時間（店舗）: 全日 9:30-24:00
-    - 通信インフラ: 光ファイバ敷設済
-    - 開閉館時間: 全日 6:00-24:30
-    - 管理形態: 24時間有人管理
-    - 夜間入退館方法: インターフォンによる呼出
-    - ガレージ収容台数: 376台 (高さ 3,000mm)
-    - ガレージ営業時間: 全日 6:00-24:00、定期契約車は24時間入出庫可
-    - ビル管理室電話番号: 03-3240-8251
-    - 用途区分（消防）: 16項(イ)
-    ────────────────────────────────
     blind_knowledge
     ────────────────────────────────
     ## 【消防署事前相談の指針】
@@ -785,6 +733,27 @@ if st.session_state["authentication_status"]:
 
     【注意点】
     検索結果の言い回しをそのまま複製することを避け、直接引用以外のすべてを自分の言葉で表現します。
+    """,
+
+    "ビルマスタ質問モード": """
+    あなたはビル情報の専門家です。
+    提供されたビルマスターデータを参照して、ユーザーの質問に正確に回答してください。
+
+    【回答方針】
+    1. **正確性を最優先**: ビルマスターデータに記載されている情報のみを使用してください
+    2. **複数ビルの比較**: 複数のビルについて質問された場合は、各ビルの情報を比較して回答してください
+    3. **情報の出典明示**: 回答する際は、どのビルの情報を参照しているかを明確にしてください
+    4. **データ不足時の対応**: 要求された情報がデータにない場合は、「情報が記載されていません」と明記して、ユーザーに逆質問を行なってください。
+
+    【注意事項】
+    - ビルマスターデータにない情報は推測で補わないでください
+    - 設備の詳細仕様や設計基準については、データに記載されている範囲でのみ回答してください
+    - 複数のビルを比較する際は、表形式での回答も活用してください
+
+    【回答形式】
+    - 簡潔で分かりやすい日本語で回答してください
+    - 必要に応じて箇条書きや表形式を使用してください
+    - ビル名は正式名称で記載してください
     """
     }
 
@@ -1254,462 +1223,591 @@ if st.session_state["authentication_status"]:
 
         st.divider()
 
-        # ------- 設備選択（必須） -------
-        st.markdown("### 🔧 対象設備選択")
+        # ========== モード別のサイドバー表示 ==========
+        current_mode = st.session_state.design_mode
+        
+        if current_mode == "暗黙知法令チャットモード":
+            # ------- 設備選択（必須） -------
+            st.markdown("### 🔧 対象設備選択")
 
-        available_equipment = st.session_state.get("equipment_list", [])
-        available_categories = st.session_state.get("category_list", [])
+            available_equipment = st.session_state.get("equipment_list", [])
+            available_categories = st.session_state.get("category_list", [])
 
-        if not available_equipment:
-            st.error("❌ 設備データが読み込まれていません")
-            st.session_state["selected_equipment"] = None
-        else:
-            st.info(f"📊 利用可能設備数: {len(available_equipment)}")
-            
-            # 設備選択方式
-            selection_mode = st.radio(
-                "選択方式",
-                ["設備名で選択", "カテゴリから選択", "自動推定"],
-                index=0,
-                help="質問に使用する設備の選択方法"
-            )
-            
-            if selection_mode == "設備名で選択":
-                selected_equipment = st.selectbox(
-                    "設備を選択してください",
-                    options=[""] + available_equipment,
+            if not available_equipment:
+                st.error("❌ 設備データが読み込まれていません")
+                st.session_state["selected_equipment"] = None
+            else:
+                st.info(f"📊 利用可能設備数: {len(available_equipment)}")
+                
+                # 設備選択方式
+                selection_mode = st.radio(
+                    "選択方式",
+                    ["設備名で選択", "カテゴリから選択", "自動推定"],
                     index=0,
-                    help="この設備の資料のみを使用して回答を生成します"
-                )
-                st.session_state["selected_equipment"] = selected_equipment if selected_equipment else None
-                st.session_state["selection_mode"] = "manual"
-                
-            elif selection_mode == "カテゴリから選択":
-                selected_category = st.selectbox(
-                    "カテゴリを選択してください",
-                    options=[""] + available_categories,
-                    index=0
+                    help="質問に使用する設備の選択方法"
                 )
                 
-                if selected_category:
-                    # カテゴリ内の設備を表示
-                    category_equipment = [
-                        eq for eq in available_equipment 
-                        if st.session_state.equipment_data[eq]["equipment_category"] == selected_category
-                    ]
-                    
+                if selection_mode == "設備名で選択":
                     selected_equipment = st.selectbox(
-                        f"「{selected_category}」内の設備を選択",
-                        options=[""] + category_equipment,
-                        index=0
+                        "設備を選択してください",
+                        options=[""] + available_equipment,
+                        index=0,
+                        help="この設備の資料のみを使用して回答を生成します"
                     )
                     st.session_state["selected_equipment"] = selected_equipment if selected_equipment else None
-                else:
-                    st.session_state["selected_equipment"] = None
-                st.session_state["selection_mode"] = "category"
-                
-            else:  # 自動推定
-                st.info("🤖 質問文から設備を自動推定して回答します")
-                st.session_state["selected_equipment"] = None
-                st.session_state["selection_mode"] = "auto"
-
-        # 現在の選択状態を表示
-        current_equipment = st.session_state.get("selected_equipment")
-        if current_equipment:
-            eq_info = st.session_state.equipment_data[current_equipment]
-            st.success(f"✅ 選択中: **{current_equipment}**")
-            
-            # ファイル選択機能
-            st.markdown("#### 📄 使用ファイル選択")
-            available_files = eq_info['sources']
-            
-            # セッション状態でファイル選択を管理
-            selected_files_key = f"selected_files_{current_equipment}"
-            if selected_files_key not in st.session_state:
-                st.session_state[selected_files_key] = available_files.copy()  # デフォルトで全選択
-            
-            # ファイル選択UI
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("🔄 全選択", key=f"select_all_{current_equipment}"):
-                    st.session_state[selected_files_key] = available_files.copy()
-                    st.rerun()
-            with col2:
-                if st.button("❌ 全解除", key=f"deselect_all_{current_equipment}"):
-                    st.session_state[selected_files_key] = []
-                    st.rerun()
-            
-            # 各ファイルのチェックボックス
-            for file in available_files:
-                checked = st.checkbox(
-                    file,
-                    value=file in st.session_state[selected_files_key],
-                    key=f"file_{current_equipment}_{file}"
-                )
-                
-                # チェック状態の変更を反映
-                if checked and file not in st.session_state[selected_files_key]:
-                    st.session_state[selected_files_key].append(file)
-                elif not checked and file in st.session_state[selected_files_key]:
-                    st.session_state[selected_files_key].remove(file)
-            
-            # 選択状況の表示
-            selected_count = len(st.session_state[selected_files_key])
-            total_count = len(available_files)
-            
-            if selected_count == 0:
-                st.error("⚠️ ファイルが選択されていません")
-            elif selected_count == total_count:
-                st.info(f"📊 全ファイル使用: {selected_count}/{total_count}")
-            else:
-                st.info(f"📊 選択ファイル: {selected_count}/{total_count}")
-            
-            # 設備詳細（折りたたみ）
-            with st.expander("📋 設備詳細", expanded=False):
-                st.markdown(f"- **カテゴリ**: {eq_info['equipment_category']}")
-                st.markdown(f"- **総ファイル数**: {eq_info['total_files']}")
-                st.markdown(f"- **総ページ数**: {eq_info['total_pages']}")
-                st.markdown(f"- **総文字数**: {eq_info['total_chars']:,}")
-                
-                # 選択ファイルの詳細
-                if selected_count > 0:
-                    st.markdown("- **選択中のファイル**:")
-                    for file in st.session_state[selected_files_key]:
-                        file_chars = len(eq_info['files'].get(file, ''))
-                        st.markdown(f"  - ✅ {file} ({file_chars:,}文字)")
+                    st.session_state["selection_mode"] = "manual"
                     
-                    # 選択ファイルの統計
-                    selected_chars = sum(len(eq_info['files'].get(f, '')) for f in st.session_state[selected_files_key])
-                    if selected_count < total_count:
-                        char_ratio = 100 * selected_chars / eq_info['total_chars'] if eq_info['total_chars'] > 0 else 0
-                        st.markdown(f"- **選択ファイル統計**:")
-                        st.markdown(f"  - ファイル数: {selected_count}/{total_count} ({100*selected_count/total_count:.1f}%)")
-                        st.markdown(f"  - 文字数: {selected_chars:,}/{eq_info['total_chars']:,} ({char_ratio:.1f}%)")
-        st.divider()
-
-        # ------- ビル情報選択 -------
-        st.markdown("### 🏢 対象ビル選択")
-
-        available_buildings = get_available_buildings()
-
-        if not available_buildings:
-            st.error("❌ ビル情報が読み込まれていません")
-            st.session_state["selected_building"] = None
-            st.session_state["include_building_info"] = False
-        else:
-            st.info(f"📊 利用可能ビル数: {len(available_buildings)}")
-            
-            # ビル情報を含めるかどうかのチェックボックス
-            include_building = st.checkbox(
-                "ビル情報をプロンプトに含める",
-                value=st.session_state.get("include_building_info", True),
-                help="チェックを入れると、選択されたビルの詳細情報が回答生成時に使用されます"
-            )
-            st.session_state["include_building_info"] = include_building
-            
-            if include_building:
-                # ビル選択方式
-                building_selection_mode = st.radio(
-                    "ビル選択方式",
-                    ["特定ビルを選択", "全ビル情報を使用", "自動推定"],
-                    index=st.session_state.get("building_selection_mode_index", 0),
-                    help="質問に使用するビル情報の選択方法"
-                )
-                
-                # 選択状態を保存
-                mode_options = ["特定ビルを選択", "全ビル情報を使用", "自動推定"]
-                st.session_state["building_selection_mode_index"] = mode_options.index(building_selection_mode)
-                
-                if building_selection_mode == "特定ビルを選択":
-                    # 🔥 検索ボックスを追加
-                    search_query = st.text_input(
-                        "🔍 ビル名で検索",
-                        placeholder="ビル名の一部を入力...",
-                        help="入力した文字でビル一覧をフィルタリングできます"
+                elif selection_mode == "カテゴリから選択":
+                    selected_category = st.selectbox(
+                        "カテゴリを選択してください",
+                        options=[""] + available_categories,
+                        index=0
                     )
                     
-                    # 🔥 検索結果でフィルタリング
-                    if search_query:
-                        filtered_buildings = [
-                            building for building in available_buildings 
-                            if search_query.lower() in building.lower()
+                    if selected_category:
+                        # カテゴリ内の設備を表示
+                        category_equipment = [
+                            eq for eq in available_equipment 
+                            if st.session_state.equipment_data[eq]["equipment_category"] == selected_category
                         ]
-                        st.info(f"🔍 検索結果: {len(filtered_buildings)}件")
-                    else:
-                        filtered_buildings = available_buildings
-                    
-                    # フィルタリングされたリストでセレクトボックス表示
-                    if filtered_buildings:
-                        selected_building = st.selectbox(
-                            "ビルを選択してください",
-                            options=[""] + filtered_buildings,
-                            index=0,
-                            help="上の検索ボックスで絞り込むか、直接選択してください"
+                        
+                        selected_equipment = st.selectbox(
+                            f"「{selected_category}」内の設備を選択",
+                            options=[""] + category_equipment,
+                            index=0
                         )
+                        st.session_state["selected_equipment"] = selected_equipment if selected_equipment else None
                     else:
-                        st.warning("⚠️ 検索条件に一致するビルが見つかりません")
-                        selected_building = None
-                    
-                    st.session_state["selected_building"] = selected_building if selected_building else None
-                    st.session_state["building_mode"] = "specific"
-                    
-                elif building_selection_mode == "全ビル情報を使用":
-                    st.info("🏢 全ビルの情報を使用して回答します")
-                    st.session_state["selected_building"] = None
-                    st.session_state["building_mode"] = "all"
+                        st.session_state["selected_equipment"] = None
+                    st.session_state["selection_mode"] = "category"
                     
                 else:  # 自動推定
-                    st.info("🤖 質問文からビルを自動推定して回答します")
-                    st.session_state["selected_building"] = None
-                    st.session_state["building_mode"] = "auto"
-            
-            else:
-                st.session_state["selected_building"] = None
-                st.session_state["building_mode"] = "none"
-            
-            # 現在の選択状態を表示
-            if include_building:
-                current_building = st.session_state.get("selected_building")
-                building_mode = st.session_state.get("building_mode", "none")
-                
-                if building_mode == "specific" and current_building:
-                    st.success(f"✅ 選択中: **{current_building}**")
+                    st.info("🤖 質問文から設備を自動推定して回答します")
+                    st.session_state["selected_equipment"] = None
+                    st.session_state["selection_mode"] = "auto"
+
+                # 現在の選択状態を表示
+                current_equipment = st.session_state.get("selected_equipment")
+                if current_equipment:
+                    eq_info = st.session_state.equipment_data[current_equipment]
+                    st.success(f"✅ 選択中: **{current_equipment}**")
                     
-                    # ビル詳細情報の表示（折りたたみ）
-                    with st.expander("🏢 ビル詳細情報", expanded=False):
-                        building_info_text = get_building_info_for_prompt(current_building)
-                        st.text_area(
-                            "ビル情報プレビュー",
-                            value=building_info_text,
-                            height=300,
-                            key=f"building_preview_{current_building}"
+                    # ファイル選択機能
+                    st.markdown("#### 📄 使用ファイル選択")
+                    available_files = eq_info['sources']
+                    
+                    # セッション状態でファイル選択を管理
+                    selected_files_key = f"selected_files_{current_equipment}"
+                    if selected_files_key not in st.session_state:
+                        st.session_state[selected_files_key] = available_files.copy()  # デフォルトで全選択
+                    
+                    # ファイル選択UI
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("🔄 全選択", key=f"select_all_{current_equipment}"):
+                            st.session_state[selected_files_key] = available_files.copy()
+                            st.rerun()
+                    with col2:
+                        if st.button("❌ 全解除", key=f"deselect_all_{current_equipment}"):
+                            st.session_state[selected_files_key] = []
+                            st.rerun()
+                    
+                    # 各ファイルのチェックボックス
+                    for file in available_files:
+                        checked = st.checkbox(
+                            file,
+                            value=file in st.session_state[selected_files_key],
+                            key=f"file_{current_equipment}_{file}"
                         )
                         
-                elif building_mode == "all":
-                    st.success("✅ 全ビル情報を使用")
+                        # チェック状態の変更を反映
+                        if checked and file not in st.session_state[selected_files_key]:
+                            st.session_state[selected_files_key].append(file)
+                        elif not checked and file in st.session_state[selected_files_key]:
+                            st.session_state[selected_files_key].remove(file)
                     
-                    # 全ビル情報のプレビュー
-                    with st.expander("🏢 全ビル情報プレビュー", expanded=False):
-                        all_building_info = get_building_info_for_prompt()
-                        st.text_area(
-                            "全ビル情報プレビュー",
-                            value=all_building_info,
-                            height=400,
-                            key="all_buildings_preview"
-                        )
-                        
-                elif building_mode == "auto":
-                    st.success("✅ 自動推定モード")
-            else:
-                st.info("ℹ️ ビル情報は使用しません")
-
-        st.divider()
-
-        # ベクトルDBステータス（設備データ用に変更）
-        st.markdown("### 🗂 設備データステータス")
-
-        if st.session_state.get("equipment_data"):
-            st.success("✔️ 設備データは初期化済みです")
-            try:
-                equipment_count = len(st.session_state.equipment_data)
-                total_files = sum(data['total_files'] for data in st.session_state.equipment_data.values())
-                st.markdown(f"🔧 設備数: `{equipment_count}`")
-                st.markdown(f"📄 総ファイル数: `{total_files}`")
-            except Exception as e:
-                st.warning(f"⚠️ 統計取得失敗: {e}")
-        else:
-            st.error("❌ 設備データがまだ初期化されていません")
-        
-        if st.button("🔧 接続診断実行"):
-            from src.sheets_manager import debug_connection_streamlit
-            debug_connection_streamlit()
-        
-        st.divider()
-        st.markdown("### 🔧 ログ処理状況")
-
-        try:
-            async_logger = get_async_logger()
-            status = async_logger.get_status()
-            stats = status["stats"]
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.metric("キュー", status["queue_size"])
-                st.metric("処理済み", stats["processed"])
-            
-            with col2:
-                worker_status = "🟢 動作中" if status["worker_alive"] else "🔴 停止"
-                st.markdown(f"**ワーカー**: {worker_status}")
-                st.metric("エラー", stats["errors"])
-            
-            if stats["last_error_msg"]:
-                st.error(f"最新エラー: {stats['last_error_msg']}")
-            
-            if st.button("🔄 ログステータス更新"):
-                st.rerun()
-                
-            # デバッグ用の強制再起動ボタン
-            if st.button("🛑 ログワーカー再起動", type="secondary"):
-                async_logger.force_shutdown()
-                if "async_logger" in st.session_state:
-                    del st.session_state.async_logger
-                st.success("ログワーカーを再起動しました")
-                st.rerun()
-                
-        except Exception as e:
-            st.error(f"ログステータス取得失敗: {e}")
-        
-        st.divider()
-
-        # ------- 資料内容確認 -------
-        st.markdown("### 📚 資料内容確認")
-        
-        if st.session_state.get("equipment_data"):
-            equipment_data = st.session_state.equipment_data
-            
-            # 統計情報の表示
-            total_equipments = len(equipment_data)
-            total_files = sum(data['total_files'] for data in equipment_data.values())
-            total_chars = sum(data['total_chars'] for data in equipment_data.values())
-            
-            st.info(f"📊 **総統計**\n"
-                   f"- 設備数: {total_equipments}\n"
-                   f"- ファイル数: {total_files}\n"
-                   f"- 総文字数: {total_chars:,}")
-            
-            # 設備選択
-            selected_equipment_for_view = st.selectbox(
-                "📋 資料を確認する設備を選択",
-                options=[""] + sorted(equipment_data.keys()),
-                key="equipment_viewer_select"
-            )
-            
-            if selected_equipment_for_view:
-                equipment_info = equipment_data[selected_equipment_for_view]
-                
-                # 設備情報の表示
-                st.markdown(f"#### 🔧 {selected_equipment_for_view}")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("ファイル数", equipment_info['total_files'])
-                    st.metric("ページ数", equipment_info['total_pages'])
-                with col2:
-                    st.metric("文字数", f"{equipment_info['total_chars']:,}")
-                    st.markdown(f"**カテゴリ**: {equipment_info['equipment_category']}")
-                
-                # ファイル一覧と詳細表示
-                st.markdown("##### 📄 ファイル一覧")
-                
-                for file_name in equipment_info['sources']:
-                    # 「暗黙知メモ」は表示から除外
-                    if "暗黙知メモ" in file_name:
-                        continue
-                        
-                    file_text = equipment_info['files'][file_name]
-                    file_chars = len(file_text)
+                    # 選択状況の表示
+                    selected_count = len(st.session_state[selected_files_key])
+                    total_count = len(available_files)
                     
-                    with st.expander(f"📄 {file_name} ({file_chars:,}文字)", expanded=False):
-                        # ファイル情報
-                        st.markdown(f"**文字数**: {file_chars:,}")
-                        
-                        # テキスト内容の表示オプション
-                        view_option = st.radio(
-                            "表示方法",
-                            ["プレビュー（最初の500文字）", "全文表示", "構造化表示"],
-                            key=f"view_option_{selected_equipment_for_view}_{file_name}"
-                        )
-                        
-                        if view_option == "プレビュー（最初の500文字）":
-                            preview_text = file_text[:500]
-                            if len(file_text) > 500:
-                                preview_text += "\n\n... （以下省略）"
-                            st.text_area(
-                                "プレビュー",
-                                value=preview_text,
-                                height=200,
-                                key=f"preview_{selected_equipment_for_view}_{file_name}"
-                            )
-                            
-                        elif view_option == "全文表示":
-                            st.text_area(
-                                "全文",
-                                value=file_text,
-                                height=400,
-                                key=f"fulltext_{selected_equipment_for_view}_{file_name}"
-                            )
-                            
-                        elif view_option == "構造化表示":
-                            # ページ別に分割して表示
-                            sections = file_text.split("--- ページ ")
-                            
-                            st.markdown("**ファイルヘッダー**:")
-                            st.code(sections[0] if sections else "ヘッダーなし")
-                            
-                            if len(sections) > 1:
-                                st.markdown("**ページ別内容**:")
-                                for i, section in enumerate(sections[1:], 1):
-                                    page_lines = section.split("\n", 1)
-                                    if len(page_lines) >= 2:
-                                        page_num = page_lines[0].split(" ---")[0]
-                                        page_content = page_lines[1]
-                                        
-                                        with st.expander(f"ページ {page_num} ({len(page_content)}文字)", expanded=False):
-                                            st.text_area(
-                                                f"ページ {page_num} 内容",
-                                                value=page_content,
-                                                height=200,
-                                                key=f"page_{selected_equipment_for_view}_{file_name}_{i}"
-                                            )
-                        
-                        # ダウンロード機能
-                        st.download_button(
-                            label="📥 テキストをダウンロード",
-                            data=file_text,
-                            file_name=f"{selected_equipment_for_view}_{file_name}.txt",
-                            mime="text/plain",
-                            key=f"download_{selected_equipment_for_view}_{file_name}"
-                        )
-        else:
-            st.error("❌ 設備データが読み込まれていません")
-        
-        if st.button("🔍 blind_knowledge処理確認"):
-            st.markdown("### blind_knowledge処理状況")
-            
-            base_prompt = st.session_state.prompts[st.session_state.design_mode]
-            current_equipment = st.session_state.get("selected_equipment")
-            
-            if st.session_state.design_mode == "暗黙知法令チャットモード":
-                if "blind_knowledge" in base_prompt:
-                    st.success("✅ base_promptにblind_knowledgeプレースホルダーが存在")
-                    
-                    # 処理結果をプレビュー
-                    processed_prompt = build_equipment_prompt(base_prompt, current_equipment)
-                    
-                    if current_equipment and current_equipment in prompt_split:
-                        if "blind_knowledge" not in processed_prompt:
-                            st.success(f"✅ blind_knowledgeが「{current_equipment}」セクションに置き換え済み")
-                        else:
-                            st.error("❌ blind_knowledge置き換えに失敗")
+                    if selected_count == 0:
+                        st.error("⚠️ ファイルが選択されていません")
+                    elif selected_count == total_count:
+                        st.info(f"📊 全ファイル使用: {selected_count}/{total_count}")
                     else:
-                        if "blind_knowledge" not in processed_prompt:
-                            st.info("✅ blind_knowledgeが削除済み（設備未選択または未対応）")
-                        else:
-                            st.error("❌ blind_knowledge削除に失敗")
+                        st.info(f"📊 選択ファイル: {selected_count}/{total_count}")
                     
-                    # プレビュー表示
-                    with st.expander("📋 処理後プロンプトプレビュー", expanded=False):
-                        st.text_area(
-                            "処理結果",
-                            value=processed_prompt,
-                            height=300,
-                            key="blind_knowledge_preview"
-                        )
+                    # 設備詳細（折りたたみ）
+                    with st.expander("📋 設備詳細", expanded=False):
+                        st.markdown(f"- **カテゴリ**: {eq_info['equipment_category']}")
+                        st.markdown(f"- **総ファイル数**: {eq_info['total_files']}")
+                        st.markdown(f"- **総ページ数**: {eq_info['total_pages']}")
+                        st.markdown(f"- **総文字数**: {eq_info['total_chars']:,}")
+                        
+                        # 選択ファイルの詳細
+                        if selected_count > 0:
+                            st.markdown("- **選択中のファイル**:")
+                            for file in st.session_state[selected_files_key]:
+                                file_chars = len(eq_info['files'].get(file, ''))
+                                st.markdown(f"  - ✅ {file} ({file_chars:,}文字)")
+                            
+                            # 選択ファイルの統計
+                            selected_chars = sum(len(eq_info['files'].get(f, '')) for f in st.session_state[selected_files_key])
+                            if selected_count < total_count:
+                                char_ratio = 100 * selected_chars / eq_info['total_chars'] if eq_info['total_chars'] > 0 else 0
+                                st.markdown(f"- **選択ファイル統計**:")
+                                st.markdown(f"  - ファイル数: {selected_count}/{total_count} ({100*selected_count/total_count:.1f}%)")
+                                st.markdown(f"  - 文字数: {selected_chars:,}/{eq_info['total_chars']:,} ({char_ratio:.1f}%)")
+
+            # ------- ビル情報選択（閉じられた状態） -------
+            with st.expander("🏢 対象ビル選択", expanded=False):
+                available_buildings = get_available_buildings()
+
+                if not available_buildings:
+                    st.error("❌ ビル情報が読み込まれていません")
+                    st.session_state["selected_building"] = None
+                    st.session_state["include_building_info"] = False
                 else:
-                    st.warning("⚠️ base_promptにblind_knowledgeプレースホルダーが見つかりません")
+                    st.info(f"📊 利用可能ビル数: {len(available_buildings)}")
+                    
+                    # ビル情報を含めるかどうかのチェックボックス
+                    include_building = st.checkbox(
+                        "ビル情報をプロンプトに含める",
+                        value=st.session_state.get("include_building_info", False),
+                        help="チェックを入れると、選択されたビルの詳細情報が回答生成時に使用されます"
+                    )
+                    st.session_state["include_building_info"] = include_building
+                    
+                    if include_building:
+                        # ビル選択方式
+                        building_selection_mode = st.radio(
+                            "ビル選択方式",
+                            ["特定ビルを選択", "全ビル情報を使用", "自動推定"],
+                            index=st.session_state.get("building_selection_mode_index", 0),
+                            help="質問に使用するビル情報の選択方法"
+                        )
+                        
+                        # 選択状態を保存
+                        mode_options = ["特定ビルを選択", "全ビル情報を使用", "自動推定"]
+                        st.session_state["building_selection_mode_index"] = mode_options.index(building_selection_mode)
+                        
+                        if building_selection_mode == "特定ビルを選択":
+                            # 検索ボックスを追加
+                            search_query = st.text_input(
+                                "🔍 ビル名で検索",
+                                placeholder="ビル名の一部を入力...",
+                                help="入力した文字でビル一覧をフィルタリングできます"
+                            )
+                            
+                            # 検索結果でフィルタリング
+                            if search_query:
+                                filtered_buildings = [
+                                    building for building in available_buildings 
+                                    if search_query.lower() in building.lower()
+                                ]
+                                st.info(f"🔍 検索結果: {len(filtered_buildings)}件")
+                            else:
+                                filtered_buildings = available_buildings
+                            
+                            # フィルタリングされたリストでセレクトボックス表示
+                            if filtered_buildings:
+                                selected_building = st.selectbox(
+                                    "ビルを選択してください",
+                                    options=[""] + filtered_buildings,
+                                    index=0,
+                                    help="上の検索ボックスで絞り込むか、直接選択してください"
+                                )
+                            else:
+                                st.warning("⚠️ 検索条件に一致するビルが見つかりません")
+                                selected_building = None
+                            
+                            st.session_state["selected_building"] = selected_building if selected_building else None
+                            st.session_state["building_mode"] = "specific"
+                            
+                        elif building_selection_mode == "全ビル情報を使用":
+                            st.info("🏢 全ビルの情報を使用して回答します")
+                            st.session_state["selected_building"] = None
+                            st.session_state["building_mode"] = "all"
+                            
+                        else:  # 自動推定
+                            st.info("🤖 質問文からビルを自動推定して回答します")
+                            st.session_state["selected_building"] = None
+                            st.session_state["building_mode"] = "auto"
+                    
+                    else:
+                        st.session_state["selected_building"] = None
+                        st.session_state["building_mode"] = "none"
+                    
+                    # 現在の選択状態を表示
+                    if include_building:
+                        current_building = st.session_state.get("selected_building")
+                        building_mode = st.session_state.get("building_mode", "none")
+                        
+                        if building_mode == "specific" and current_building:
+                            st.success(f"✅ 選択中: **{current_building}**")
+                            
+                            # ビル詳細情報の表示（折りたたみ）
+                            with st.expander("🏢 ビル詳細情報", expanded=False):
+                                building_info_text = get_building_info_for_prompt(current_building)
+                                st.text_area(
+                                    "ビル情報プレビュー",
+                                    value=building_info_text,
+                                    height=300,
+                                    key=f"building_preview_{current_building}"
+                                )
+                                
+                        elif building_mode == "all":
+                            st.success("✅ 全ビル情報を使用")
+                            
+                            # 全ビル情報のプレビュー
+                            with st.expander("🏢 全ビル情報プレビュー", expanded=False):
+                                all_building_info = get_building_info_for_prompt()
+                                st.text_area(
+                                    "全ビル情報プレビュー",
+                                    value=all_building_info,
+                                    height=400,
+                                    key="all_buildings_preview"
+                                )
+                                
+                        elif building_mode == "auto":
+                            st.success("✅ 自動推定モード")
+                    else:
+                        st.info("ℹ️ ビル情報は使用しません")
+
+            st.divider()
+
+            # ------- 資料内容確認 -------
+            st.markdown("### 📚 資料内容確認")
+            
+            if st.session_state.get("equipment_data"):
+                equipment_data = st.session_state.equipment_data
+                
+                # 統計情報の表示
+                total_equipments = len(equipment_data)
+                total_files = sum(data['total_files'] for data in equipment_data.values())
+                total_chars = sum(data['total_chars'] for data in equipment_data.values())
+                
+                st.info(f"📊 **総統計**\n"
+                       f"- 設備数: {total_equipments}\n"
+                       f"- ファイル数: {total_files}\n"
+                       f"- 総文字数: {total_chars:,}")
+                
+                # 設備選択
+                selected_equipment_for_view = st.selectbox(
+                    "📋 資料を確認する設備を選択",
+                    options=[""] + sorted(equipment_data.keys()),
+                    key="equipment_viewer_select"
+                )
+                
+                if selected_equipment_for_view:
+                    equipment_info = equipment_data[selected_equipment_for_view]
+                    
+                    # 設備情報の表示
+                    st.markdown(f"#### 🔧 {selected_equipment_for_view}")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("ファイル数", equipment_info['total_files'])
+                        st.metric("ページ数", equipment_info['total_pages'])
+                    with col2:
+                        st.metric("文字数", f"{equipment_info['total_chars']:,}")
+                        st.markdown(f"**カテゴリ**: {equipment_info['equipment_category']}")
+                    
+                    # ファイル一覧と詳細表示
+                    st.markdown("##### 📄 ファイル一覧")
+                    
+                    for file_name in equipment_info['sources']:
+                        # 「暗黙知メモ」は表示から除外
+                        if "暗黙知メモ" in file_name:
+                            continue
+                            
+                        file_text = equipment_info['files'][file_name]
+                        file_chars = len(file_text)
+                        
+                        with st.expander(f"📄 {file_name} ({file_chars:,}文字)", expanded=False):
+                            # ファイル情報
+                            st.markdown(f"**文字数**: {file_chars:,}")
+                            
+                            # テキスト内容の表示オプション
+                            view_option = st.radio(
+                                "表示方法",
+                                ["プレビュー（最初の500文字）", "全文表示", "構造化表示"],
+                                key=f"view_option_{selected_equipment_for_view}_{file_name}"
+                            )
+                            
+                            if view_option == "プレビュー（最初の500文字）":
+                                preview_text = file_text[:500]
+                                if len(file_text) > 500:
+                                    preview_text += "\n\n... （以下省略）"
+                                st.text_area(
+                                    "プレビュー",
+                                    value=preview_text,
+                                    height=200,
+                                    key=f"preview_{selected_equipment_for_view}_{file_name}"
+                                )
+                                
+                            elif view_option == "全文表示":
+                                st.text_area(
+                                    "全文",
+                                    value=file_text,
+                                    height=400,
+                                    key=f"fulltext_{selected_equipment_for_view}_{file_name}"
+                                )
+                                
+                            elif view_option == "構造化表示":
+                                # ページ別に分割して表示
+                                sections = file_text.split("--- ページ ")
+                                
+                                st.markdown("**ファイルヘッダー**:")
+                                st.code(sections[0] if sections else "ヘッダーなし")
+                                
+                                if len(sections) > 1:
+                                    st.markdown("**ページ別内容**:")
+                                    for i, section in enumerate(sections[1:], 1):
+                                        page_lines = section.split("\n", 1)
+                                        if len(page_lines) >= 2:
+                                            page_num = page_lines[0].split(" ---")[0]
+                                            page_content = page_lines[1]
+                                            
+                                            with st.expander(f"ページ {page_num} ({len(page_content)}文字)", expanded=False):
+                                                st.text_area(
+                                                    f"ページ {page_num} 内容",
+                                                    value=page_content,
+                                                    height=200,
+                                                    key=f"page_{selected_equipment_for_view}_{file_name}_{i}"
+                                                )
+                            
+                            # ダウンロード機能
+                            st.download_button(
+                                label="📥 テキストをダウンロード",
+                                data=file_text,
+                                file_name=f"{selected_equipment_for_view}_{file_name}.txt",
+                                mime="text/plain",
+                                key=f"download_{selected_equipment_for_view}_{file_name}"
+                            )
             else:
-                st.info("💡 暗黙知法令チャットモード以外では処理は行われません")
+                st.error("❌ 設備データが読み込まれていません")
+
+        elif current_mode == "質疑応答書添削モード":
+            # TODO: 質疑応答書添削モード用のサイドバー（後で実装）
+            st.info("📝 質疑応答書添削モード用のサイドバーは後で実装予定")
+            
+        elif current_mode == "ビルマスタ質問モード":
+            # ------- ビル情報選択（そのまま表示） -------
+            st.markdown("### 🏢 対象ビル選択")
+
+            available_buildings = get_available_buildings()
+
+            if not available_buildings:
+                st.error("❌ ビル情報が読み込まれていません")
+                st.session_state["selected_building"] = None
+                st.session_state["include_building_info"] = False
+            else:
+                st.info(f"📊 利用可能ビル数: {len(available_buildings)}")
+                
+                # ビル情報を含めるかどうかのチェックボックス
+                include_building = st.checkbox(
+                    "ビル情報をプロンプトに含める",
+                    value=st.session_state.get("include_building_info", False),
+                    help="チェックを入れると、選択されたビルの詳細情報が回答生成時に使用されます"
+                )
+                st.session_state["include_building_info"] = include_building
+                
+                if include_building:
+                    # ビル選択方式
+                    building_selection_mode = st.radio(
+                        "ビル選択方式",
+                        ["特定ビルを選択", "全ビル情報を使用", "自動推定"],
+                        index=st.session_state.get("building_selection_mode_index", 0),
+                        help="質問に使用するビル情報の選択方法"
+                    )
+                    
+                    # 選択状態を保存
+                    mode_options = ["特定ビルを選択", "全ビル情報を使用", "自動推定"]
+                    st.session_state["building_selection_mode_index"] = mode_options.index(building_selection_mode)
+                    
+                    if building_selection_mode == "特定ビルを選択":
+                        # 検索ボックスを追加
+                        search_query = st.text_input(
+                            "🔍 ビル名で検索",
+                            placeholder="ビル名の一部を入力...",
+                            help="入力した文字でビル一覧をフィルタリングできます"
+                        )
+                        
+                        # 検索結果でフィルタリング
+                        if search_query:
+                            filtered_buildings = [
+                                building for building in available_buildings 
+                                if search_query.lower() in building.lower()
+                            ]
+                            st.info(f"🔍 検索結果: {len(filtered_buildings)}件")
+                        else:
+                            filtered_buildings = available_buildings
+                        
+                        # フィルタリングされたリストでセレクトボックス表示
+                        if filtered_buildings:
+                            selected_building = st.selectbox(
+                                "ビルを選択してください",
+                                options=[""] + filtered_buildings,
+                                index=0,
+                                help="上の検索ボックスで絞り込むか、直接選択してください"
+                            )
+                        else:
+                            st.warning("⚠️ 検索条件に一致するビルが見つかりません")
+                            selected_building = None
+                        
+                        st.session_state["selected_building"] = selected_building if selected_building else None
+                        st.session_state["building_mode"] = "specific"
+                        
+                    elif building_selection_mode == "全ビル情報を使用":
+                        st.info("🏢 全ビルの情報を使用して回答します")
+                        st.session_state["selected_building"] = None
+                        st.session_state["building_mode"] = "all"
+                        
+                    else:  # 自動推定
+                        st.info("🤖 質問文からビルを自動推定して回答します")
+                        st.session_state["selected_building"] = None
+                        st.session_state["building_mode"] = "auto"
+                
+                else:
+                    st.session_state["selected_building"] = None
+                    st.session_state["building_mode"] = "none"
+                
+                # 現在の選択状態を表示
+                if include_building:
+                    current_building = st.session_state.get("selected_building")
+                    building_mode = st.session_state.get("building_mode", "none")
+                    
+                    if building_mode == "specific" and current_building:
+                        st.success(f"✅ 選択中: **{current_building}**")
+                        
+                        # ビル詳細情報の表示（折りたたみ）
+                        with st.expander("🏢 ビル詳細情報", expanded=False):
+                            building_info_text = get_building_info_for_prompt(current_building)
+                            st.text_area(
+                                "ビル情報プレビュー",
+                                value=building_info_text,
+                                height=300,
+                                key=f"building_preview_{current_building}"
+                            )
+                            
+                    elif building_mode == "all":
+                        st.success("✅ 全ビル情報を使用")
+                        
+                        # 全ビル情報のプレビュー
+                        with st.expander("🏢 全ビル情報プレビュー", expanded=False):
+                            all_building_info = get_building_info_for_prompt()
+                            st.text_area(
+                                "全ビル情報プレビュー",
+                                value=all_building_info,
+                                height=400,
+                                key="all_buildings_preview"
+                            )
+                            
+                    elif building_mode == "auto":
+                        st.success("✅ 自動推定モード")
+                else:
+                    st.info("ℹ️ ビル情報は使用しません")
+        
+        else:
+            # 未知のモードの場合
+            st.warning(f"⚠️ 未対応のモード: {current_mode}")
+        
+        st.divider()
+
+        # # ベクトルDBステータス（設備データ用に変更）
+        # st.markdown("### 🗂 設備データステータス")
+
+        # if st.session_state.get("equipment_data"):
+        #     st.success("✔️ 設備データは初期化済みです")
+        #     try:
+        #         equipment_count = len(st.session_state.equipment_data)
+        #         total_files = sum(data['total_files'] for data in st.session_state.equipment_data.values())
+        #         st.markdown(f"🔧 設備数: `{equipment_count}`")
+        #         st.markdown(f"📄 総ファイル数: `{total_files}`")
+        #     except Exception as e:
+        #         st.warning(f"⚠️ 統計取得失敗: {e}")
+        # else:
+        #     st.error("❌ 設備データがまだ初期化されていません")
+        
+        # if st.button("🔧 接続診断実行"):
+        #     from src.sheets_manager import debug_connection_streamlit
+        #     debug_connection_streamlit()
+        
+        # st.divider()
+        # st.markdown("### 🔧 ログ処理状況")
+
+        # try:
+        #     async_logger = get_async_logger()
+        #     status = async_logger.get_status()
+        #     stats = status["stats"]
+            
+        #     col1, col2 = st.columns(2)
+            
+        #     with col1:
+        #         st.metric("キュー", status["queue_size"])
+        #         st.metric("処理済み", stats["processed"])
+            
+        #     with col2:
+        #         worker_status = "🟢 動作中" if status["worker_alive"] else "🔴 停止"
+        #         st.markdown(f"**ワーカー**: {worker_status}")
+        #         st.metric("エラー", stats["errors"])
+            
+        #     if stats["last_error_msg"]:
+        #         st.error(f"最新エラー: {stats['last_error_msg']}")
+            
+        #     if st.button("🔄 ログステータス更新"):
+        #         st.rerun()
+                
+        #     # デバッグ用の強制再起動ボタン
+        #     if st.button("🛑 ログワーカー再起動", type="secondary"):
+        #         async_logger.force_shutdown()
+        #         if "async_logger" in st.session_state:
+        #             del st.session_state.async_logger
+        #         st.success("ログワーカーを再起動しました")
+        #         st.rerun()
+                
+        # except Exception as e:
+        #     st.error(f"ログステータス取得失敗: {e}")
+        
+        # st.divider()
+        
+        # if st.button("🔍 blind_knowledge処理確認"):
+        #     st.markdown("### blind_knowledge処理状況")
+            
+        #     base_prompt = st.session_state.prompts[st.session_state.design_mode]
+        #     current_equipment = st.session_state.get("selected_equipment")
+            
+        #     if st.session_state.design_mode == "暗黙知法令チャットモード":
+        #         if "blind_knowledge" in base_prompt:
+        #             st.success("✅ base_promptにblind_knowledgeプレースホルダーが存在")
+                    
+        #             # 処理結果をプレビュー
+        #             processed_prompt = build_equipment_prompt(base_prompt, current_equipment)
+                    
+        #             if current_equipment and current_equipment in prompt_split:
+        #                 if "blind_knowledge" not in processed_prompt:
+        #                     st.success(f"✅ blind_knowledgeが「{current_equipment}」セクションに置き換え済み")
+        #                 else:
+        #                     st.error("❌ blind_knowledge置き換えに失敗")
+        #             else:
+        #                 if "blind_knowledge" not in processed_prompt:
+        #                     st.info("✅ blind_knowledgeが削除済み（設備未選択または未対応）")
+        #                 else:
+        #                     st.error("❌ blind_knowledge削除に失敗")
+                    
+        #             # プレビュー表示
+        #             with st.expander("📋 処理後プロンプトプレビュー", expanded=False):
+        #                 st.text_area(
+        #                     "処理結果",
+        #                     value=processed_prompt,
+        #                     height=300,
+        #                     key="blind_knowledge_preview"
+        #                 )
+        #         else:
+        #             st.warning("⚠️ base_promptにblind_knowledgeプレースホルダーが見つかりません")
+        #     else:
+        #         st.info("💡 暗黙知法令チャットモード以外では処理は行われません")
 
     # =====  プロンプト編集画面  =================================================
     if st.session_state.edit_target:
