@@ -507,8 +507,6 @@ if st.session_state["authentication_status"]:
     - **C工事**：入居者が独自に施工する工事（電話・LAN・防犯設備など）
     - 本システムでは、C工事設備については配管類の数量算出のみを行います
     ────────────────────────────────
-    blind_knowledge
-    ────────────────────────────────
     ## 【消防署事前相談の指針】
     ### ■ 事前相談が必要な状況
     法令のルールが競合する場合や細かな仕様で判断が分かれる場合は、**必ず消防署への事前相談を行う**ことを推奨してください。
@@ -979,7 +977,7 @@ if st.session_state["authentication_status"]:
         # 設備選択方式
         selection_mode = st.radio(
             "選択方式",
-            ["設備名で選択", "カテゴリから選択", "自動推定"],
+            ["設備名で選択", "カテゴリから選択"],
             index=0,
             help="質問に使用する設備の選択方法"
         )
@@ -1016,11 +1014,6 @@ if st.session_state["authentication_status"]:
             else:
                 st.session_state["selected_equipment"] = None
             st.session_state["selection_mode"] = "category"
-            
-        else:  # 自動推定
-            st.info("🤖 質問文から設備を自動推定して回答します")
-            st.session_state["selected_equipment"] = None
-            st.session_state["selection_mode"] = "auto"
 
     def render_file_selection(current_equipment):
         """ファイル選択UIを描画（共通関数）"""
@@ -1116,12 +1109,12 @@ if st.session_state["authentication_status"]:
             if include_building:
                 building_selection_mode = st.radio(
                     "ビル選択方式",
-                    ["特定ビルを選択", "全ビル情報を使用", "自動推定"],
+                    ["特定ビルを選択", "全ビル情報を使用"],
                     index=st.session_state.get("building_selection_mode_index", 0),
                     help="質問に使用するビル情報の選択方法"
                 )
-                
-                mode_options = ["特定ビルを選択", "全ビル情報を使用", "自動推定"]
+
+                mode_options = ["特定ビルを選択", "全ビル情報を使用"]
                 st.session_state["building_selection_mode_index"] = mode_options.index(building_selection_mode)
                 
                 if building_selection_mode == "特定ビルを選択":
@@ -1158,11 +1151,6 @@ if st.session_state["authentication_status"]:
                     st.info("🏢 全ビルの情報を使用して回答します")
                     st.session_state["selected_building"] = None
                     st.session_state["building_mode"] = "all"
-                    
-                else:  # 自動推定
-                    st.info("🤖 質問文からビルを自動推定して回答します")
-                    st.session_state["selected_building"] = None
-                    st.session_state["building_mode"] = "auto"
             
             else:
                 st.session_state["selected_building"] = None
@@ -1196,9 +1184,6 @@ if st.session_state["authentication_status"]:
                             height=400,
                             key="all_buildings_preview"
                         )
-                        
-                elif building_mode == "auto":
-                    st.success("✅ 自動推定モード")
             else:
                 st.info("ℹ️ ビル情報は使用しません")
 
