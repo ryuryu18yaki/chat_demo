@@ -893,12 +893,17 @@ if st.session_state["authentication_status"]:
     
     # 🔥 LangChainにより簡素化されたプロンプト構築関数
     def build_equipment_prompt(base_prompt: str, selected_equipment: str = None) -> str:
-        """
-        🔥 LangChain移行により大幅簡素化
-        LangChainが内部でblind_knowledge処理を行うため、基本プロンプトをそのまま返す
-        """
-        # LangChain側でプロンプト処理が最適化されるため、
-        # 複雑なblind_knowledge置き換え処理は不要
+        """設備に応じたプロンプトを構築"""
+        if not selected_equipment:
+            return base_prompt
+        
+        # 設備専用プロンプトを追加
+        if selected_equipment in prompt_split:
+            equipment_specific = prompt_split[selected_equipment]
+            enhanced_prompt = f"{base_prompt}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            enhanced_prompt += f"## 【{selected_equipment} 専用知識】\n{equipment_specific}"
+            return enhanced_prompt
+        
         return base_prompt
         
     # =====  編集機能用のヘルパー関数（変更なし）  ==============================================
