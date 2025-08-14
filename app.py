@@ -1550,14 +1550,27 @@ if st.session_state["authentication_status"]:
                 
                 api_elapsed = time.perf_counter() - t_api
                 
+                # セッション情報から設備・ファイル情報を取得
                 assistant_reply = result["answer"]
-                used_equipment = result["used_equipment"]
-                used_files = result.get("selected_files", [])
-                processing_mode = result.get("processing_mode", "unknown")
+                
+                # セッション状態から設備情報を取得
+                selected_equipment = st.session_state.get("selected_equipment")
+                if selected_equipment:
+                    used_equipment = selected_equipment
+                    # 選択されたファイルを取得
+                    selected_files_key = f"selected_files_{selected_equipment}"
+                    used_files = st.session_state.get(selected_files_key, [])
+                    processing_mode = "equipment_with_files" if used_files else "equipment_no_files"
+                else:
+                    used_equipment = "なし（一般知識による回答）"
+                    used_files = []
+                    processing_mode = "no_equipment"
                 
                 # ステータス表示
                 if processing_mode == "equipment_with_files":
                     st.success(f"✅ 設備資料を使用した回答: {used_equipment} ({len(used_files)}ファイル)")
+                elif processing_mode == "equipment_no_files":
+                    st.info(f"📋 設備選択済み（ファイル未選択）: {used_equipment}")
                 elif processing_mode == "no_equipment":
                     st.info(f"💭 {used_equipment}")
                 else:
@@ -1571,9 +1584,9 @@ if st.session_state["authentication_status"]:
                 st.error(f"回答生成時にエラーが発生しました: {e}")
                 st.stop()
 
-            # 画面反映
+            # 画面反映 
             with st.chat_message("assistant"):
-                # モデル情報と使用設備・ファイルを応答に追加
+                # モデル情報と使用設備・ファイルを応答に追加 
                 if used_files:
                     file_info = f"（{len(used_files)}ファイル使用）"
                     model_info = f"\n\n---\n*このレスポンスは `{st.session_state.claude_model}` と設備「{used_equipment}」{file_info}で生成されました*"
@@ -1589,7 +1602,7 @@ if st.session_state["authentication_status"]:
                 "content": assistant_reply,
             }
             
-            # 設備・ファイル情報がある場合のみ追加
+            # 設備・ファイル情報がある場合のみ追加 
             if used_equipment and used_equipment != "なし（一般知識による回答）":
                 msg_to_save["used_equipment"] = used_equipment
                 msg_to_save["used_files"] = used_files
