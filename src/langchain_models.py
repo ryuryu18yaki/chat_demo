@@ -73,7 +73,7 @@ class ModelManager:
         temperature: float = 0.0,
         max_tokens: Optional[int] = None
     ) -> ChatBedrock:
-        """Claude (AWS Bedrock経由) モデルを作成"""
+        """Claude (AWS Bedrock + Inference Profile経由) モデルを作成"""
         credentials = ModelManager.get_credentials()
         
         if not credentials["aws_access_key_id"] or not credentials["aws_secret_access_key"]:
@@ -89,12 +89,12 @@ class ModelManager:
         # Bedrock Runtimeクライアントを作成
         bedrock_client = session.client('bedrock-runtime')
         
-        # モデル名をBedrock用に変換
-        bedrock_model_id = CLAUDE_MODEL_MAPPING.get(model_name, "anthropic.claude-sonnet-4-20250514-v1:0")
+        # ✅ Inference Profile IDを使用（元のコードと同じ）
+        inference_profile_id = CLAUDE_MODEL_MAPPING.get(model_name, "apac.anthropic.claude-sonnet-4-20250514-v1:0")
         
-        # ChatBedrockのパラメータ
+        # ✅ ChatBedrockのパラメータ（Inference Profile対応）
         model_kwargs = {
-            "model_id": bedrock_model_id,
+            "model_id": inference_profile_id,  # Inference Profile IDを指定
             "client": bedrock_client,
             "model_kwargs": {
                 "temperature": temperature,
@@ -104,7 +104,7 @@ class ModelManager:
         if max_tokens is not None:
             model_kwargs["model_kwargs"]["max_tokens"] = max_tokens
         
-        logger.info(f"🤖 Claude Bedrock model作成: {bedrock_model_id}, temp={temperature}, max_tokens={max_tokens}, region={credentials['aws_region']}")
+        logger.info(f"🤖 Claude Bedrock model作成 (Inference Profile): {inference_profile_id}, temp={temperature}, max_tokens={max_tokens}, region={credentials['aws_region']}")
         
         return ChatBedrock(**model_kwargs)
     
@@ -177,9 +177,9 @@ def get_chat_model(
 def test_model_creation():
     """モデル作成のテスト"""
     try:
-        logger.info("🧪 Claude Bedrock model test...")
+        logger.info("🧪 Claude Bedrock Inference Profile model test...")
         claude_model = get_chat_model("claude-4-sonnet", temperature=0.1, max_tokens=100)
-        logger.info("✅ Claude Bedrock model 作成成功")
+        logger.info("✅ Claude Bedrock Inference Profile model 作成成功")
         
         logger.info("🧪 GPT model test...")
         gpt_model = get_chat_model("gpt-4o", temperature=0.1, max_tokens=100)
