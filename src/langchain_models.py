@@ -18,13 +18,13 @@ logger = init_logger()
 
 # Claude用のモデル名マッピング（Bedrock用）
 CLAUDE_MODEL_MAPPING = {
-    "claude-4-sonnet": "anthropic.claude-3-5-sonnet-20241022-v2:0",
-    "claude-3.7": "anthropic.claude-3-haiku-20240307-v1:0"
+    "claude-4-sonnet": "anthropic.claude-sonnet-4-20250514-v1:0",  
+    "claude-3.7": "anthropic.claude-3-7-sonnet-20250219-v1:0",     
 }
 
 # Azure OpenAI用のモデル名マッピング
 AZURE_MODEL_MAPPING = {
-    "gpt-4.1": "gpt-4",
+    "gpt-4.1": "gpt-4.1",
     "gpt-4o": "gpt-4o"
 }
 
@@ -77,7 +77,7 @@ class ModelManager:
         credentials = ModelManager.get_credentials()
         
         if not credentials["aws_access_key_id"] or not credentials["aws_secret_access_key"]:
-            raise ValueError("AWS Bedrock の設定が不足しています。Streamlit SecretsまたはSecrets.tomlを確認してください。")
+            raise ValueError("AWS Bedrock の設定が不足しています。Streamlit SecretsのAWS認証情報を確認してください。")
         
         # Boto3セッションを作成（認証情報を明示的に設定）
         session = boto3.Session(
@@ -86,13 +86,16 @@ class ModelManager:
             region_name=credentials["aws_region"]
         )
         
+        # Bedrock Runtimeクライアントを作成
+        bedrock_client = session.client('bedrock-runtime')
+        
         # モデル名をBedrock用に変換
-        bedrock_model = CLAUDE_MODEL_MAPPING.get(model_name, "anthropic.claude-3-5-sonnet-20241022-v2:0")
+        bedrock_model_id = CLAUDE_MODEL_MAPPING.get(model_name, "anthropic.claude-sonnet-4-20250514-v1:0")
         
         # ChatBedrockのパラメータ
         model_kwargs = {
-            "model_id": bedrock_model,
-            "client": session.client('bedrock-runtime'),
+            "model_id": bedrock_model_id,
+            "client": bedrock_client,
             "model_kwargs": {
                 "temperature": temperature,
             }
@@ -101,7 +104,7 @@ class ModelManager:
         if max_tokens is not None:
             model_kwargs["model_kwargs"]["max_tokens"] = max_tokens
         
-        logger.info(f"🤖 Claude Bedrock model作成: {bedrock_model}, temp={temperature}, max_tokens={max_tokens}")
+        logger.info(f"🤖 Claude Bedrock model作成: {bedrock_model_id}, temp={temperature}, max_tokens={max_tokens}, region={credentials['aws_region']}")
         
         return ChatBedrock(**model_kwargs)
     
