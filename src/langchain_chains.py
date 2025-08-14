@@ -191,14 +191,40 @@ def generate_unified_answer(
     try:
         answer = chain.invoke(chain_input)
         
+        # 🔥 新規追加: 完全なプロンプトを構築
+        full_prompt_parts = []
+        
+        # システムプロンプト
+        full_prompt_parts.append(f"System: {prompt}")
+        
+        # 設備資料・ビル情報（モード別）
+        if mode != "質疑応答書添削モード":
+            knowledge_contents = ChainManager.create_combined_knowledge(chain_input)
+            if knowledge_contents and knowledge_contents.strip():
+                full_prompt_parts.append(f"Knowledge Contents:\n{knowledge_contents}")
+        
+        # チャット履歴
+        if chain_input.get("chat_history"):
+            full_prompt_parts.append("Chat History:")
+            for msg in chain_input["chat_history"]:
+                if hasattr(msg, 'content'):
+                    role = msg.__class__.__name__.replace('Message', '')
+                    full_prompt_parts.append(f"{role}: {msg.content}")
+        
+        # 現在の質問
+        full_prompt_parts.append(f"Human: {question}")
+        
+        # 完全なプロンプトを結合
+        complete_prompt = "\n\n".join(full_prompt_parts)
+        
         # 結果構築
         result = {
             "answer": answer,
             "mode": mode,
-            "langchain_used": True
+            "langchain_used": True,
+            "complete_prompt": complete_prompt  # 🔥 新規追加
         }
         
-        logger.info(f"✅ 統一回答生成完了: mode={mode}, 回答文字数={len(answer)}")
         return result
         
     except Exception as e:
