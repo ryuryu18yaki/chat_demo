@@ -7,6 +7,7 @@ from src.startup_loader import initialize_equipment_data, get_available_building
 from src.logging_utils import init_logger
 from src.sheets_manager import log_to_sheets, get_sheets_manager, send_prompt_to_model_comparison
 from src.langchain_chains import generate_smart_answer_with_langchain
+from src.building_manager import get_building_manager
 
 import yaml
 import streamlit_authenticator as stauth
@@ -686,6 +687,59 @@ if st.session_state["authentication_status"]:
                 logger.error(f"Chat title generation failed: {e}")
                 return f"Chat {len(st.session_state.chats) + 1}"
         return f"Chat {len(st.session_state.chats) + 1}"
+    
+    # =====  データ準備関数（新規追加）  ===============================================
+    def prepare_prompt_data():
+        """セッション状態から選択されたデータを取得してLangChain用に準備"""
+        current_mode = st.session_state.design_mode
+        
+        equipment_content = None
+        building_content = None
+        
+        # 設備資料の取得（暗黙知モードのみ）
+        if current_mode == "暗黙知法令チャットモード":
+            selected_equipment = st.session_state.get("selected_equipment")
+            if selected_equipment:
+                selected_files_key = f"selected_files_{selected_equipment}"
+                selected_files = st.session_state.get(selected_files_key, [])
+                
+                if selected_files:
+                    equipment_texts = []
+                    equipment_data = st.session_state.equipment_data
+                    
+                    for file_name in selected_files:
+                        if file_name in equipment_data[selected_equipment]["files"]:
+                            file_text = equipment_data[selected_equipment]["files"][file_name]
+                            equipment_texts.append(file_text)
+                    
+                    if equipment_texts:
+                        equipment_content = "\n\n".join(equipment_texts)
+        
+        # ビル情報の取得
+        if current_mode in ["暗黙知法令チャットモード", "ビルマスタ質問モード"]:
+            include_building = st.session_state.get("include_building_info", False)
+            
+            if (current_mode == "ビルマスタ質問モード") or \
+            (current_mode == "暗黙知法令チャットモード" and include_building):
+                
+                building_mode = st.session_state.get("building_mode", "none")
+                selected_building = st.session_state.get("selected_building")
+                
+                try:
+                    building_manager = get_building_manager()
+                    if building_manager and building_manager.available:
+                        if building_mode == "specific" and selected_building:
+                            building_content = building_manager.format_building_info_for_prompt(selected_building)
+                        elif building_mode == "all":
+                            building_content = building_manager.format_building_info_for_prompt()
+                except Exception as e:
+                    logger.warning(f"⚠️ ビル情報取得失敗: {e}")
+        
+        return {
+            "mode": current_mode,
+            "equipment_content": equipment_content,
+            "building_content": building_content
+        }
         
     # =====  編集機能用のヘルパー関数（変更なし）  ==============================================
     def handle_save_prompt(mode_name, edited_text):
@@ -1313,6 +1367,27 @@ if st.session_state["authentication_status"]:
                 st.session_state.sid)
 
             try:
+                # データ準備
+                prompt_data = prepare_prompt_data()
+                
+                # 使用データの表示
+                if prompt_data["equipment_content"]:
+                    selected_equipment = st.session_state.get("selected_equipment")
+                    selected_files_key = f"selected_files_{selected_equipment}"
+                    selected_files = st.session_state.get(selected_files_key, [])
+                    st.info(f"📄 設備資料使用: {selected_equipment} ({len(selected_files)}ファイル)")
+                
+                if prompt_data["building_content"]:
+                    building_mode = st.session_state.get("building_mode", "none")
+                    if building_mode == "specific":
+                        selected_building = st.session_state.get("selected_building")
+                        st.info(f"🏢 ビル情報使用: {selected_building}")
+                    elif building_mode == "all":
+                        st.info("🏢 全ビル情報使用")
+                
+                if not prompt_data["equipment_content"] and not prompt_data["building_content"]:
+                    st.info("💭 一般知識による回答")
+                
                 # 🔥 LangChainによる統一回答生成
                 st.info("🚀 LangChainで最適化された回答を生成中...")
                 
@@ -1323,7 +1398,9 @@ if st.session_state["authentication_status"]:
                     prompt=prompt,
                     question=user_prompt,
                     model=st.session_state.claude_model,
-                    equipment_data=st.session_state.equipment_data,
+                    mode=prompt_data["mode"],
+                    equipment_content=prompt_data["equipment_content"],
+                    building_content=prompt_data["building_content"],
                     chat_history=msgs,
                     temperature=st.session_state.get("temperature", 0.0),
                     max_tokens=st.session_state.get("max_tokens")
@@ -1331,21 +1408,20 @@ if st.session_state["authentication_status"]:
                 
                 api_elapsed = time.perf_counter() - t_api
                 
-                # セッション情報から設備・ファイル情報を取得
                 assistant_reply = result["answer"]
                 
-                # セッション状態から設備情報を取得
-                selected_equipment = st.session_state.get("selected_equipment")
-                if selected_equipment:
-                    used_equipment = selected_equipment
-                    # 選択されたファイルを取得
-                    selected_files_key = f"selected_files_{selected_equipment}"
-                    used_files = st.session_state.get(selected_files_key, [])
-                    processing_mode = "equipment_with_files" if used_files else "equipment_no_files"
-                else:
-                    used_equipment = "なし（一般知識による回答）"
-                    used_files = []
-                    processing_mode = "no_equipment"
+                # 使用した設備・ファイル情報の記録
+                used_equipment = "なし（一般知識による回答）"
+                used_files = []
+                
+                if prompt_data["equipment_content"]:
+                    selected_equipment = st.session_state.get("selected_equipment")
+                    if selected_equipment:
+                        used_equipment = selected_equipment
+                        selected_files_key = f"selected_files_{selected_equipment}"
+                        used_files = st.session_state.get(selected_files_key, [])
+                
+                processing_mode = "equipment_with_files" if used_files else "no_equipment"
                 
                 # ステータス表示
                 if processing_mode == "equipment_with_files":

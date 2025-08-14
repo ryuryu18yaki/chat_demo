@@ -30,6 +30,25 @@ class ChainManager:
         return building_content
     
     @staticmethod
+    def create_combined_knowledge(inputs: dict) -> str:
+        """設備資料とビル情報を組み合わせたKnowledge Contents生成"""
+        equipment_content = inputs.get("equipment_content", "")
+        building_content = inputs.get("building_content", "")
+        
+        knowledge_parts = []
+        
+        if equipment_content:
+            knowledge_parts.append(f"=== 設備資料情報 ===\n{equipment_content}")
+        
+        if building_content:
+            knowledge_parts.append(f"=== ビル情報 ===\n{building_content}")
+        
+        if not knowledge_parts:
+            return "関連資料情報はありません。一般知識に基づいて回答してください。"
+        
+        return "\n\n".join(knowledge_parts)
+    
+    @staticmethod
     def create_chat_history_messages(chat_history: Optional[List[Dict[str, str]]]) -> List:
         """チャット履歴をLangChainのメッセージ形式に変換"""
         if not chat_history:
@@ -72,37 +91,27 @@ class ChainManager:
         """
         chat_model = get_chat_model(model_name, temperature, max_tokens)
         
-        if mode == "暗黙知法令チャットモード":
-            # 設備資料ありの場合
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", system_prompt),
-                ("human", "=== Knowledge Contents ===\n{knowledge_contents}"),
-                MessagesPlaceholder(variable_name="chat_history", optional=True),
-                ("human", "【質問】\n{question}\n\n上記の情報を参考に、日本語で回答してください。")
-            ])
-            
-            knowledge_generator = RunnableLambda(ChainManager.create_equipment_knowledge)
-            
-        elif mode == "ビルマスタ質問モード":
-            # ビル情報ありの場合
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", system_prompt),
-                ("human", "=== Knowledge Contents ===\n{knowledge_contents}"),
-                MessagesPlaceholder(variable_name="chat_history", optional=True),
-                ("human", "【質問】\n{question}\n\n上記の情報を参考に、日本語で回答してください。")
-            ])
-            
-            knowledge_generator = RunnableLambda(ChainManager.create_building_knowledge)
-            
-        else:  # 質疑応答書添削モード
+        if mode == "質疑応答書添削モード":
             # Knowledge Contentsなしの場合
             prompt = ChatPromptTemplate.from_messages([
                 ("system", system_prompt),
                 MessagesPlaceholder(variable_name="chat_history", optional=True),
-                ("human", "【質問】\n{question}\n\n上記の情報を参考に、日本語で回答してください。")
+                ("human", "【質問】\n{question}")
             ])
             
             knowledge_generator = None
+            
+        else:
+            # 暗黙知法令チャットモード、ビルマスタ質問モード共通
+            # 設備資料・ビル情報を動的に組み合わせ
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
+                ("human", "{knowledge_contents}"),
+                MessagesPlaceholder(variable_name="chat_history", optional=True),
+                ("human", "【質問】\n{question}\n\n上記の資料情報を参考に、日本語で回答してください。")
+            ])
+            
+            knowledge_generator = RunnableLambda(ChainManager.create_combined_knowledge)
         
         # チェーン構築
         if knowledge_generator:
@@ -174,10 +183,9 @@ def generate_unified_answer(
     }
     
     # モード別のコンテンツを追加
-    if mode == "暗黙知法令チャットモード" and equipment_content:
-        chain_input["equipment_content"] = equipment_content
-    elif mode == "ビルマスタ質問モード" and building_content:
-        chain_input["building_content"] = building_content
+    if mode != "質疑応答書添削モード":
+        chain_input["equipment_content"] = equipment_content or ""
+        chain_input["building_content"] = building_content or ""
     
     # チェーン実行
     try:
@@ -204,7 +212,9 @@ def generate_smart_answer_with_langchain(
     prompt: str,
     question: str,
     model: str = "claude-4-sonnet",
-    equipment_data: Optional[Dict[str, Dict[str, Any]]] = None,
+    mode: str = "暗黙知法令チャットモード",
+    equipment_content: Optional[str] = None,
+    building_content: Optional[str] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
     temperature: float = 0.0,
     max_tokens: Optional[int] = None
@@ -224,7 +234,9 @@ def generate_smart_answer_with_langchain(
         prompt=prompt,
         question=question,
         model=model,
-        mode="暗黙知法令チャットモード",  # デフォルト
+        mode=mode,
+        equipment_content=equipment_content,
+        building_content=building_content,
         chat_history=chat_history,
         temperature=temperature,
         max_tokens=max_tokens
