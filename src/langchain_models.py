@@ -18,8 +18,8 @@ logger = init_logger()
 
 # Claude用のモデル名マッピング（Bedrock用）
 CLAUDE_MODEL_MAPPING = {
-    "claude-4-sonnet": "anthropic.claude-sonnet-4-20250514-v1:0",  
-    "claude-3.7": "anthropic.claude-3-7-sonnet-20250219-v1:0",     
+    "claude-4-sonnet": "apac.anthropic.claude-sonnet-4-20250514-v1:0",
+    "claude-3.7": "apac.anthropic.claude-3-7-sonnet-20250219-v1:0"
 }
 
 # Azure OpenAI用のモデル名マッピング
