@@ -1572,7 +1572,7 @@ if st.session_state["authentication_status"]:
             # ログ保存
             logger.info("📝 Executing post_log before any other operations")
             post_log_async(user_prompt, assistant_reply, complete_prompt, send_to_model_comparison=True) 
-            post_log_firestore_async(user_prompt, assistant_reply, prompt, send_to_model_comparison=True)
+            post_log_firestore_async(user_prompt, assistant_reply, complete_prompt, send_to_model_comparison=True)
 
             # チャットタイトル生成（LangChain対応版）
             try:

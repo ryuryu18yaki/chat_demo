@@ -74,6 +74,7 @@ class FirestoreManager:
             return False
         
         try:
+            # 🔥 文字数制限を大幅に緩和（Firestoreの最大ドキュメントサイズは1MB）
             # ドキュメントデータの準備
             doc_data = {
                 "timestamp": datetime.now(timezone.utc),
@@ -82,9 +83,9 @@ class FirestoreManager:
                 "chat_title": chat_title or "未設定",
                 "mode": mode,
                 "model": model,
-                "input_text": self._truncate_text(input_text, 50000),
-                "output_text": self._truncate_text(output_text, 50000),
-                "prompt_used": self._truncate_text(prompt_used, 50000),
+                "input_text": self._truncate_text(input_text, 100000),    # 10万文字に拡大
+                "output_text": self._truncate_text(output_text, 200000),   # 20万文字に拡大
+                "prompt_used": self._truncate_text(prompt_used, 500000),    # 50万文字に拡大（完全プロンプト用）
                 "metadata": metadata or {},
                 "id": str(uuid.uuid4())
             }
