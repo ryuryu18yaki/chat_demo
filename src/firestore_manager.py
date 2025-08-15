@@ -27,9 +27,25 @@ class FirestoreManager:
                 # Streamlit secretsからFirebase認証情報を取得
                 firebase_credentials = st.secrets["firebase_credentials"]
                 
-                # 認証情報を使ってFirebaseアプリを初期化
-                cred = credentials.Certificate(firebase_credentials)
-                firebase_admin.initialize_app(cred)
+                # 🔥 修正: 辞書を直接渡すのではなく、一時ファイルを作成
+                import tempfile
+                import json
+                import os
+                
+                # 一時ファイルに認証情報を書き込み
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_file:
+                    json.dump(dict(firebase_credentials), temp_file, indent=2)
+                    temp_file_path = temp_file.name
+                
+                try:
+                    # 一時ファイルのパスを使って認証
+                    cred = credentials.Certificate(temp_file_path)
+                    firebase_admin.initialize_app(cred)
+                    
+                finally:
+                    # 一時ファイルを削除
+                    if os.path.exists(temp_file_path):
+                        os.unlink(temp_file_path)
             
             # Firestoreクライアントを取得
             self.db = firestore.client()
