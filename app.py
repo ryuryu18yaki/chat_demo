@@ -8,6 +8,7 @@ from src.logging_utils import init_logger
 from src.sheets_manager import log_to_sheets, get_sheets_manager, send_prompt_to_model_comparison
 from src.langchain_chains import generate_smart_answer_with_langchain
 from src.building_manager import get_building_manager
+from src.firestore_manager import log_to_firestore, send_prompt_to_firestore_comparison
 
 import yaml
 import streamlit_authenticator as stauth
@@ -167,6 +168,107 @@ def post_log(
                 
         except Exception as e:
             logger.error("❌ post_log outer error — %s", e, exc_info=True)
+
+# 🔥 新しいFirestore用の非同期ログ関数を追加（既存のpost_log_asyncは変更しない）
+def post_log_firestore_async(input_text: str, output_text: str, prompt: str, 
+                             send_to_model_comparison: bool = False):
+    """Firestore専用の非同期ログ投稿関数"""
+    try:
+        logger.info("🔥 Firestore logging start...")
+        
+        # セッション状態から必要な情報を取得
+        username = st.session_state.get("username") or st.session_state.get("name")
+        design_mode = st.session_state.get("design_mode")
+        session_id = st.session_state.get("sid")
+        claude_model = st.session_state.get("claude_model")
+        temperature = st.session_state.get("temperature", 0.0)
+        max_tokens = st.session_state.get("max_tokens")
+        use_rag = st.session_state.get("use_rag", False)
+        chat_title = st.session_state.get("current_chat", "未設定")
+        
+        logger.info(f"🔥 Session data - user: {username}, mode: {design_mode}, model: {claude_model}")
+        
+        # メタデータ準備
+        metadata = {
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "use_rag": use_rag,
+            "app_version": "2.0",
+            "log_source": "firestore",
+            "timestamp": time.time()
+        }
+        
+        # 🔥 Firestoreに会話ログを保存
+        firestore_success = log_to_firestore(
+            input_text=input_text,
+            output_text=output_text,
+            prompt=prompt,
+            chat_title=chat_title,
+            user_id=username or "unknown",
+            session_id=session_id or "unknown",
+            mode=design_mode or "unknown",
+            model=claude_model or "unknown",
+            temperature=temperature,
+            max_tokens=max_tokens,
+            use_rag=use_rag
+        )
+        
+        if firestore_success:
+            logger.info("✅ Firestore conversation log saved")
+        else:
+            logger.warning("⚠️ Firestore conversation log failed")
+        
+        # 🔥 モデル比較への送信（オプション）
+        if send_to_model_comparison:
+            try:
+                # チャットメッセージを取得
+                current_chat = st.session_state.get("current_chat", "New Chat")
+                chats_dict = st.session_state.get("chats", {})
+                msgs = chats_dict.get(current_chat, [])
+                
+                if msgs:
+                    # 完全なプロンプトを構築
+                    full_prompt_parts = []
+                    
+                    # システムプロンプト
+                    if prompt:
+                        full_prompt_parts.append(f"System: {prompt}")
+                    
+                    # 会話履歴（最後のメッセージ以外）
+                    for msg in msgs[:-1]:
+                        role = msg.get("role", "")
+                        content = msg.get("content", "")
+                        if role == "user":
+                            full_prompt_parts.append(f"Human: {content}")
+                        elif role == "assistant":
+                            full_prompt_parts.append(f"Assistant: {content}")
+                    
+                    # 現在のユーザー入力
+                    full_prompt_parts.append(f"Human: {input_text}")
+                    
+                    # 完全なプロンプトを作成
+                    comparison_prompt = "\n\n".join(full_prompt_parts)
+                    
+                    # モデル比較に送信
+                    model_success = send_prompt_to_firestore_comparison(
+                        prompt_text=comparison_prompt,
+                        user_note=f"User: {username}, Mode: {design_mode}, Model: {claude_model}"
+                    )
+                    
+                    if model_success:
+                        logger.info("✅ Firestore model comparison saved")
+                    else:
+                        logger.warning("⚠️ Firestore model comparison failed")
+                        
+            except Exception as comparison_error:
+                logger.error(f"❌ Firestore model comparison save failed: {comparison_error}")
+        
+        logger.info("🔥 Firestore logging completed")
+        return firestore_success
+        
+    except Exception as e:
+        logger.error(f"❌ Firestore logging failed: {e}")
+        return False
 
 # ===== StreamlitAsyncLogger（変更なし） =====
 class StreamlitAsyncLogger:
@@ -1470,6 +1572,7 @@ if st.session_state["authentication_status"]:
             # ログ保存
             logger.info("📝 Executing post_log before any other operations")
             post_log_async(user_prompt, assistant_reply, complete_prompt, send_to_model_comparison=True) 
+            post_log_firestore_async(user_prompt, assistant_reply, prompt, send_to_model_comparison=True)
 
             # チャットタイトル生成（LangChain対応版）
             try:

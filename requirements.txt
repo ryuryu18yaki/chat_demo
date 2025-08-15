@@ -29,3 +29,6 @@ langchain-openai>=0.1.0
 langchain-core>=0.1.0
 langchain-community>=0.0.20
 langchain-aws>=0.1.0
+
+firebase-admin>=6.2.0
+google-cloud-firestore>=2.11.0
