@@ -12,23 +12,6 @@ logger = init_logger()
 
 class ChainManager:
     """LangChain用のチェーン管理クラス - シンプル版"""
-    
-    @staticmethod
-    def create_equipment_knowledge(inputs: dict) -> str:
-        """設備資料のKnowledge Contents生成"""
-        equipment_content = inputs.get("equipment_content", "")
-        if not equipment_content:
-            return "設備資料情報はありません。"
-        return equipment_content
-    
-    @staticmethod
-    def create_building_knowledge(inputs: dict) -> str:
-        """ビル情報のKnowledge Contents生成"""
-        building_content = inputs.get("building_content", "")
-        if not building_content:
-            return "ビル情報はありません。"
-        return building_content
-    
     @staticmethod
     def create_combined_knowledge(inputs: dict) -> str:
         """設備資料とビル情報を組み合わせたKnowledge Contents生成"""
@@ -76,19 +59,7 @@ class ChainManager:
         temperature: float = 0.0,
         max_tokens: Optional[int] = None
     ):
-        """統一されたチェーンテンプレート
-        
-        プロンプト構造:
-        === System Message ===
-        （各モード専用プロンプト）
-        === Knowledge Contents ===
-        （各モードの追加資料情報）
-        === Chat History ===
-        （ある場合は会話履歴）
-        === Human Message ===
-        【質問】（ユーザーの質問）
-        上記の情報を参考に、日本語で回答してください。
-        """
+        """統一されたチェーンテンプレート - モード別プロンプト構成対応"""
         chat_model = get_chat_model(model_name, temperature, max_tokens)
         
         if mode == "質疑応答書添削モード":
@@ -96,31 +67,50 @@ class ChainManager:
             prompt = ChatPromptTemplate.from_messages([
                 ("system", system_prompt),
                 MessagesPlaceholder(variable_name="chat_history", optional=True),
-                ("human", "【質問】\n{question}")
+                ("human", "【添削依頼】\n{question}\n\n上記の内容について、質疑応答書として適切な形式で添削・改善提案をお願いします。")
             ])
-            
             knowledge_generator = None
             
+        elif mode == "暗黙知法令チャットモード":
+            # 暗黙知法令チャットモード専用構成
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
+                ("human", "=== 設備資料情報 ===\n{equipment_content}\n\n=== ビル情報 ===\n{building_content}"),
+                MessagesPlaceholder(variable_name="chat_history", optional=True),
+                ("human", "【技術的質問】\n{question}\n\n上記の設備資料とビル情報を参考に、建築電気設備設計の観点から詳細に回答してください。")
+            ])
+            knowledge_generator = RunnableLambda(ChainManager.create_separate_knowledge)
+            
+        elif mode == "ビルマスタ質問モード":
+            # ビルマスタ質問モード専用構成
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
+                ("human", "=== ビルマスター情報 ===\n{building_content}"),
+                MessagesPlaceholder(variable_name="chat_history", optional=True),
+                ("human", "【ビル情報に関する質問】\n{question}\n\nビルマスターデータに記載されている情報のみを使用して、正確に回答してください。")
+            ])
+            knowledge_generator = RunnableLambda(ChainManager.create_building_knowledge)
+            
         else:
-            # 暗黙知法令チャットモード、ビルマスタ質問モード共通
-            # 設備資料・ビル情報を動的に組み合わせ
+            # デフォルト（既存の統一構成を維持）
             prompt = ChatPromptTemplate.from_messages([
                 ("system", system_prompt),
                 ("human", "{knowledge_contents}"),
                 MessagesPlaceholder(variable_name="chat_history", optional=True),
                 ("human", "【質問】\n{question}\n\n上記の資料情報を参考に、日本語で回答してください。")
             ])
-            
             knowledge_generator = RunnableLambda(ChainManager.create_combined_knowledge)
         
-        # チェーン構築
+        # チェーン構築（既存ロジックそのまま）
         if knowledge_generator:
             chain = (
                 {
                     "question": lambda x: x["question"],
-                    "knowledge_contents": knowledge_generator,
+                    "equipment_content": lambda x: x.get("equipment_content", ""),
+                    "building_content": lambda x: x.get("building_content", ""),
                     "chat_history": lambda x: ChainManager.create_chat_history_messages(x.get("chat_history"))
                 }
+                | knowledge_generator
                 | prompt
                 | chat_model
                 | StrOutputParser()
@@ -138,6 +128,23 @@ class ChainManager:
         
         logger.info(f"✅ Unified Chain 作成完了: model={model_name}, mode={mode}")
         return chain
+
+    # 新しいナレッジ生成関数を2つだけ追加
+
+    @staticmethod
+    def create_separate_knowledge(inputs: dict) -> dict:
+        """暗黙知法令チャットモード用：設備とビルを分離"""
+        result = inputs.copy()
+        result["equipment_content"] = inputs.get("equipment_content", "設備資料情報はありません。")
+        result["building_content"] = inputs.get("building_content", "ビル情報はありません。")
+        return result
+
+    @staticmethod
+    def create_building_knowledge(inputs: dict) -> dict:
+        """ビルマスタ質問モード用：ビル情報のみ"""
+        result = inputs.copy()
+        result["building_content"] = inputs.get("building_content", "ビル情報はありません。")
+        return result
 
 # === 統一インターフェース ===
 
