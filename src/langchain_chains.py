@@ -101,16 +101,16 @@ class ChainManager:
             ])
             knowledge_generator = RunnableLambda(ChainManager.create_combined_knowledge)
         
-        # チェーン構築（既存ロジックそのまま）
+        # 🔥 修正: チェーン構築を統一（モード別でも同じ構造）
         if knowledge_generator:
             chain = (
                 {
                     "question": lambda x: x["question"],
                     "equipment_content": lambda x: x.get("equipment_content", ""),
                     "building_content": lambda x: x.get("building_content", ""),
+                    "knowledge_contents": knowledge_generator,  # 従来モード用
                     "chat_history": lambda x: ChainManager.create_chat_history_messages(x.get("chat_history"))
                 }
-                | knowledge_generator
                 | prompt
                 | chat_model
                 | StrOutputParser()
@@ -129,22 +129,22 @@ class ChainManager:
         logger.info(f"✅ Unified Chain 作成完了: model={model_name}, mode={mode}")
         return chain
 
-    # 新しいナレッジ生成関数を2つだけ追加
+# 新しいナレッジ生成関数を2つだけ追加
 
-    @staticmethod
-    def create_separate_knowledge(inputs: dict) -> dict:
-        """暗黙知法令チャットモード用：設備とビルを分離"""
-        result = inputs.copy()
-        result["equipment_content"] = inputs.get("equipment_content", "設備資料情報はありません。")
-        result["building_content"] = inputs.get("building_content", "ビル情報はありません。")
-        return result
+@staticmethod
+def create_separate_knowledge(inputs: dict) -> dict:
+    """暗黙知法令チャットモード用：設備とビルを分離して返す"""
+    result = inputs.copy()
+    result["equipment_content"] = inputs.get("equipment_content", "設備資料情報はありません。")
+    result["building_content"] = inputs.get("building_content", "ビル情報はありません。")
+    return result
 
-    @staticmethod
-    def create_building_knowledge(inputs: dict) -> dict:
-        """ビルマスタ質問モード用：ビル情報のみ"""
-        result = inputs.copy()
-        result["building_content"] = inputs.get("building_content", "ビル情報はありません。")
-        return result
+@staticmethod
+def create_building_knowledge(inputs: dict) -> dict:
+    """ビルマスタ質問モード用：ビル情報のみ返す"""
+    result = inputs.copy()
+    result["building_content"] = inputs.get("building_content", "ビル情報はありません。")
+    return result
 
 # === 統一インターフェース ===
 
@@ -231,13 +231,14 @@ def generate_unified_answer(
             else:
                 full_prompt_parts.append("=== Knowledge Contents ===\n関連資料情報はありません。")
         
-        # チャット履歴
-        if chain_input.get("chat_history"):
+        # チャット履歴（元の辞書形式から直接取得）
+        original_chat_history = chat_history[:-1] if chat_history and len(chat_history) > 1 else None
+        if original_chat_history:
             full_prompt_parts.append("=== Chat History ===")
-            for msg in chain_input["chat_history"]:
-                if hasattr(msg, 'content'):
-                    role = msg.__class__.__name__.replace('Message', '')
-                    full_prompt_parts.append(f"{role}: {msg.content}")
+            for msg in original_chat_history:
+                if isinstance(msg, dict) and msg.get("role") and msg.get("content"):
+                    role = msg["role"].capitalize()
+                    full_prompt_parts.append(f"{role}: {msg['content']}")
         
         # 現在の質問（モード別の接頭辞付き）
         if mode == "暗黙知法令チャットモード":

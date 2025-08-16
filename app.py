@@ -1034,7 +1034,7 @@ if st.session_state["authentication_status"]:
             available_buildings = get_available_buildings()
 
             if not available_buildings:
-                st.error("❌ ビル情報が読み込まれていません")
+                st.error("⚠️ ビル情報が読み込まれていません")
                 st.session_state["selected_building"] = None
                 st.session_state["include_building_info"] = False
                 return
@@ -1086,26 +1086,56 @@ if st.session_state["authentication_status"]:
                         st.warning("⚠️ 検索条件に一致するビルが見つかりません")
                         selected_building = None
                     
+                    # 🔥 新規追加: 他のビルも参考にするオプション
+                    if selected_building:
+                        include_other_buildings = st.checkbox(
+                            "他のビルも参考にする",
+                            value=st.session_state.get("include_other_buildings", False),
+                            help="選択したビル以外の情報も比較・参考のために使用します"
+                        )
+                        st.session_state["include_other_buildings"] = include_other_buildings
+                        
+                        # building_mode の設定
+                        if include_other_buildings:
+                            st.session_state["building_mode"] = "specific_with_others"
+                        else:
+                            st.session_state["building_mode"] = "specific_only"
+                    else:
+                        st.session_state["include_other_buildings"] = False
+                        st.session_state["building_mode"] = "specific_only"
+                    
                     st.session_state["selected_building"] = selected_building if selected_building else None
-                    st.session_state["building_mode"] = "specific"
                     
                 elif building_selection_mode == "全ビル情報を使用":
                     st.info("🏢 全ビルの情報を使用して回答します")
                     st.session_state["selected_building"] = None
                     st.session_state["building_mode"] = "all"
+                    st.session_state["include_other_buildings"] = False  # 全ビル使用時は無効
             
             else:
                 st.session_state["selected_building"] = None
                 st.session_state["building_mode"] = "none"
+                st.session_state["include_other_buildings"] = False
             
-            # 現在の選択状態を表示
+            # 現在の選択状況を表示
             if include_building:
                 current_building = st.session_state.get("selected_building")
                 building_mode = st.session_state.get("building_mode", "none")
+                include_others = st.session_state.get("include_other_buildings", False)
                 
-                if building_mode == "specific" and current_building:
-                    st.success(f"✅ 選択中: **{current_building}**")
+                if building_mode == "specific_only" and current_building:
+                    st.success(f"✅ 選択中: **{current_building}** (単独)")
                     
+                elif building_mode == "specific_with_others" and current_building:
+                    other_count = len(available_buildings) - 1
+                    st.success(f"✅ 基準ビル: **{current_building}**")
+                    st.info(f"ℹ️ 他のビルも参考: {other_count}件のビル情報も使用")
+                    
+                elif building_mode == "all":
+                    st.success("✅ 全ビル情報を使用")
+                    
+                # ビル詳細プレビュー
+                if current_building:
                     with st.expander("🏢 ビル詳細情報", expanded=False):
                         building_info_text = get_building_info_for_prompt(current_building)
                         st.text_area(
@@ -1114,10 +1144,7 @@ if st.session_state["authentication_status"]:
                             height=300,
                             key=f"building_preview_{current_building}"
                         )
-                        
                 elif building_mode == "all":
-                    st.success("✅ 全ビル情報を使用")
-                    
                     with st.expander("🏢 全ビル情報プレビュー", expanded=False):
                         all_building_info = get_building_info_for_prompt()
                         st.text_area(
