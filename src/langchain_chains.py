@@ -162,20 +162,6 @@ def generate_unified_answer(
 ) -> Dict[str, Any]:
     """
     統一された回答生成関数
-    
-    Args:
-        prompt: システムプロンプト
-        question: ユーザーの質問
-        model: 使用するモデル名
-        mode: モード名
-        equipment_content: 設備資料内容（暗黙知法令チャットモードで使用）
-        building_content: ビル情報内容（ビルマスタ質問モードで使用）
-        chat_history: チャット履歴
-        temperature: 温度パラメータ
-        max_tokens: 最大トークン数
-        
-    Returns:
-        回答結果辞書
     """
     
     logger.info(f"🚀 統一回答生成開始: model={model}, mode={mode}")
@@ -198,28 +184,70 @@ def generate_unified_answer(
     try:
         answer = chain.invoke(chain_input)
         
-        # 🔥 新規追加: 完全なプロンプトを構築
+        # 🔥 修正: モード別のcomplete_prompt構築
         full_prompt_parts = []
         
         # システムプロンプト
-        full_prompt_parts.append(f"System: {prompt}")
+        full_prompt_parts.append(f"=== System Message ===\n{prompt}")
         
-        # 設備資料・ビル情報（モード別）
-        if mode != "質疑応答書添削モード":
-            knowledge_contents = ChainManager.create_combined_knowledge(chain_input)
-            if knowledge_contents and knowledge_contents.strip():
-                full_prompt_parts.append(f"Knowledge Contents:\n{knowledge_contents}")
+        # モード別のKnowledge Contents構築
+        if mode == "暗黙知法令チャットモード":
+            # 設備とビル情報を分離表示
+            equipment_content = chain_input.get("equipment_content", "")
+            building_content = chain_input.get("building_content", "")
+            
+            knowledge_parts = []
+            if equipment_content:
+                knowledge_parts.append(f"=== 設備資料情報 ===\n{equipment_content}")
+            if building_content:
+                knowledge_parts.append(f"=== ビル情報 ===\n{building_content}")
+            
+            if knowledge_parts:
+                full_prompt_parts.append("\n\n".join(knowledge_parts))
+            else:
+                full_prompt_parts.append("=== Knowledge Contents ===\n設備資料情報およびビル情報はありません。")
+                
+        elif mode == "ビルマスタ質問モード":
+            # ビル情報のみ
+            building_content = chain_input.get("building_content", "")
+            if building_content:
+                full_prompt_parts.append(f"=== ビルマスター情報 ===\n{building_content}")
+            else:
+                full_prompt_parts.append("=== ビルマスター情報 ===\nビル情報はありません。")
+                
+        elif mode != "質疑応答書添削モード":
+            # その他のモード（従来の統一構造）
+            equipment_content = chain_input.get("equipment_content", "")
+            building_content = chain_input.get("building_content", "")
+            
+            knowledge_parts = []
+            if equipment_content:
+                knowledge_parts.append(f"=== 設備資料情報 ===\n{equipment_content}")
+            if building_content:
+                knowledge_parts.append(f"=== ビル情報 ===\n{building_content}")
+            
+            if knowledge_parts:
+                full_prompt_parts.append(f"=== Knowledge Contents ===\n" + "\n\n".join(knowledge_parts))
+            else:
+                full_prompt_parts.append("=== Knowledge Contents ===\n関連資料情報はありません。")
         
         # チャット履歴
         if chain_input.get("chat_history"):
-            full_prompt_parts.append("Chat History:")
+            full_prompt_parts.append("=== Chat History ===")
             for msg in chain_input["chat_history"]:
                 if hasattr(msg, 'content'):
                     role = msg.__class__.__name__.replace('Message', '')
                     full_prompt_parts.append(f"{role}: {msg.content}")
         
-        # 現在の質問
-        full_prompt_parts.append(f"Human: {question}")
+        # 現在の質問（モード別の接頭辞付き）
+        if mode == "暗黙知法令チャットモード":
+            full_prompt_parts.append(f"=== Human Message ===\n【技術的質問】\n{question}\n\n上記の設備資料とビル情報を参考に、建築電気設備設計の観点から詳細に回答してください。")
+        elif mode == "質疑応答書添削モード":
+            full_prompt_parts.append(f"=== Human Message ===\n【添削依頼】\n{question}\n\n上記の内容について、質疑応答書として適切な形式で添削・改善提案をお願いします。")
+        elif mode == "ビルマスタ質問モード":
+            full_prompt_parts.append(f"=== Human Message ===\n【ビル情報に関する質問】\n{question}\n\nビルマスターデータに記載されている情報のみを使用して、正確に回答してください。")
+        else:
+            full_prompt_parts.append(f"=== Human Message ===\n【質問】\n{question}\n\n上記の資料情報を参考に、日本語で回答してください。")
         
         # 完全なプロンプトを結合
         complete_prompt = "\n\n".join(full_prompt_parts)
@@ -229,7 +257,7 @@ def generate_unified_answer(
             "answer": answer,
             "mode": mode,
             "langchain_used": True,
-            "complete_prompt": complete_prompt  # 🔥 新規追加
+            "complete_prompt": complete_prompt  # 🔥 モード別構造に対応
         }
         
         return result
