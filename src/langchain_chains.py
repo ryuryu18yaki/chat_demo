@@ -101,13 +101,15 @@ class ChainManager:
             ])
             knowledge_generator = RunnableLambda(ChainManager.create_combined_knowledge)
         
-        # 🔥 修正: チェーン構築を統一（モード別でも同じ構造）
+        # 🔥 修正: チェーン構築を統一（新しいフィールド対応）
         if knowledge_generator:
             chain = (
                 {
                     "question": lambda x: x["question"],
                     "equipment_content": lambda x: x.get("equipment_content", ""),
                     "building_content": lambda x: x.get("building_content", ""),
+                    "target_building_content": lambda x: x.get("target_building_content", ""),  # 🔥 新規追加
+                    "other_buildings_content": lambda x: x.get("other_buildings_content", ""),   # 🔥 新規追加
                     "knowledge_contents": knowledge_generator,  # 従来モード用
                     "chat_history": lambda x: ChainManager.create_chat_history_messages(x.get("chat_history"))
                 }
@@ -129,22 +131,95 @@ class ChainManager:
         logger.info(f"✅ Unified Chain 作成完了: model={model_name}, mode={mode}")
         return chain
 
-# 新しいナレッジ生成関数を2つだけ追加
+    @staticmethod
+    def create_building_knowledge(inputs: dict) -> dict:
+        """ビルマスタ質問モード用：新しいプロンプト構造対応"""
+        result = inputs.copy()
+        
+        # 新しいフィールドを取得
+        target_building_content = inputs.get("target_building_content", "")
+        other_buildings_content = inputs.get("other_buildings_content", "")
+        building_content = inputs.get("building_content", "")  # 後方互換性
+        
+        # 新しいプロンプト構造を構築
+        if target_building_content and other_buildings_content:
+            # 特定ビル + 他のビル（新機能）
+            formatted_content = f"==現在の対象ビル==\n{target_building_content}\n\n==その他のビル==\n{other_buildings_content}"
+            
+        elif target_building_content and not other_buildings_content:
+            # 特定ビルのみ
+            formatted_content = f"==現在の対象ビル==\n{target_building_content}\n\n==その他のビル==\nその他のビル情報はありません。"
+            
+        elif other_buildings_content and not target_building_content:
+            # 全ビル情報（対象ビルとその他の区別なし）
+            formatted_content = f"==現在の対象ビル==\n対象ビルは指定されていません。\n\n==その他のビル==\n{other_buildings_content}"
+            
+        elif building_content:
+            # 後方互換性：従来のbuilding_contentを使用
+            formatted_content = f"==現在の対象ビル==\n対象ビルは指定されていません。\n\n==その他のビル==\n{building_content}"
+            
+        else:
+            # ビル情報なし
+            formatted_content = "==現在の対象ビル==\n対象ビルは指定されていません。\n\n==その他のビル==\nビル情報はありません。"
+        
+        result["building_content"] = formatted_content
+        return result
 
-@staticmethod
-def create_separate_knowledge(inputs: dict) -> dict:
-    """暗黙知法令チャットモード用：設備とビルを分離して返す"""
-    result = inputs.copy()
-    result["equipment_content"] = inputs.get("equipment_content", "設備資料情報はありません。")
-    result["building_content"] = inputs.get("building_content", "ビル情報はありません。")
-    return result
+    @staticmethod
+    def create_separate_knowledge(inputs: dict) -> dict:
+        """暗黙知法令チャットモード用：設備とビルを分離表示"""
+        result = inputs.copy()
+        
+        equipment_content = inputs.get("equipment_content", "")
+        target_building_content = inputs.get("target_building_content", "")
+        other_buildings_content = inputs.get("other_buildings_content", "")
+        building_content = inputs.get("building_content", "")  # 後方互換性
+        
+        # 設備情報
+        result["equipment_content"] = equipment_content if equipment_content else "設備資料情報はありません。"
+        
+        # ビル情報（ビルマスタモードと同じ構造を使用）
+        if target_building_content and other_buildings_content:
+            # 特定ビル + 他のビル
+            formatted_building = f"==現在の対象ビル==\n{target_building_content}\n\n==その他のビル==\n{other_buildings_content}"
+            
+        elif target_building_content and not other_buildings_content:
+            # 特定ビルのみ
+            formatted_building = f"==現在の対象ビル==\n{target_building_content}\n\n==その他のビル==\nその他のビル情報はありません。"
+            
+        elif building_content:
+            # 後方互換性：従来の構造
+            formatted_building = building_content
+            
+        else:
+            # ビル情報なし
+            formatted_building = "ビル情報はありません。"
+        
+        result["building_content"] = formatted_building
+        return result
 
-@staticmethod
-def create_building_knowledge(inputs: dict) -> dict:
-    """ビルマスタ質問モード用：ビル情報のみ返す"""
-    result = inputs.copy()
-    result["building_content"] = inputs.get("building_content", "ビル情報はありません。")
-    return result
+    # 🔥 統一的なcomplete_prompt構築のための新しい関数
+    @staticmethod
+    def create_building_prompt_content(inputs: dict) -> str:
+        """complete_prompt構築用：ビル情報のフォーマット"""
+        target_building_content = inputs.get("target_building_content", "")
+        other_buildings_content = inputs.get("other_buildings_content", "")
+        building_content = inputs.get("building_content", "")
+        
+        if target_building_content and other_buildings_content:
+            return f"=== ビルマスター情報 ===\n==現在の対象ビル==\n{target_building_content}\n\n==その他のビル==\n{other_buildings_content}"
+            
+        elif target_building_content and not other_buildings_content:
+            return f"=== ビルマスター情報 ===\n==現在の対象ビル==\n{target_building_content}\n\n==その他のビル==\nその他のビル情報はありません。"
+            
+        elif other_buildings_content and not target_building_content:
+            return f"=== ビルマスター情報 ===\n==現在の対象ビル==\n対象ビルは指定されていません。\n\n==その他のビル==\n{other_buildings_content}"
+            
+        elif building_content:
+            return f"=== ビルマスター情報 ===\n{building_content}"
+            
+        else:
+            return "=== ビルマスター情報 ===\nビル情報はありません。"
 
 # === 統一インターフェース ===
 
@@ -156,6 +231,8 @@ def generate_unified_answer(
     mode: str = "暗黙知法令チャットモード",
     equipment_content: Optional[str] = None,
     building_content: Optional[str] = None,
+    target_building_content: Optional[str] = None,  # 🔥 新規追加
+    other_buildings_content: Optional[str] = None,   # 🔥 新規追加
     chat_history: Optional[List[Dict[str, str]]] = None,
     temperature: float = 0.0,
     max_tokens: Optional[int] = None
@@ -179,12 +256,14 @@ def generate_unified_answer(
     if mode != "質疑応答書添削モード":
         chain_input["equipment_content"] = equipment_content or ""
         chain_input["building_content"] = building_content or ""
+        chain_input["target_building_content"] = target_building_content or ""  # 🔥 新規追加
+        chain_input["other_buildings_content"] = other_buildings_content or ""   # 🔥 新規追加
     
     # チェーン実行
     try:
         answer = chain.invoke(chain_input)
         
-        # 🔥 修正: モード別のcomplete_prompt構築
+        # 🔥 修正: モード別のcomplete_prompt構築（新しい構造対応）
         full_prompt_parts = []
         
         # システムプロンプト
@@ -194,26 +273,19 @@ def generate_unified_answer(
         if mode == "暗黙知法令チャットモード":
             # 設備とビル情報を分離表示
             equipment_content = chain_input.get("equipment_content", "")
-            building_content = chain_input.get("building_content", "")
-            
-            knowledge_parts = []
             if equipment_content:
-                knowledge_parts.append(f"=== 設備資料情報 ===\n{equipment_content}")
-            if building_content:
-                knowledge_parts.append(f"=== ビル情報 ===\n{building_content}")
-            
-            if knowledge_parts:
-                full_prompt_parts.append("\n\n".join(knowledge_parts))
+                full_prompt_parts.append(f"=== 設備資料情報 ===\n{equipment_content}")
             else:
-                full_prompt_parts.append("=== Knowledge Contents ===\n設備資料情報およびビル情報はありません。")
+                full_prompt_parts.append("=== 設備資料情報 ===\n設備資料情報はありません。")
+            
+            # ビル情報（新しい構造対応）
+            building_prompt = ChainManager.create_building_prompt_content(chain_input)
+            full_prompt_parts.append(building_prompt)
                 
         elif mode == "ビルマスタ質問モード":
-            # ビル情報のみ
-            building_content = chain_input.get("building_content", "")
-            if building_content:
-                full_prompt_parts.append(f"=== ビルマスター情報 ===\n{building_content}")
-            else:
-                full_prompt_parts.append("=== ビルマスター情報 ===\nビル情報はありません。")
+            # ビル情報のみ（新しい構造）
+            building_prompt = ChainManager.create_building_prompt_content(chain_input)
+            full_prompt_parts.append(building_prompt)
                 
         elif mode != "質疑応答書添削モード":
             # その他のモード（従来の統一構造）
@@ -231,7 +303,7 @@ def generate_unified_answer(
             else:
                 full_prompt_parts.append("=== Knowledge Contents ===\n関連資料情報はありません。")
         
-        # チャット履歴（元の辞書形式から直接取得）
+        # チャット履歴
         original_chat_history = chat_history[:-1] if chat_history and len(chat_history) > 1 else None
         if original_chat_history:
             full_prompt_parts.append("=== Chat History ===")
@@ -258,7 +330,7 @@ def generate_unified_answer(
             "answer": answer,
             "mode": mode,
             "langchain_used": True,
-            "complete_prompt": complete_prompt  # 🔥 モード別構造に対応
+            "complete_prompt": complete_prompt  # 🔥 新しい構造に対応
         }
         
         return result
@@ -277,20 +349,15 @@ def generate_smart_answer_with_langchain(
     mode: str = "暗黙知法令チャットモード",
     equipment_content: Optional[str] = None,
     building_content: Optional[str] = None,
+    target_building_content: Optional[str] = None,  # 🔥 新規追加
+    other_buildings_content: Optional[str] = None,   # 🔥 新規追加
     chat_history: Optional[List[Dict[str, str]]] = None,
     temperature: float = 0.0,
     max_tokens: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     既存のapp.pyから呼び出される関数（後方互換性のため）
-    
-    注意: この関数は既存のロジックを維持しつつ、
-    実際の設備選択やビル情報取得はapp.py側で行われる前提です。
     """
-    
-    # この関数は既存のapp.pyとの互換性を保つため、
-    # 実際の処理はapp.py側で行うことを想定
-    # ここでは基本的な回答生成のみ実行
     
     return generate_unified_answer(
         prompt=prompt,
@@ -299,6 +366,8 @@ def generate_smart_answer_with_langchain(
         mode=mode,
         equipment_content=equipment_content,
         building_content=building_content,
+        target_building_content=target_building_content,  # 🔥 新規追加
+        other_buildings_content=other_buildings_content,   # 🔥 新規追加
         chat_history=chat_history,
         temperature=temperature,
         max_tokens=max_tokens

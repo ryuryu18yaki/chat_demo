@@ -797,6 +797,8 @@ if st.session_state["authentication_status"]:
         
         equipment_content = None
         building_content = None
+        target_building_content = None  # 🔥 新規追加
+        other_buildings_content = None  # 🔥 新規追加
         
         # 設備資料の取得（暗黙知モードのみ）
         if current_mode == "暗黙知法令チャットモード":
@@ -817,10 +819,11 @@ if st.session_state["authentication_status"]:
                     if equipment_texts:
                         equipment_content = "\n\n".join(equipment_texts)
         
-        # ビル情報の取得
+        # 🔥 修正: ビル情報の取得（新しいbuilding_mode対応）
         if current_mode in ["暗黙知法令チャットモード", "ビルマスタ質問モード"]:
             include_building = st.session_state.get("include_building_info", False)
             
+            # ビルマスタモードは常にビル情報を使用、暗黙知モードはチェックボックス次第
             if (current_mode == "ビルマスタ質問モード") or \
             (current_mode == "暗黙知法令チャットモード" and include_building):
                 
@@ -830,17 +833,55 @@ if st.session_state["authentication_status"]:
                 try:
                     building_manager = get_building_manager()
                     if building_manager and building_manager.available:
-                        if building_mode == "specific" and selected_building:
+                        
+                        if building_mode == "specific_only" and selected_building:
+                            # 特定ビルのみ（従来の動作）
                             building_content = building_manager.format_building_info_for_prompt(selected_building)
+                            target_building_content = building_content
+                            other_buildings_content = None
+                            
+                        elif building_mode == "specific_with_others" and selected_building:
+                            # 🔥 新機能: 特定ビル + 他のビル
+                            target_building_content = building_manager.format_building_info_for_prompt(selected_building)
+                            
+                            # 他のビル情報を取得（選択したビル以外）
+                            all_buildings = building_manager.get_building_list()
+                            other_buildings = [b for b in all_buildings if b != selected_building]
+                            
+                            if other_buildings:
+                                other_building_parts = []
+                                for other_building in other_buildings:
+                                    other_info = building_manager.format_building_info_for_prompt(other_building)
+                                    other_building_parts.append(other_info)
+                                other_buildings_content = "\n\n".join(other_building_parts)
+                            else:
+                                other_buildings_content = "他のビル情報はありません。"
+                            
+                            # 従来のbuilding_contentも設定（後方互換性のため）
+                            building_content = target_building_content + "\n\n" + other_buildings_content
+                            
                         elif building_mode == "all":
+                            # 全ビル情報（従来の動作）
                             building_content = building_manager.format_building_info_for_prompt()
+                            target_building_content = None
+                            other_buildings_content = building_content
+                            
+                        elif building_mode in ["specific", "specific_only"]:
+                            # 🔥 後方互換性: 既存のspecificモードを specific_only として処理
+                            if selected_building:
+                                building_content = building_manager.format_building_info_for_prompt(selected_building)
+                                target_building_content = building_content
+                                other_buildings_content = None
+                            
                 except Exception as e:
                     logger.warning(f"⚠️ ビル情報取得失敗: {e}")
         
         return {
             "mode": current_mode,
             "equipment_content": equipment_content,
-            "building_content": building_content
+            "building_content": building_content,  # 従来の統合版（後方互換性）
+            "target_building_content": target_building_content,  # 🔥 新規: 対象ビル
+            "other_buildings_content": other_buildings_content,   # 🔥 新規: その他ビル
         }
         
     # =====  編集機能用のヘルパー関数（変更なし）  ==============================================
@@ -1530,6 +1571,8 @@ if st.session_state["authentication_status"]:
                     mode=prompt_data["mode"],
                     equipment_content=prompt_data["equipment_content"],
                     building_content=prompt_data["building_content"],
+                    target_building_content=prompt_data.get("target_building_content"),  # 🔥 新規追加
+                    other_buildings_content=prompt_data.get("other_buildings_content"),   # 🔥 新規追加
                     chat_history=msgs,
                     temperature=st.session_state.get("temperature", 0.0),
                     max_tokens=st.session_state.get("max_tokens")
