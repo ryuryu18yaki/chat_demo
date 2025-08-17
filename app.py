@@ -636,23 +636,22 @@ if st.session_state["authentication_status"]:
     6. **暗黙知収集**：現在の知識で対応できない質問については、積極的にユーザーの実務経験を活用し、将来の暗黙知データベース拡充に貢献してください。
     7. **資料からの原文抜粋の禁止**：ユーザーから提供された資料や図面からの原文抜粋は行わず、必ず自分の言葉で説明してください。
     ────────────────────────────────
-    ## 【回答作成プロセス】
-    1. まず通常通り回答を作成
-    2. 以下のコードで文字数をチェック
-    3. 必要に応じて要約・調整
-    4. 最終回答を提示
-
-    ### 【文字数チェックコード】
+    ## 【文字数制限と回答作成プロセス】
+    ### 回答は1500文字以内で作成してください
+    
+    以下のPythonコードを参考に文字数を意識して回答を作成してください：
+    
     ```python
     def validate_answer_length(answer, max_chars=1500):
         char_count = len(answer)
         
         print(f"文字数チェック結果:")
-        print(f"- 現在の文字数: {char_count}")
-        print(f"- 制限文字数: {max_chars}")
-        print(f"- 超過文字数: {char_count - max_chars if char_count > max_chars else 0}")
+        print(f"- 現在の文字数: {{{{char_count}}}}")
+        print(f"- 制限文字数: {{{{max_chars}}}}")
         
         if char_count > max_chars:
+            excess = char_count - max_chars
+            print(f"- 超過文字数: {{{{excess}}}}")
             print("⚠️ 文字数制限を超過しています")
             print("→ 以下の方針で要約してください：")
             print("  1. 重要でない詳細を削除")
@@ -662,12 +661,15 @@ if st.session_state["authentication_status"]:
         else:
             print("✅ 文字数制限内です")
             return True
-
-    # 回答チェック実行
-    answer = "あなたの作成した回答"
-    is_valid = validate_answer_length(answer, 1500)
-    重要: 回答の最後に必ず実際の文字数を記載してください。
-    形式：「（回答文字数：1,234文字）」
+    ```
+    
+    **重要な指示:**
+    1. 回答作成時に文字数を意識する
+    2. 冗長な表現を避ける  
+    3. 要点を簡潔にまとめる
+    4. 回答末尾に「（回答文字数：XXX文字）」を必ず記載
+    
+    最大1500文字以内で、簡潔かつ的確な回答を心がけてください。
     """,
 
         "質疑応答書添削モード": """
