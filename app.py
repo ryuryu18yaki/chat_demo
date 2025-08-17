@@ -1674,11 +1674,6 @@ if st.session_state["authentication_status"]:
 
             msgs.append(msg_to_save)
 
-            # ログ保存
-            logger.info("📝 Executing post_log before any other operations")
-            post_log_async(user_prompt, assistant_reply, complete_prompt, send_to_model_comparison=True) 
-            post_log_firestore_async(user_prompt, assistant_reply, complete_prompt, send_to_model_comparison=True)
-
             try:
                 logger.info("🔍 === FIXED TITLE UPDATE DEBUG START ===")
                 logger.info(f"📊 msgs count: {len(msgs)}")
@@ -1724,6 +1719,11 @@ if st.session_state["authentication_status"]:
                 
             except Exception as e:
                 logger.error(f"💥 TITLE UPDATE EXCEPTION: {e}", exc_info=True)
+
+            # ログ保存
+            logger.info("📝 Executing post_log before any other operations")
+            post_log_async(user_prompt, assistant_reply, complete_prompt, send_to_model_comparison=True) 
+            post_log_firestore_async(user_prompt, assistant_reply, complete_prompt, send_to_model_comparison=True)
 
             time.sleep(3)
             st.rerun()
