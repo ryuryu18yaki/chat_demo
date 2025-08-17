@@ -1724,19 +1724,47 @@ if st.session_state["authentication_status"]:
                     if new_title and new_title != old_title and len(new_title.strip()) > 0:
                         logger.info(f"🔄 Updating title: '{old_title}' -> '{new_title}'")
                         
+                        # 🔥 更新前の状態確認
+                        logger.info(f"📊 BEFORE UPDATE:")
+                        logger.info(f"  - old_title in chats: {old_title in st.session_state.chats}")
+                        logger.info(f"  - old_title in chat_sids: {old_title in st.session_state.chat_sids}")
+                        logger.info(f"  - current chats keys: {list(st.session_state.chats.keys())}")
+                        logger.info(f"  - current chat_sids keys: {list(st.session_state.chat_sids.keys())}")
+                        
                         # データ更新
                         if old_title in st.session_state.chats:
+                            logger.info("🔄 Moving chats data...")
                             st.session_state.chats[new_title] = st.session_state.chats[old_title]
                             del st.session_state.chats[old_title]
                             logger.info("✅ chats updated")
+                        else:
+                            logger.error(f"❌ old_title '{old_title}' not found in chats!")
                         
                         if old_title in st.session_state.chat_sids:
+                            logger.info("🔄 Moving chat_sids data...")
                             st.session_state.chat_sids[new_title] = st.session_state.chat_sids[old_title]
                             del st.session_state.chat_sids[old_title]
                             logger.info("✅ chat_sids updated")
+                        else:
+                            logger.error(f"❌ old_title '{old_title}' not found in chat_sids!")
                         
+                        logger.info("🔄 Updating current_chat...")
                         st.session_state.current_chat = new_title
+                        logger.info("✅ current_chat updated")
+                        
+                        # 🔥 更新後の状態確認
+                        logger.info(f"📊 AFTER UPDATE:")
+                        logger.info(f"  - current_chat: '{st.session_state.current_chat}'")
+                        logger.info(f"  - chats keys: {list(st.session_state.chats.keys())}")
+                        logger.info(f"  - chat_sids keys: {list(st.session_state.chat_sids.keys())}")
+                        logger.info(f"  - new_title in chats: {new_title in st.session_state.chats}")
+                        logger.info(f"  - new_title in chat_sids: {new_title in st.session_state.chat_sids}")
+                        
                         logger.info(f"🎉 TITLE UPDATED SUCCESSFULLY: '{old_title}' -> '{new_title}'")
+                        
+                        # 🔥 即座にrerun実行
+                        logger.info("🔄 IMMEDIATE RERUN due to title update")
+                        st.rerun()
                     else:
                         logger.warning(f"⚠️ Title not updated. Generated: '{new_title}', Current: '{old_title}'")
                 else:
