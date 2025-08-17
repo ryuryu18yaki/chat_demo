@@ -1679,34 +1679,69 @@ if st.session_state["authentication_status"]:
             post_log_async(user_prompt, assistant_reply, complete_prompt, send_to_model_comparison=True) 
             post_log_firestore_async(user_prompt, assistant_reply, complete_prompt, send_to_model_comparison=True)
 
-            # チャットタイトル生成（LangChain対応版）
             try:
-                logger.info("🔄 Simple title test starting...")
+                logger.info("🔍 === TITLE UPDATE DEBUG START ===")
+                logger.info(f"📊 msgs count: {len(msgs)}")
+                logger.info(f"🏷️ current_chat: '{st.session_state.current_chat}'")
+                logger.info(f"📝 chats keys: {list(st.session_state.chats.keys())}")
+                logger.info(f"🔑 chat_sids keys: {list(st.session_state.chat_sids.keys())}")
                 
                 is_first_message = len(msgs) == 2
                 is_default_title = st.session_state.current_chat.startswith("Chat ")
                 
+                logger.info(f"✅ is_first_message: {is_first_message}")
+                logger.info(f"✅ is_default_title: {is_default_title}")
+                
                 if is_first_message and is_default_title:
-                    logger.info("✅ Updating to fixed test title...")
+                    logger.info("🎯 CONDITIONS MET - STARTING UPDATE")
                     
                     old_title = st.session_state.current_chat
-                    new_title = "テスト会話"  # 固定タイトル
+                    new_title = f"テスト会話_{len(msgs)}"  # ユニークにする
                     
-                    # データ移動
-                    st.session_state.chats[new_title] = st.session_state.chats[old_title]
-                    del st.session_state.chats[old_title]
+                    logger.info(f"🔄 old_title: '{old_title}'")
+                    logger.info(f"🔄 new_title: '{new_title}'")
+                    
+                    # BEFORE状態をログ
+                    logger.info(f"📋 BEFORE - chats: {list(st.session_state.chats.keys())}")
+                    logger.info(f"📋 BEFORE - current_chat: '{st.session_state.current_chat}'")
+                    
+                    # 更新処理
+                    if old_title in st.session_state.chats:
+                        logger.info("✅ Moving chat data...")
+                        st.session_state.chats[new_title] = st.session_state.chats[old_title]
+                        del st.session_state.chats[old_title]
+                        logger.info("✅ Chat data moved")
+                    else:
+                        logger.error(f"❌ old_title '{old_title}' not found in chats!")
                     
                     if old_title in st.session_state.chat_sids:
+                        logger.info("✅ Moving chat_sids...")
                         st.session_state.chat_sids[new_title] = st.session_state.chat_sids[old_title]
                         del st.session_state.chat_sids[old_title]
+                        logger.info("✅ Chat_sids moved")
+                    else:
+                        logger.error(f"❌ old_title '{old_title}' not found in chat_sids!")
                     
+                    logger.info("✅ Updating current_chat...")
                     st.session_state.current_chat = new_title
-                    logger.info("✅ Fixed title updated: %s -> %s", old_title, new_title)
+                    
+                    # AFTER状態をログ
+                    logger.info(f"📋 AFTER - chats: {list(st.session_state.chats.keys())}")
+                    logger.info(f"📋 AFTER - current_chat: '{st.session_state.current_chat}'")
+                    
+                    logger.info("🎉 TITLE UPDATE COMPLETED")
+                else:
+                    logger.info("❌ CONDITIONS NOT MET - SKIPPING UPDATE")
+                
+                logger.info("🔍 === TITLE UPDATE DEBUG END ===")
                 
             except Exception as e:
-                logger.error("❌ Simple title test failed: %s", e, exc_info=True)
+                logger.error(f"💥 TITLE UPDATE EXCEPTION: {e}", exc_info=True)
 
-            time.sleep(2)
+            # rerunの前に少し待つ
+            logger.info("⏳ Waiting before rerun...")
+            time.sleep(10)  # 長めに待つ
+            logger.info("🔄 Executing rerun...")
             st.rerun()
 
 elif st.session_state["authentication_status"] is False:
