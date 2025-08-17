@@ -502,7 +502,14 @@ def post_log_async(input_text: str, output_text: str, prompt: str,
             logger.error("❌ Fallback logging also failed — %s", fallback_error)
 
 # =====  ログインUIの表示  ============================================================
-authenticator.login()
+# 🔥 ログイン状態をチェックしてから login() を呼ぶ
+if st.session_state.get("authentication_status") is None:
+    authenticator.login()
+elif st.session_state.get("authentication_status") is False:
+    authenticator.login()
+else:
+    # 既にログイン済みの場合はlogin()を呼ばない
+    pass
 
 if st.session_state["authentication_status"]:
     name = st.session_state["name"]
