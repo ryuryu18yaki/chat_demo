@@ -1517,6 +1517,13 @@ if st.session_state["authentication_status"]:
     # =====  メイン画面表示  ==========================================================
     else:
         st.title("💬 Claude + 設備資料チャットボット")
+        # 🔍 デバッグ表示を追加
+        st.write("🔍 **Debug Info:**")
+        st.write(f"current_chat: `{st.session_state.current_chat}`")
+        st.write(f"chats keys: `{list(st.session_state.chats.keys())}`")
+        st.write(f"chat_sids keys: `{list(st.session_state.chat_sids.keys())}`")
+        st.write("---")
+
         st.subheader(f"🗣️ {st.session_state.current_chat}")
         st.markdown(f"**モデル:** {st.session_state.claude_model} | **モード:** {st.session_state.design_mode}")
 
@@ -1672,26 +1679,29 @@ if st.session_state["authentication_status"]:
                 msg_to_save["used_equipment"] = used_equipment
                 msg_to_save["used_files"] = used_files
 
-            # === タイトル生成とrerun処理の修正版 ===
             msgs.append(msg_to_save)
 
-            # タイトル生成フラグ
-            title_updated = False
-
-            # タイトル生成処理
+            # === 🔥 タイトル生成処理（専用関数版） ===
             logger.info("🔍 === TITLE GENERATION SIMPLE START ===")
             try:
+                logger.info(f"📊 Current state: msgs_count={len(msgs)}, current_chat='{st.session_state.current_chat}'")
+                
                 is_first_message = len(msgs) == 2
                 is_default_title = (
                     st.session_state.current_chat.startswith("Chat ") or 
                     st.session_state.current_chat == "New Chat"
                 )
                 
+                logger.info(f"✅ is_first_message: {is_first_message}")
+                logger.info(f"✅ is_default_title: {is_default_title}")
+                
                 if is_first_message and is_default_title:
                     logger.info("🎯 TITLE GENERATION CONDITIONS MET!")
                     
                     old_title = st.session_state.current_chat
                     user_content = msgs[0]['content'][:200]
+                    
+                    logger.info(f"📝 Generating title for: '{user_content}'")
                     
                     # 専用関数でタイトル生成
                     from src.langchain_chains import generate_chat_title_with_llm
@@ -1719,14 +1729,12 @@ if st.session_state["authentication_status"]:
                             logger.info("✅ chat_sids updated")
                         
                         st.session_state.current_chat = new_title
-                        title_updated = True
                         logger.info(f"🎉 TITLE UPDATED SUCCESSFULLY: '{old_title}' -> '{new_title}'")
-                        
-                        # 🔥 タイトル更新後のsession_state状態をログ出力
-                        logger.info(f"📋 AFTER UPDATE - current_chat: '{st.session_state.current_chat}'")
-                        logger.info(f"📋 AFTER UPDATE - chats keys: {list(st.session_state.chats.keys())}")
-                        logger.info(f"📋 AFTER UPDATE - chat_sids keys: {list(st.session_state.chat_sids.keys())}")
-
+                    else:
+                        logger.warning(f"⚠️ Title not updated. Generated: '{new_title}', Current: '{old_title}'")
+                else:
+                    logger.info(f"❌ Title generation skipped - first_msg:{is_first_message}, default_title:{is_default_title}")
+                    
             except Exception as e:
                 logger.error(f"💥 Title generation error: {e}", exc_info=True)
 
@@ -1734,17 +1742,11 @@ if st.session_state["authentication_status"]:
 
             # ログ保存
             logger.info("📝 Executing post_log before any other operations")
-            post_log_async(user_prompt, assistant_reply, complete_prompt, send_to_model_comparison=True)
+            post_log_async(user_prompt, assistant_reply, complete_prompt, send_to_model_comparison=True) 
             post_log_firestore_async(user_prompt, assistant_reply, complete_prompt, send_to_model_comparison=True)
 
-            # 🔥 タイトル更新の場合は即座にrerun
-            if title_updated:
-                logger.info("🔄 IMMEDIATE RERUN due to title update")
-                st.rerun()
-            else:
-                # 通常のrerun
-                time.sleep(2)
-                st.rerun()
+            time.sleep(3)
+            st.rerun()
 
 elif st.session_state["authentication_status"] is False:
     st.error('ユーザー名またはパスワードが間違っています。')
