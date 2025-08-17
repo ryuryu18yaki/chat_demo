@@ -1681,33 +1681,32 @@ if st.session_state["authentication_status"]:
 
             # チャットタイトル生成（LangChain対応版）
             try:
-                # 🔥 LangChainを使用してタイトル生成も最適化
-                title_result = generate_smart_answer_with_langchain(
-                    prompt="簡潔で分かりやすいタイトルを生成してください。",
-                    question=f"以下の会話の内容を25文字以内の簡潔なタイトルにしてください:\n{msgs[0]['content'][:200]}",
-                    model=st.session_state.claude_model,
-                    equipment_content=None,
-                    building_content=None,
-                    target_building_content=None,  # 🔥 新規追加
-                    other_buildings_content=None,   # 🔥 新規追加
-                    chat_history=None,
-                    temperature=st.session_state.get("temperature", 0.0),
-                    max_tokens=st.session_state.get("max_tokens")
-                )
-                new_title = title_result["answer"].strip('"').strip()
+                logger.info("🔄 Simple title test starting...")
                 
-                if new_title and new_title != st.session_state.current_chat:
+                is_first_message = len(msgs) == 2
+                is_default_title = st.session_state.current_chat.startswith("Chat ")
+                
+                if is_first_message and is_default_title:
+                    logger.info("✅ Updating to fixed test title...")
+                    
                     old_title = st.session_state.current_chat
+                    new_title = "テスト会話"  # 固定タイトル
+                    
+                    # データ移動
                     st.session_state.chats[new_title] = st.session_state.chats[old_title]
                     del st.session_state.chats[old_title]
+                    
+                    if old_title in st.session_state.chat_sids:
+                        st.session_state.chat_sids[new_title] = st.session_state.chat_sids[old_title]
+                        del st.session_state.chat_sids[old_title]
+                    
                     st.session_state.current_chat = new_title
-                    logger.info("📝 Chat title updated: %s -> %s", old_title, new_title)
+                    logger.info("✅ Fixed title updated: %s -> %s", old_title, new_title)
+                
             except Exception as e:
-                logger.warning("⚠️ Chat title generation failed (non-critical): %s", e)
-                # フォールバック: シンプルなタイトル生成
-                new_title = f"Chat {len(st.session_state.chats) + 1}"
+                logger.error("❌ Simple title test failed: %s", e, exc_info=True)
 
-            time.sleep(2) 
+            time.sleep(2)
             st.rerun()
 
 elif st.session_state["authentication_status"] is False:
