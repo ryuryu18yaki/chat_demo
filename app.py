@@ -6,7 +6,7 @@ import time
 from src.startup_loader import initialize_equipment_data, get_available_buildings, get_building_info_for_prompt
 from src.logging_utils import init_logger
 from src.sheets_manager import log_to_sheets, get_sheets_manager, send_prompt_to_model_comparison
-from src.langchain_chains import generate_smart_answer_with_langchain
+from src.langchain_chains import generate_smart_answer_with_langchain, generate_chat_title_with_llm
 from src.building_manager import get_building_manager
 from src.firestore_manager import log_to_firestore, send_prompt_to_firestore_comparison
 
@@ -1674,10 +1674,10 @@ if st.session_state["authentication_status"]:
 
             msgs.append(msg_to_save)
 
+            # === 🔥 タイトル生成処理（専用関数版） ===
+            logger.info("🔍 === TITLE GENERATION SIMPLE START ===")
             try:
-                logger.info("🔍 === FIXED TITLE UPDATE DEBUG START ===")
-                logger.info(f"📊 msgs count: {len(msgs)}")
-                logger.info(f"🏷️ current_chat: '{st.session_state.current_chat}'")
+                logger.info(f"📊 Current state: msgs_count={len(msgs)}, current_chat='{st.session_state.current_chat}'")
                 
                 is_first_message = len(msgs) == 2
                 is_default_title = (
@@ -1687,38 +1687,51 @@ if st.session_state["authentication_status"]:
                 
                 logger.info(f"✅ is_first_message: {is_first_message}")
                 logger.info(f"✅ is_default_title: {is_default_title}")
-                logger.info(f"🔍 current_chat starts with 'Chat ': {st.session_state.current_chat.startswith('Chat ')}")
-                logger.info(f"🔍 current_chat == 'New Chat': {st.session_state.current_chat == 'New Chat'}")
                 
                 if is_first_message and is_default_title:
-                    logger.info("🎯 CONDITIONS MET - STARTING UPDATE")
+                    logger.info("🎯 TITLE GENERATION CONDITIONS MET!")
                     
                     old_title = st.session_state.current_chat
-                    new_title = "初回会話"  # 固定タイトルでテスト
+                    user_content = msgs[0]['content'][:200]
                     
-                    logger.info(f"🔄 old_title: '{old_title}'")
-                    logger.info(f"🔄 new_title: '{new_title}'")
+                    logger.info(f"📝 Generating title for: '{user_content}'")
                     
-                    # 更新処理
-                    if old_title in st.session_state.chats:
-                        st.session_state.chats[new_title] = st.session_state.chats[old_title]
-                        del st.session_state.chats[old_title]
-                        logger.info("✅ Chat data moved")
+                    # 専用関数でタイトル生成
+                    from src.langchain_chains import generate_chat_title_with_llm
+                    new_title = generate_chat_title_with_llm(
+                        user_message=user_content,
+                        model=st.session_state.claude_model,
+                        temperature=0.0,
+                        max_tokens=30
+                    )
                     
-                    if old_title in st.session_state.chat_sids:
-                        st.session_state.chat_sids[new_title] = st.session_state.chat_sids[old_title]
-                        del st.session_state.chat_sids[old_title]
-                        logger.info("✅ Chat_sids moved")
+                    logger.info(f"🏷️ Generated title: '{new_title}'")
                     
-                    st.session_state.current_chat = new_title
-                    logger.info(f"🎉 TITLE UPDATE COMPLETED: '{old_title}' -> '{new_title}'")
+                    if new_title and new_title != old_title and len(new_title.strip()) > 0:
+                        logger.info(f"🔄 Updating title: '{old_title}' -> '{new_title}'")
+                        
+                        # データ更新
+                        if old_title in st.session_state.chats:
+                            st.session_state.chats[new_title] = st.session_state.chats[old_title]
+                            del st.session_state.chats[old_title]
+                            logger.info("✅ chats updated")
+                        
+                        if old_title in st.session_state.chat_sids:
+                            st.session_state.chat_sids[new_title] = st.session_state.chat_sids[old_title]
+                            del st.session_state.chat_sids[old_title]
+                            logger.info("✅ chat_sids updated")
+                        
+                        st.session_state.current_chat = new_title
+                        logger.info(f"🎉 TITLE UPDATED SUCCESSFULLY: '{old_title}' -> '{new_title}'")
+                    else:
+                        logger.warning(f"⚠️ Title not updated. Generated: '{new_title}', Current: '{old_title}'")
                 else:
-                    logger.info("❌ CONDITIONS NOT MET - SKIPPING UPDATE")
-                
-                logger.info("🔍 === FIXED TITLE UPDATE DEBUG END ===")
-                
+                    logger.info(f"❌ Title generation skipped - first_msg:{is_first_message}, default_title:{is_default_title}")
+                    
             except Exception as e:
-                logger.error(f"💥 TITLE UPDATE EXCEPTION: {e}", exc_info=True)
+                logger.error(f"💥 Title generation error: {e}", exc_info=True)
+
+            logger.info("🔍 === TITLE GENERATION SIMPLE END ===")
 
             # ログ保存
             logger.info("📝 Executing post_log before any other operations")

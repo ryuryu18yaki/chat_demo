@@ -373,6 +373,54 @@ def generate_smart_answer_with_langchain(
         max_tokens=max_tokens
     )
 
+# langchain_chains.py の最後に追加
+
+def generate_chat_title_with_llm(
+    user_message: str,
+    model: str = "claude-4-sonnet",
+    temperature: float = 0.0,
+    max_tokens: int = 30
+) -> str:
+    """
+    チャットタイトル生成専用関数
+    シンプルな構成でタイトルのみを生成
+    """
+    logger.info(f"🏷️ Starting title generation with model: {model}")
+    
+    try:
+        # タイトル生成専用プロンプト
+        title_prompt = ChatPromptTemplate.from_messages([
+            ("system", "あなたは会話の内容から簡潔で分かりやすいタイトルを生成する専門家です。25文字以内で、内容を的確に表現するタイトルを作成してください。"),
+            ("human", "以下の会話の内容を25文字以内の簡潔なタイトルにしてください:\n{user_message}")
+        ])
+        
+        # チャットモデル取得
+        chat_model = get_chat_model(model, temperature, max_tokens)
+        
+        # シンプルなチェーン構築
+        title_chain = (
+            {"user_message": lambda x: x["user_message"]}
+            | title_prompt
+            | chat_model
+            | StrOutputParser()
+        )
+        
+        # 実行
+        result = title_chain.invoke({"user_message": user_message})
+        
+        # 結果の処理
+        title = result.strip('"').strip()
+        logger.info(f"✅ Title generated successfully: '{title}'")
+        
+        return title
+        
+    except Exception as e:
+        logger.error(f"❌ Title generation failed: {e}")
+        # フォールバック
+        fallback_title = f"会話_{hash(user_message[:50]) % 1000}"
+        logger.info(f"🔄 Using fallback title: '{fallback_title}'")
+        return fallback_title
+
 # テスト用関数
 def test_chain_creation():
     """チェーン作成のテスト"""
