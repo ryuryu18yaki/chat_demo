@@ -1693,7 +1693,7 @@ if st.session_state["authentication_status"]:
                 # 🔥 LangChainによる統一回答生成
                 st.info("🚀 LangChainで最適化された回答を生成中...")
                 
-                is_first_message = len(msgs) == 2
+                is_first_message = len(msgs) == 1
                 is_default_title = st.session_state.current_chat.startswith("Chat ")
                 should_generate_title = is_first_message and is_default_title
                 t_api = time.perf_counter()
