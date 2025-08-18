@@ -14,27 +14,69 @@ import yaml
 import streamlit_authenticator as stauth
 import uuid
 
-# ====== Title sanitization utility ======
-import re
+# === Chat Store (SID 主キー) 基盤 ===
 import unicodedata as _ud
+import re
 
 def _sanitize_title(s: str) -> str:
-    """Normalize and sanitize a generated chat title for stable dict keys and UI."""
     if not isinstance(s, str):
         s = str(s)
     t = _ud.normalize("NFC", s).strip()
-    # collapse newlines/whitespace
     t = t.replace("\r", " ").replace("\n", " ")
     t = re.sub(r"\s+", " ", t)
-    # drop surrounding quotes/brackets often returned by models
+    # 両端のカギや引用符を剥がす（LLMの癖対策）
     if (t.startswith("「") and t.endswith("」")) or (t.startswith("『") and t.endswith("』")):
         t = t[1:-1].strip()
     if (t.startswith('"') and t.endswith('"')) or (t.startswith("'") and t.endswith("'")):
         t = t[1:-1].strip()
-    # safety: trim very long titles
-    if len(t) > 60:
-        t = t[:60]
-    return t
+    return t[:60] or "Chat"
+
+def ensure_chat_store():
+    """chat_store を1度だけ用意＆旧構造から移行。"""
+    ss = st.session_state
+    if "chat_store" not in ss:
+        # 旧構造からマイグレーション（あれば）
+        by_id, order, current_sid = {}, [], None
+
+        if "chat_sids" in ss and "chats" in ss and ss["chat_sids"]:
+            # 旧: title→sid, title→messages
+            for title, sid in ss["chat_sids"].items():
+                by_id[sid] = {"title": _sanitize_title(title),
+                              "messages": ss.get("chats", {}).get(title, [])}
+                order.append(sid)
+            # 現在SID
+            cur_title = ss.get("current_chat") or "Chat 1"
+            # cur_title がなくても最初のSIDに
+            current_sid = next((sid for t, sid in ss["chat_sids"].items()
+                                if _sanitize_title(t) == _sanitize_title(cur_title)),
+                               (order[0] if order else None))
+        else:
+            # 新規
+            import uuid
+            sid = str(uuid.uuid4())
+            by_id[sid] = {"title": "Chat 1", "messages": []}
+            order = [sid]
+            current_sid = sid
+
+        ss.chat_store = {"by_id": by_id, "order": order, "current_sid": current_sid}
+
+    # ここで毎フレーム、Legacy ミラーを再生成（片方向）
+    s = st.session_state.chat_store
+    by_id, order, current_sid = s["by_id"], s["order"], s["current_sid"]
+
+    # title -> sid
+    chat_sids = {by_id[sid]["title"]: sid for sid in order}
+    # title -> messages
+    chats = {by_id[sid]["title"]: by_id[sid]["messages"] for sid in order}
+    current_title = by_id[current_sid]["title"]
+
+    st.session_state.chat_sids = chat_sids
+    st.session_state.chats = chats
+    st.session_state.current_chat = current_title
+    st.session_state.sid = current_sid
+
+    logger.info("🧱 chat_store ready — current_sid=%s  title=%r  titles=%s",
+                current_sid, current_title, list(chat_sids.keys()))
 
 import threading
 import queue
@@ -787,16 +829,7 @@ if st.session_state["authentication_status"]:
     }
 
     # =====  セッション変数  =======================================================
-    if "chats" not in st.session_state:
-        st.session_state.chats = {}
-    if "chat_sids"   not in st.session_state:
-        st.session_state.chat_sids = {"Chat 1": str(uuid.uuid4())}
-    # Always ensure at least the default chat box exists
-    st.session_state.chats.setdefault("Chat 1", [])
-    if "current_chat" not in st.session_state:
-        st.session_state.current_chat = "Chat 1"
-    if "sid"         not in st.session_state:
-        st.session_state.sid = st.session_state.chat_sids["Chat 1"]
+    ensure_chat_store()
     if "edit_target" not in st.session_state:
         st.session_state.edit_target = None
     if "rag_files" not in st.session_state:
@@ -816,25 +849,35 @@ if st.session_state["authentication_status"]:
 
     # =====  ヘルパー  ============================================================
     def get_messages() -> List[Dict[str, str]]:
-        title = st.session_state.current_chat
-        return st.session_state.chats.setdefault(title, [])
-    
+        s = st.session_state.chat_store
+        return s["by_id"][s["current_sid"]]["messages"]
+
     def new_chat():
-        title = f"Chat {len(st.session_state.chats) + 1}"
-        st.session_state.chats[title] = []
-        st.session_state.chat_sids[title] = str(uuid.uuid4())
-        st.session_state.current_chat = title
-        st.session_state.sid = st.session_state.chat_sids[title]
-        logger.info("➕ new_chat — sid=%s  title='%s'", st.session_state.sid, title)
+        import uuid
+        s = st.session_state.chat_store
+        sid = str(uuid.uuid4())
+        idx = len(s["by_id"]) + 1
+        s["by_id"][sid] = {"title": f"Chat {idx}", "messages": []}
+        s["order"].insert(0, sid)     # 新しいものを先頭に（任意）
+        s["current_sid"] = sid
+        ensure_chat_store()           # ミラー再生成
+        logger.info("➕ new_chat — sid=%s  title='%s'", sid, st.session_state.current_chat)
         st.rerun()
 
     def switch_chat(title: str):
-        if title not in st.session_state.chat_sids:
-            st.session_state.chat_sids[title] = str(uuid.uuid4())
-        st.session_state.current_chat = title
-        st.session_state.sid = st.session_state.chat_sids[title]
-        st.session_state.chats.setdefault(title, [])
-        logger.info("🔀 switch_chat — sid=%s  title='%s'", st.session_state.sid, title)
+        """タイトルからSIDを引いて切替（互換用）"""
+        sid = st.session_state.chat_sids.get(title)
+        if not sid:
+            # 念のためタイトル探索
+            for _sid, row in st.session_state.chat_store["by_id"].items():
+                if row["title"] == title:
+                    sid = _sid; break
+        if not sid:
+            logger.warning("⚠️ switch_chat: title %r not found", title)
+            return
+        st.session_state.chat_store["current_sid"] = sid
+        ensure_chat_store()
+        logger.info("🔀 switch_chat — sid=%s  title='%s'", sid, st.session_state.current_chat)
         st.rerun()
     
     # =====  データ準備関数（新規追加）  ===============================================
@@ -1730,47 +1773,34 @@ if st.session_state["authentication_status"]:
                     if new_title and new_title != old_title and len(new_title.strip()) > 0:
                         logger.info(f"🔄 Updating title: '{old_title}' -> '{new_title}'")
                         
-                        # データ更新（コピー→再代入・衝突回避・SID更新）
-                        chats = st.session_state.chats.copy()
-                        sids  = st.session_state.chat_sids.copy()
+                        # 生成直後に正規化
+                        raw_title = new_title
+                        new_title = _sanitize_title(new_title)
+                        logger.info("🏷️ Title raw=%r  sanitized=%r", raw_title, new_title)
 
-                        # 既存タイトルとの衝突回避
-                        base = new_title.strip() or "Chat"
-                        candidate = base
-                        i = 2
-                        while candidate in sids and candidate != old_title:
-                            candidate = f"{base} ({i})"
-                            i += 1
+                        # === ここから「辞書キーの付け替え」はしない ===
+                        s = st.session_state.chat_store
+                        sid = s["current_sid"]
+                        old_title = s["by_id"][sid]["title"]
+
+                        # 衝突回避（同名が既にあれば " (2)" 連番付与）
+                        titles = {row["title"] for row in s["by_id"].values()}
+                        base, i, candidate = new_title, 2, new_title
+                        while candidate in titles and candidate != old_title:
+                            candidate = f"{base} ({i})"; i += 1
                         safe_new_title = candidate
 
-                        logger.info("🧪 RENAME APPLY — old=%r -> new=%r (safe=%r)", old_title, new_title, safe_new_title)
-                        logger.info("🧪 BEFORE APPLY — chats=%s sids=%s current=%r",
-                                    list(chats.keys()), list(sids.keys()), st.session_state.current_chat)
+                        logger.info("🧪 TITLE APPLY — sid=%s  %r -> %r", sid, old_title, safe_new_title)
 
-                        # chats 側：旧が無くても新の箱を確実に用意
-                        chats[safe_new_title] = chats.pop(old_title, chats.get(safe_new_title, []))
+                        # SID の title を上書き
+                        s["by_id"][sid]["title"] = safe_new_title
 
-                        # chat_sids 側：旧があれば移し替え、無ければ新規確保（衝突は既存を優先）
-                        if old_title in sids:
-                            sids[safe_new_title] = sids.pop(old_title)
-                        else:
-                            sids.setdefault(safe_new_title, sids.get(safe_new_title, str(uuid.uuid4())))
+                        # ミラー再生成（store→mirror）
+                        ensure_chat_store()
 
-                        # 反映（丸ごと再代入）
-                        st.session_state.chats = chats
-                        st.session_state.chat_sids = sids
-                        st.session_state.current_chat = safe_new_title
-                        st.session_state.sid = sids[safe_new_title]
-                        st.session_state["_title_just_updated"] = True  # 後段の保険rerun抑止
-
-                        logger.info("✅ AFTER APPLY — chats=%s sids=%s current=%r sid=%s",
-                                    list(st.session_state.chats.keys()),
-                                    list(st.session_state.chat_sids.keys()),
-                                    st.session_state.current_chat,
-                                    st.session_state.sid)
-                        logger.info("✅ chats/chat_sids/current_chat reassigned (copy→assign, collision-safe)")
-
-                        # 即時再描画
+                        st.session_state["_title_just_updated"] = True
+                        logger.info("✅ TITLE APPLIED — current=%r titles=%s",
+                                    st.session_state.current_chat, list(st.session_state.chat_sids.keys()))
                         st.rerun()
                     else:
                         logger.warning(f"⚠️ Title not updated. Generated: '{new_title}', Current: '{old_title}'")
