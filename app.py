@@ -6,7 +6,7 @@ import time
 from src.startup_loader import initialize_equipment_data, get_available_buildings, get_building_info_for_prompt
 from src.logging_utils import init_logger
 from src.sheets_manager import log_to_sheets, get_sheets_manager, send_prompt_to_model_comparison
-from src.langchain_chains import generate_smart_answer_with_langchain, generate_chat_title_with_llm
+from src.langchain_chains import generate_smart_answer_with_langchain
 from src.building_manager import get_building_manager
 from src.firestore_manager import log_to_firestore, send_prompt_to_firestore_comparison
 
@@ -1693,7 +1693,9 @@ if st.session_state["authentication_status"]:
                 # 🔥 LangChainによる統一回答生成
                 st.info("🚀 LangChainで最適化された回答を生成中...")
                 
-                import time
+                is_first_message = len(msgs) == 2
+                is_default_title = st.session_state.current_chat.startswith("Chat ")
+                should_generate_title = is_first_message and is_default_title
                 t_api = time.perf_counter()
                 
                 result = generate_smart_answer_with_langchain(
@@ -1703,16 +1705,18 @@ if st.session_state["authentication_status"]:
                     mode=prompt_data["mode"],
                     equipment_content=prompt_data["equipment_content"],
                     building_content=prompt_data["building_content"],
-                    target_building_content=prompt_data.get("target_building_content"),  # 🔥 新規追加
-                    other_buildings_content=prompt_data.get("other_buildings_content"),   # 🔥 新規追加
+                    target_building_content=prompt_data.get("target_building_content"),
+                    other_buildings_content=prompt_data.get("other_buildings_content"),
                     chat_history=msgs,
                     temperature=st.session_state.get("temperature", 0.0),
-                    max_tokens=st.session_state.get("max_tokens")
+                    max_tokens=st.session_state.get("max_tokens"),
+                    generate_title=should_generate_title # ★このフラグを追加
                 )
                 
                 api_elapsed = time.perf_counter() - t_api
                 
-                assistant_reply = result["answer"]
+                assistant_reply = result.get("answer", "エラー：応答がありません。")
+                new_title = result.get("title") # 初回以外はNoneになる
                 complete_prompt = result.get("complete_prompt", prompt)
                 
                 # 使用した設備・ファイル情報の記録
@@ -1771,40 +1775,25 @@ if st.session_state["authentication_status"]:
 
             msgs.append(msg_to_save)
 
-            # ----------------------------------------------------
-            # 2. タイトルが必要なら、ここで生成して保存する
-            # ----------------------------------------------------
-            is_first_message = len(msgs) == 2
-            is_default_title = st.session_state.current_chat.startswith("Chat ")
-
-            if is_first_message and is_default_title:
+            if new_title:
                 try:
-                    # LLMにタイトルを生成させる
-                    raw_title = generate_chat_title_with_llm(user_message=user_prompt)
-                    
-                    # ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ 修正箇所 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
-                    # タイトルを整形し、重複があれば(2)などをつける
-                    sanitized_title = _sanitize_title(raw_title) # ここで sanitized_title を定義
+                    # 以前のコードにあったサニタイズと重複回避のロジックをそのまま流用
+                    sanitized_title = _sanitize_title(new_title)
                     if sanitized_title:
                         s = st.session_state.chat_store
                         sid = s["current_sid"]
-                        existing_titles = {v["title"] for v in s["by_id"].values() if v.get("title") != s["by_id"][sid].get("title")}
+                        existing_titles = {v["title"] for v in s["by_id"].values() if v.get("title") and v.get("title") != s["by_id"][sid].get("title")}
                         
-                        final_title = sanitized_title # final_title の初期値として設定
+                        final_title = sanitized_title
                         counter = 2
                         while final_title in existing_titles:
-                            # ベースとなる sanitized_title を使って新しいタイトルを生成
                             final_title = f"{sanitized_title} ({counter})"
                             counter += 1
                         
-                        # chat_store（唯一のデータソース）に保存
                         s["by_id"][sid]["title"] = final_title
                         logger.info(f"✅ 新しいタイトルを保存しました: '{final_title}'")
-                    # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ 修正箇所 ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
-
                 except Exception as e:
-                    logger.error(f"💥 タイトル生成でエラー: {e}", exc_info=True)
-                    # タイトル生成が失敗しても、チャットは継続させる
+                    logger.error(f"💥 タイトル保存処理でエラー: {e}", exc_info=True)
 
             # ログ保存
             logger.info("📝 Executing post_log operations")
