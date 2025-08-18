@@ -33,6 +33,8 @@ def _sanitize_title(s: str) -> str:
 
 # === 🔥 改良版：統合されたタイトル更新システム ===
 
+# 🔥 修正版: 統合されたタイトル更新システム
+
 def update_chat_title_safely(new_title: str, force_rerun: bool = True) -> bool:
     """
     タイトル更新を安全に実行し、すべての関連状態を同期する統合関数
@@ -44,7 +46,7 @@ def update_chat_title_safely(new_title: str, force_rerun: bool = True) -> bool:
     Returns:
         bool: 更新が成功したかどうか
     """
-    # 🚨 デバッグ用ログを追加
+    # 🚨 デバッグ用ログを追加 
     logger.info(f"🚨 update_chat_title_safely CALLED - new_title='{new_title}', force_rerun={force_rerun}")
     
     try:
@@ -64,7 +66,7 @@ def update_chat_title_safely(new_title: str, force_rerun: bool = True) -> bool:
         logger.info(f"📊 Current state - sid={sid}, old_title='{old_title}'")
         
         if sanitized_title == old_title:
-            logger.info("📝 Title unchanged, skipping update")
+            logger.info("🔄 Title unchanged, skipping update")
             return False
             
         # 3. 重複回避処理
@@ -78,12 +80,16 @@ def update_chat_title_safely(new_title: str, force_rerun: bool = True) -> bool:
             
         logger.info(f"🎯 Title update: '{old_title}' -> '{final_title}'")
         
-        # 4. chat_store の更新
-        logger.info("🔄 Updating chat_store...")
+        # 🔥 4. タイトル更新フラグを設定（ensure_chat_storeの干渉を防止）
+        st.session_state["_title_update_in_progress"] = True
+        logger.info("🔒 Set _title_update_in_progress = True")
+        
+        # 5. chat_store の更新
+        logger.info("📄 Updating chat_store...")
         s["by_id"][sid]["title"] = final_title
         
-        # 5. 🔥 即座にミラー状態を更新（ensure_chat_store を呼ばずに直接更新）
-        logger.info("🔄 Updating mirror states...")
+        # 6. ミラー状態を即座に更新
+        logger.info("📄 Updating mirror states...")
         by_id, order, current_sid = s["by_id"], s["order"], s["current_sid"]
         
         # chat_sids と chats を直接再構築
@@ -91,8 +97,8 @@ def update_chat_title_safely(new_title: str, force_rerun: bool = True) -> bool:
         new_chats = {by_id[_sid]["title"]: by_id[_sid]["messages"] for _sid in order}
         new_current_title = by_id[current_sid]["title"]
         
-        logger.info(f"🔄 Mirror update - new_chat_sids_keys={list(new_chat_sids.keys())}")
-        logger.info(f"🔄 Mirror update - new_current_title='{new_current_title}'")
+        logger.info(f"📄 Mirror update - new_chat_sids_keys={list(new_chat_sids.keys())}")
+        logger.info(f"📄 Mirror update - new_current_title='{new_current_title}'")
         
         # session_state を原子的に更新
         st.session_state.chat_sids = new_chat_sids
@@ -102,10 +108,6 @@ def update_chat_title_safely(new_title: str, force_rerun: bool = True) -> bool:
         
         logger.info("✅ Title update completed - new_title=%r, chat_sids_keys=%s", 
                    final_title, list(new_chat_sids.keys()))
-        
-        # 6. 🔥 タイトル更新フラグを設定（rerun後にリセットされるように）
-        st.session_state["_title_update_pending"] = True
-        logger.info("🔥 Set _title_update_pending = True")
         
         # 7. 強制rerun（必要な場合）
         if force_rerun:
@@ -117,6 +119,12 @@ def update_chat_title_safely(new_title: str, force_rerun: bool = True) -> bool:
     except Exception as e:
         logger.error(f"💥 Title update failed: {e}", exc_info=True)
         return False
+    finally:
+        # 🔥 必ずフラグをリセット（例外時も含む）
+        if "_title_update_in_progress" in st.session_state:
+            del st.session_state["_title_update_in_progress"]
+            logger.info("🔓 Cleared _title_update_in_progress flag")
+
 
 def ensure_chat_store():
     """
@@ -125,10 +133,9 @@ def ensure_chat_store():
     """
     ss = st.session_state
     
-    # タイトル更新中の場合は、ミラー同期をスキップ
-    if ss.get("_title_update_pending"):
-        logger.info("🔄 Skipping chat_store sync during title update")
-        ss["_title_update_pending"] = False  # フラグをリセット
+    # 🔥 タイトル更新中の場合は、ミラー同期をスキップ
+    if ss.get("_title_update_in_progress"):
+        logger.info("🔒 Skipping chat_store sync during title update")
         return
     
     if "chat_store" not in ss:
