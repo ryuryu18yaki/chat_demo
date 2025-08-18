@@ -44,9 +44,13 @@ def update_chat_title_safely(new_title: str, force_rerun: bool = True) -> bool:
     Returns:
         bool: 更新が成功したかどうか
     """
+    # 🚨 デバッグ用ログを追加
+    logger.info(f"🚨 update_chat_title_safely CALLED - new_title='{new_title}', force_rerun={force_rerun}")
+    
     try:
         # 1. タイトル正規化
         sanitized_title = _sanitize_title(new_title)
+        logger.info(f"🔧 Title sanitized: '{new_title}' -> '{sanitized_title}'")
         
         if not sanitized_title or len(sanitized_title.strip()) == 0:
             logger.warning("⚠️ Invalid title after sanitization")
@@ -56,6 +60,8 @@ def update_chat_title_safely(new_title: str, force_rerun: bool = True) -> bool:
         s = st.session_state.chat_store
         sid = s["current_sid"]
         old_title = s["by_id"][sid]["title"]
+        
+        logger.info(f"📊 Current state - sid={sid}, old_title='{old_title}'")
         
         if sanitized_title == old_title:
             logger.info("📝 Title unchanged, skipping update")
@@ -73,15 +79,20 @@ def update_chat_title_safely(new_title: str, force_rerun: bool = True) -> bool:
         logger.info(f"🎯 Title update: '{old_title}' -> '{final_title}'")
         
         # 4. chat_store の更新
+        logger.info("🔄 Updating chat_store...")
         s["by_id"][sid]["title"] = final_title
         
         # 5. 🔥 即座にミラー状態を更新（ensure_chat_store を呼ばずに直接更新）
+        logger.info("🔄 Updating mirror states...")
         by_id, order, current_sid = s["by_id"], s["order"], s["current_sid"]
         
         # chat_sids と chats を直接再構築
         new_chat_sids = {by_id[_sid]["title"]: _sid for _sid in order}
         new_chats = {by_id[_sid]["title"]: by_id[_sid]["messages"] for _sid in order}
         new_current_title = by_id[current_sid]["title"]
+        
+        logger.info(f"🔄 Mirror update - new_chat_sids_keys={list(new_chat_sids.keys())}")
+        logger.info(f"🔄 Mirror update - new_current_title='{new_current_title}'")
         
         # session_state を原子的に更新
         st.session_state.chat_sids = new_chat_sids
@@ -94,9 +105,11 @@ def update_chat_title_safely(new_title: str, force_rerun: bool = True) -> bool:
         
         # 6. 🔥 タイトル更新フラグを設定（rerun後にリセットされるように）
         st.session_state["_title_update_pending"] = True
+        logger.info("🔥 Set _title_update_pending = True")
         
         # 7. 強制rerun（必要な場合）
         if force_rerun:
+            logger.info("🚀 Calling st.rerun()...")
             st.rerun()
             
         return True
@@ -1862,12 +1875,57 @@ if st.session_state["authentication_status"]:
                     
                     logger.info(f"🏷️ Generated title: '{new_title}'")
                     
-                    # 🔥 改良された統合タイトル更新関数を使用
-                    if update_chat_title_safely(new_title, force_rerun=True):
-                        # 更新成功時は、rerun により処理が停止するため、以降のコードは実行されない
-                        logger.info("✅ Title update initiated with rerun")
+                    # 🚨 関数が定義されているかチェック
+                    if 'update_chat_title_safely' in globals():
+                        logger.info("✅ update_chat_title_safely function found in globals")
                     else:
-                        logger.warning("⚠️ Title update failed or skipped")
+                        logger.error("❌ update_chat_title_safely function NOT found in globals")
+                    
+                    # 🔥 改良された統合タイトル更新関数を使用
+                    logger.info("🚀 About to call update_chat_title_safely...")
+                    try:
+                        update_result = update_chat_title_safely(new_title, force_rerun=True)
+                        logger.info(f"🎯 update_chat_title_safely returned: {update_result}")
+                        
+                        if update_result:
+                            # 更新成功時は、rerun により処理が停止するため、以降のコードは実行されない
+                            logger.info("✅ Title update initiated with rerun - PROCESSING SHOULD STOP HERE")
+                            # return は使えないので、代わりに st.stop() を使用
+                            st.stop()
+                        else:
+                            logger.warning("⚠️ Title update failed or skipped")
+                            
+                    except Exception as title_update_error:
+                        logger.error(f"💥 update_chat_title_safely failed: {title_update_error}", exc_info=True)
+                        
+                        # 🔥 フォールバック：従来の方法でタイトル更新
+                        logger.info("🔄 Falling back to manual title update...")
+                        try:
+                            # 手動でタイトル更新
+                            s = st.session_state.chat_store
+                            sid = s["current_sid"]
+                            sanitized_title = _sanitize_title(new_title)
+                            
+                            # 重複回避
+                            existing_titles = {row["title"] for row in s["by_id"].values() if row != s["by_id"][sid]}
+                            final_title = sanitized_title
+                            counter = 2
+                            while final_title in existing_titles:
+                                final_title = f"{sanitized_title} ({counter})"
+                                counter += 1
+                            
+                            # 更新実行
+                            s["by_id"][sid]["title"] = final_title
+                            
+                            # ミラー同期を強制実行
+                            ensure_chat_store()
+                            
+                            logger.info(f"🔄 Manual title update completed: '{final_title}'")
+                            st.rerun()
+                            
+                        except Exception as fallback_error:
+                            logger.error(f"💥 Manual title update also failed: {fallback_error}", exc_info=True)
+                    
                 else:
                     logger.info(f"❌ Title generation skipped - first_msg:{is_first_message}, default_title:{is_default_title}")
                     
