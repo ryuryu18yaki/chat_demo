@@ -772,6 +772,7 @@ if st.session_state["authentication_status"]:
         st.session_state.current_chat = "Chat 1"
     if "sid"         not in st.session_state:
         st.session_state.sid = st.session_state.chat_sids["Chat 1"]
+        st.session_state.chats.setdefault("Chat 1", [])
     if "edit_target" not in st.session_state:
         st.session_state.edit_target = None
     if "rag_files" not in st.session_state:
@@ -808,6 +809,7 @@ if st.session_state["authentication_status"]:
             st.session_state.chat_sids[title] = str(uuid.uuid4())
         st.session_state.current_chat = title
         st.session_state.sid = st.session_state.chat_sids[title]
+        st.session_state.chats.setdefault(title, [])
         logger.info("🔀 switch_chat — sid=%s  title='%s'", st.session_state.sid, title)
         st.rerun()
 
@@ -1357,10 +1359,10 @@ if st.session_state["authentication_status"]:
 
         st.divider()
 
-        # ------- チャット履歴 -------
         st.header("💬 チャット履歴")
-        for title in list(st.session_state.chats.keys()):
-            if st.button(title, key=f"hist_{title}"):
+        for title, sid in st.session_state.chat_sids.items():
+            if st.button(title, key=f"hist_{sid}"):  # ← keyはsid
+                st.session_state.chats.setdefault(title, [])  # 箱の補完
                 switch_chat(title)
 
         if st.button("➕ 新しいチャット"):
@@ -1731,39 +1733,26 @@ if st.session_state["authentication_status"]:
                         logger.info(f"  - current chats keys: {list(st.session_state.chats.keys())}")
                         logger.info(f"  - current chat_sids keys: {list(st.session_state.chat_sids.keys())}")
                         
-                        # データ更新
-                        if old_title in st.session_state.chats:
-                            logger.info("🔄 Moving chats data...")
-                            st.session_state.chats[new_title] = st.session_state.chats[old_title]
-                            del st.session_state.chats[old_title]
-                            logger.info("✅ chats updated")
+                        # データ更新（コピー→再代入で確実に差分検知）
+                        chats = st.session_state.chats.copy()
+                        sids  = st.session_state.chat_sids.copy()
+
+                        # chats 側：旧が無くても新の箱を確実に用意
+                        chats[new_title] = chats.pop(old_title, chats.get(new_title, []))
+
+                        # chat_sids 側：旧があれば移し替え、無ければ新規確保（衝突は既存を優先）
+                        if old_title in sids:
+                            sids[new_title] = sids.pop(old_title)
                         else:
-                            logger.error(f"❌ old_title '{old_title}' not found in chats!")
-                        
-                        if old_title in st.session_state.chat_sids:
-                            logger.info("🔄 Moving chat_sids data...")
-                            st.session_state.chat_sids[new_title] = st.session_state.chat_sids[old_title]
-                            del st.session_state.chat_sids[old_title]
-                            logger.info("✅ chat_sids updated")
-                        else:
-                            logger.error(f"❌ old_title '{old_title}' not found in chat_sids!")
-                        
-                        logger.info("🔄 Updating current_chat...")
+                            sids.setdefault(new_title, sids.get(new_title, str(uuid.uuid4())))
+
+                        st.session_state.chats = chats
+                        st.session_state.chat_sids = sids
                         st.session_state.current_chat = new_title
-                        logger.info("✅ current_chat updated")
-                        
-                        # 🔥 更新後の状態確認
-                        logger.info(f"📊 AFTER UPDATE:")
-                        logger.info(f"  - current_chat: '{st.session_state.current_chat}'")
-                        logger.info(f"  - chats keys: {list(st.session_state.chats.keys())}")
-                        logger.info(f"  - chat_sids keys: {list(st.session_state.chat_sids.keys())}")
-                        logger.info(f"  - new_title in chats: {new_title in st.session_state.chats}")
-                        logger.info(f"  - new_title in chat_sids: {new_title in st.session_state.chat_sids}")
-                        
-                        logger.info(f"🎉 TITLE UPDATED SUCCESSFULLY: '{old_title}' -> '{new_title}'")
-                        
-                        # 🔥 即座にrerun実行
-                        logger.info("🔄 IMMEDIATE RERUN due to title update")
+                        st.session_state["_title_just_updated"] = True  # ← 後段の rerun と競合回避用フラグ
+
+                        logger.info("✅ chats/chat_sids/current_chat reassigned (copy→assign)")
+                        # 直後に再描画（この後の処理を走らせない）
                         st.rerun()
                     else:
                         logger.warning(f"⚠️ Title not updated. Generated: '{new_title}', Current: '{old_title}'")
@@ -1780,8 +1769,12 @@ if st.session_state["authentication_status"]:
             post_log_async(user_prompt, assistant_reply, complete_prompt, send_to_model_comparison=True) 
             post_log_firestore_async(user_prompt, assistant_reply, complete_prompt, send_to_model_comparison=True)
 
-            time.sleep(3)
-            st.rerun()
+            # タイトル更新直後は二重 rerun を避ける
+            if not st.session_state.get("_title_just_updated"):
+                time.sleep(3)
+                st.rerun()
+            else:
+                st.session_state["_title_just_updated"] = False
 
 elif st.session_state["authentication_status"] is False:
     st.error('ユーザー名またはパスワードが間違っています。')
