@@ -1771,54 +1771,40 @@ if st.session_state["authentication_status"]:
 
             msgs.append(msg_to_save)
 
-            logger.info("📝 === TITLE GENERATION START ===")
-            try:
-                is_first_message = len(msgs) == 2
-                is_default_title = st.session_state.current_chat.startswith("Chat ")
+            # ----------------------------------------------------
+            # 2. タイトルが必要なら、ここで生成して保存する
+            # ----------------------------------------------------
+            is_first_message = len(msgs) == 2
+            is_default_title = st.session_state.current_chat.startswith("Chat ")
 
-                if is_first_message and is_default_title:
-                    logger.info("🎯 Title generation conditions met. Generating new title...")
+            if is_first_message and is_default_title:
+                try:
+                    # LLMにタイトルを生成させる
+                    raw_title = generate_chat_title_with_llm(user_message=user_prompt)
                     
-                    user_content = msgs[0]['content'][:200]
-                    new_title = generate_chat_title_with_llm(
-                        user_message=user_content,
-                        model=st.session_state.claude_model,
-                        temperature=0.0
-                    )
-                    
-                    logger.info(f"🏷️ Generated raw title: '{new_title}'")
-                    
-                    # 直接サニタイズ（無害化）と重複チェックを行う
-                    sanitized_title = _sanitize_title(new_title)
-                    
+                    # ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ 修正箇所 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
+                    # タイトルを整形し、重複があれば(2)などをつける
+                    sanitized_title = _sanitize_title(raw_title) # ここで sanitized_title を定義
                     if sanitized_title:
                         s = st.session_state.chat_store
                         sid = s["current_sid"]
+                        existing_titles = {v["title"] for v in s["by_id"].values() if v.get("title") != s["by_id"][sid].get("title")}
                         
-                        # 既存タイトルのセットを作成して効率的にチェック
-                        existing_titles = {row["title"] for row in s["by_id"].values() if row != s["by_id"].get(sid)}
-                        
-                        final_title = sanitized_title
+                        final_title = sanitized_title # final_title の初期値として設定
                         counter = 2
                         while final_title in existing_titles:
+                            # ベースとなる sanitized_title を使って新しいタイトルを生成
                             final_title = f"{sanitized_title} ({counter})"
                             counter += 1
                         
-                        # === ★重要な変更点：信頼できる唯一の情報源のみを更新する ===
+                        # chat_store（唯一のデータソース）に保存
                         s["by_id"][sid]["title"] = final_title
-                        logger.info(f"✅ Title successfully updated in chat_store to: '{final_title}'")
-                    else:
-                        logger.warning("⚠️ Title was empty after sanitization, skipping update.")
-                else:
-                    logger.info("❌ Title generation skipped.")
-            
-            except Exception as e:
-                logger.error(f"💥 Title generation block failed: {e}", exc_info=True)
+                        logger.info(f"✅ 新しいタイトルを保存しました: '{final_title}'")
+                    # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ 修正箇所 ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
-            logger.info("📝 === TITLE GENERATION END ===")
-
-            # 🔥 二重rerun防止システムの簡素化
-            # タイトル更新時は即座にrerunされるため、以下の複雑な制御は不要
+                except Exception as e:
+                    logger.error(f"💥 タイトル生成でエラー: {e}", exc_info=True)
+                    # タイトル生成が失敗しても、チャットは継続させる
 
             # ログ保存
             logger.info("📝 Executing post_log operations")
@@ -1826,8 +1812,6 @@ if st.session_state["authentication_status"]:
             post_log_firestore_async(user_prompt, assistant_reply, complete_prompt, send_to_model_comparison=True)
 
             # 通常のrerun（タイトル更新時以外）
-            logger.info("⏳ Final rerun check")
-            time.sleep(3)
             st.rerun()
 
 elif st.session_state["authentication_status"] is False:
