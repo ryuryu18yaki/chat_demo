@@ -1738,7 +1738,7 @@ if st.session_state["authentication_status"]:
             msgs.append(msg_to_save)
 
             # === 🔥 タイトル生成処理（専用関数版） ===
-            logger.info("🔍 === TITLE GENERATION SIMPLE START ===")
+            logger.info("📝 === TITLE GENERATION SIMPLE START ===")
             try:
                 logger.info(f"📊 Current state: msgs_count={len(msgs)}, current_chat='{st.session_state.current_chat}'")
                 
@@ -1771,7 +1771,7 @@ if st.session_state["authentication_status"]:
                     logger.info("🏷️ Title raw=%r  sanitized=%r", raw_title, new_title)
                     
                     if new_title and new_title != old_title and len(new_title.strip()) > 0:
-                        logger.info(f"🔄 Updating title: '{old_title}' -> '{new_title}'")
+                        logger.info(f"📄 Updating title: '{old_title}' -> '{new_title}'")
                         
                         # 生成直後に正規化
                         raw_title = new_title
@@ -1798,10 +1798,14 @@ if st.session_state["authentication_status"]:
                         # ミラー再生成（store→mirror）
                         ensure_chat_store()
 
-                        st.session_state["_title_just_updated"] = True
+                        # 🔥 修正：タイトル更新時は即座にrerunして、その後の処理をスキップ
                         logger.info("✅ TITLE APPLIED — current=%r titles=%s",
                                     st.session_state.current_chat, list(st.session_state.chat_sids.keys()))
-                        st.rerun()
+                        
+                        # 🔥 重要：タイトル更新フラグを設定してから即座にrerun
+                        st.session_state["_title_just_updated"] = True
+                        st.rerun()  # ← ここで即座にrerun、以降の処理は実行されない
+                        
                     else:
                         logger.warning(f"⚠️ Title not updated. Generated: '{new_title}', Current: '{old_title}'")
                 else:
@@ -1810,7 +1814,7 @@ if st.session_state["authentication_status"]:
             except Exception as e:
                 logger.error(f"💥 Title generation error: {e}", exc_info=True)
 
-            logger.info("🔍 === TITLE GENERATION SIMPLE END ===")
+            logger.info("📝 === TITLE GENERATION SIMPLE END ===")
             logger.info("🚧 PASSED TITLE BLOCK — current=%r keys=%s", st.session_state.current_chat, list(st.session_state.chat_sids.keys()))
 
             # ログ保存
@@ -1818,14 +1822,15 @@ if st.session_state["authentication_status"]:
             post_log_async(user_prompt, assistant_reply, complete_prompt, send_to_model_comparison=True) 
             post_log_firestore_async(user_prompt, assistant_reply, complete_prompt, send_to_model_comparison=True)
 
-            # タイトル更新直後は二重 rerun を避ける
-            if not st.session_state.get("_title_just_updated"):
+            # 🔥 修正：タイトル更新直後の二重rerunの処理を変更
+            if st.session_state.get("_title_just_updated"):
+                logger.info("⭐ tail-rerun: skipped (title just updated)")
+                st.session_state["_title_just_updated"] = False
+                # 🔥 ここでrerunしない（既にタイトル更新時にrerunしているため）
+            else:
                 logger.info("⏳ tail-rerun: proceed")
                 time.sleep(3)
                 st.rerun()
-            else:
-                logger.info("⏭️ tail-rerun: skipped (title just updated)")
-                st.session_state["_title_just_updated"] = False
 
 elif st.session_state["authentication_status"] is False:
     st.error('ユーザー名またはパスワードが間違っています。')
