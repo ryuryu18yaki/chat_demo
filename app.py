@@ -14,6 +14,28 @@ import yaml
 import streamlit_authenticator as stauth
 import uuid
 
+# ====== Title sanitization utility ======
+import re
+import unicodedata as _ud
+
+def _sanitize_title(s: str) -> str:
+    """Normalize and sanitize a generated chat title for stable dict keys and UI."""
+    if not isinstance(s, str):
+        s = str(s)
+    t = _ud.normalize("NFC", s).strip()
+    # collapse newlines/whitespace
+    t = t.replace("\r", " ").replace("\n", " ")
+    t = re.sub(r"\s+", " ", t)
+    # drop surrounding quotes/brackets often returned by models
+    if (t.startswith("「") and t.endswith("」")) or (t.startswith("『") and t.endswith("』")):
+        t = t[1:-1].strip()
+    if (t.startswith('"') and t.endswith('"')) or (t.startswith("'") and t.endswith("'")):
+        t = t[1:-1].strip()
+    # safety: trim very long titles
+    if len(t) > 60:
+        t = t[:60]
+    return t
+
 import threading
 import queue
 
@@ -516,6 +538,7 @@ if st.session_state["authentication_status"]:
     username = st.session_state["username"]
 
     logger.info("🔐 login success — user=%s  username=%s", name, username)
+    logger.info("🧭 STATE@ENTRY — current=%r keys=%s", st.session_state.get("current_chat"), list(st.session_state.get("chat_sids", {}).keys()))
 
     # 設備データを input_data から自動初期化
     # 設備データ初期化
@@ -768,11 +791,12 @@ if st.session_state["authentication_status"]:
         st.session_state.chats = {}
     if "chat_sids"   not in st.session_state:
         st.session_state.chat_sids = {"Chat 1": str(uuid.uuid4())}
+    # Always ensure at least the default chat box exists
+    st.session_state.chats.setdefault("Chat 1", [])
     if "current_chat" not in st.session_state:
         st.session_state.current_chat = "Chat 1"
     if "sid"         not in st.session_state:
         st.session_state.sid = st.session_state.chat_sids["Chat 1"]
-        st.session_state.chats.setdefault("Chat 1", [])
     if "edit_target" not in st.session_state:
         st.session_state.edit_target = None
     if "rag_files" not in st.session_state:
@@ -812,27 +836,6 @@ if st.session_state["authentication_status"]:
         st.session_state.chats.setdefault(title, [])
         logger.info("🔀 switch_chat — sid=%s  title='%s'", st.session_state.sid, title)
         st.rerun()
-
-    def generate_chat_title(messages):
-        """🔥 LangChain対応版のチャットタイトル生成"""
-        if len(messages) >= 2:
-            prompt = f"以下の会話の内容を25文字以内の簡潔なタイトルにしてください:\n{messages[0]['content'][:200]}"
-            try:
-                # 🔥 LangChainを使用してタイトル生成
-                result = generate_smart_answer_with_langchain(
-                    prompt="簡潔で分かりやすいタイトルを生成してください。",
-                    question=prompt,
-                    model=st.session_state.claude_model,
-                    equipment_data=None,  # タイトル生成では設備データ不要
-                    chat_history=None,    # タイトル生成では履歴不要
-                    temperature=0.0,
-                    max_tokens=30
-                )
-                return result["answer"].strip('"').strip()
-            except Exception as e:
-                logger.error(f"Chat title generation failed: {e}")
-                return f"Chat {len(st.session_state.chats) + 1}"
-        return f"Chat {len(st.session_state.chats) + 1}"
     
     # =====  データ準備関数（新規追加）  ===============================================
     def prepare_prompt_data():
@@ -1364,6 +1367,7 @@ if st.session_state["authentication_status"]:
             if st.button(title, key=f"hist_{sid}"):  # ← keyはsid
                 st.session_state.chats.setdefault(title, [])  # 箱の補完
                 switch_chat(title)
+                logger.info("📥 SIDEBAR READ — keys=%s current=%s", list(st.session_state.chat_sids.keys()), st.session_state.current_chat)
 
         if st.button("➕ 新しいチャット"):
             new_chat()
@@ -1713,46 +1717,60 @@ if st.session_state["authentication_status"]:
                     logger.info(f"📝 Generating title for: '{user_content}'")
                     
                     # 専用関数でタイトル生成
-                    from src.langchain_chains import generate_chat_title_with_llm
                     new_title = generate_chat_title_with_llm(
                         user_message=user_content,
                         model=st.session_state.claude_model,
                         temperature=0.0,
                         max_tokens=30
                     )
-                    
-                    logger.info(f"🏷️ Generated title: '{new_title}'")
+                    raw_title = new_title
+                    new_title = _sanitize_title(new_title)
+                    logger.info("🏷️ Title raw=%r  sanitized=%r", raw_title, new_title)
                     
                     if new_title and new_title != old_title and len(new_title.strip()) > 0:
                         logger.info(f"🔄 Updating title: '{old_title}' -> '{new_title}'")
                         
-                        # 🔥 更新前の状態確認
-                        logger.info(f"📊 BEFORE UPDATE:")
-                        logger.info(f"  - old_title in chats: {old_title in st.session_state.chats}")
-                        logger.info(f"  - old_title in chat_sids: {old_title in st.session_state.chat_sids}")
-                        logger.info(f"  - current chats keys: {list(st.session_state.chats.keys())}")
-                        logger.info(f"  - current chat_sids keys: {list(st.session_state.chat_sids.keys())}")
-                        
-                        # データ更新（コピー→再代入で確実に差分検知）
+                        # データ更新（コピー→再代入・衝突回避・SID更新）
                         chats = st.session_state.chats.copy()
                         sids  = st.session_state.chat_sids.copy()
 
+                        # 既存タイトルとの衝突回避
+                        base = new_title.strip() or "Chat"
+                        candidate = base
+                        i = 2
+                        while candidate in sids and candidate != old_title:
+                            candidate = f"{base} ({i})"
+                            i += 1
+                        safe_new_title = candidate
+
+                        logger.info("🧪 RENAME APPLY — old=%r -> new=%r (safe=%r)", old_title, new_title, safe_new_title)
+                        logger.info("🧪 BEFORE APPLY — chats=%s sids=%s current=%r",
+                                    list(chats.keys()), list(sids.keys()), st.session_state.current_chat)
+
                         # chats 側：旧が無くても新の箱を確実に用意
-                        chats[new_title] = chats.pop(old_title, chats.get(new_title, []))
+                        chats[safe_new_title] = chats.pop(old_title, chats.get(safe_new_title, []))
 
                         # chat_sids 側：旧があれば移し替え、無ければ新規確保（衝突は既存を優先）
                         if old_title in sids:
-                            sids[new_title] = sids.pop(old_title)
+                            sids[safe_new_title] = sids.pop(old_title)
                         else:
-                            sids.setdefault(new_title, sids.get(new_title, str(uuid.uuid4())))
+                            sids.setdefault(safe_new_title, sids.get(safe_new_title, str(uuid.uuid4())))
 
+                        # 反映（丸ごと再代入）
                         st.session_state.chats = chats
                         st.session_state.chat_sids = sids
-                        st.session_state.current_chat = new_title
-                        st.session_state["_title_just_updated"] = True  # ← 後段の rerun と競合回避用フラグ
+                        st.session_state.current_chat = safe_new_title
+                        st.session_state.sid = sids[safe_new_title]
+                        st.session_state["_title_just_updated"] = True  # 後段の保険rerun抑止
 
-                        logger.info("✅ chats/chat_sids/current_chat reassigned (copy→assign)")
-                        # 直後に再描画（この後の処理を走らせない）
+                        logger.info("✅ AFTER APPLY — chats=%s sids=%s current=%r sid=%s",
+                                    list(st.session_state.chats.keys()),
+                                    list(st.session_state.chat_sids.keys()),
+                                    st.session_state.current_chat,
+                                    st.session_state.sid)
+                        logger.info("✅ chats/chat_sids/current_chat reassigned (copy→assign, collision-safe)")
+
+                        # 即時再描画
                         st.rerun()
                     else:
                         logger.warning(f"⚠️ Title not updated. Generated: '{new_title}', Current: '{old_title}'")
@@ -1763,6 +1781,7 @@ if st.session_state["authentication_status"]:
                 logger.error(f"💥 Title generation error: {e}", exc_info=True)
 
             logger.info("🔍 === TITLE GENERATION SIMPLE END ===")
+            logger.info("🚧 PASSED TITLE BLOCK — current=%r keys=%s", st.session_state.current_chat, list(st.session_state.chat_sids.keys()))
 
             # ログ保存
             logger.info("📝 Executing post_log before any other operations")
@@ -1771,9 +1790,11 @@ if st.session_state["authentication_status"]:
 
             # タイトル更新直後は二重 rerun を避ける
             if not st.session_state.get("_title_just_updated"):
+                logger.info("⏳ tail-rerun: proceed")
                 time.sleep(3)
                 st.rerun()
             else:
+                logger.info("⏭️ tail-rerun: skipped (title just updated)")
                 st.session_state["_title_just_updated"] = False
 
 elif st.session_state["authentication_status"] is False:
