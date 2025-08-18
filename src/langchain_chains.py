@@ -235,10 +235,10 @@ def generate_unified_answer(
         json_instruction = """
 【重要：出力形式】
 あなたの回答と、この会話のタイトルを考え、必ず以下のJSON形式で出力してください。他のテキストは一切含めないでください。
-{
+{{
   "answer": "ここにユーザーへの回答本文を入れてください。",
   "title": "ここに30文字程度の会話のタイトルを入れてください。"
-}"""
+}}"""
         final_prompt = prompt + "\n\n" + json_instruction
         output_parser = JsonOutputParser()
 
