@@ -207,6 +207,48 @@ class ChainManager:
 # タイトル生成機能を追加します。
 # =================================================================
 
+def get_actual_prompt_from_template(
+    prompt_template: ChatPromptTemplate,
+    inputs: dict,
+    mode: str
+) -> str:
+    """プロンプトテンプレートから実際の送信内容を取得"""
+    try:
+        # knowledge_generator処理が必要な場合
+        if mode == "暗黙知法令チャットモード":
+            processed_inputs = ChainManager.create_separate_knowledge(inputs)
+        elif mode == "ビルマスタ質問モード":
+            processed_inputs = ChainManager.create_building_knowledge(inputs)
+        elif mode != "質疑応答書添削モード":
+            processed_inputs = inputs.copy()
+            processed_inputs["knowledge_contents"] = ChainManager.create_combined_knowledge(inputs)
+        else:
+            processed_inputs = inputs
+        
+        # チャット履歴をメッセージ形式に変換
+        processed_inputs["chat_history"] = ChainManager.create_chat_history_messages(
+            inputs.get("chat_history")
+        )
+        
+        # プロンプトテンプレートを適用
+        messages = prompt_template.format_messages(**processed_inputs)
+        
+        # メッセージを文字列に変換
+        prompt_parts = []
+        for msg in messages:
+            role = getattr(msg, 'type', 'unknown').upper()
+            content = getattr(msg, 'content', str(msg))
+            prompt_parts.append(f"=== {role} ===\n{content}")
+        
+        complete_prompt = "\n\n" + ("="*50 + "\n\n").join(prompt_parts)
+        
+        logger.info(f"🔥 Generated actual prompt: {len(complete_prompt)} characters")
+        return complete_prompt
+        
+    except Exception as e:
+        logger.error(f"❌ Prompt generation failed: {e}")
+        return f"=== ERROR ===\nプロンプト生成に失敗: {str(e)}"
+
 def generate_unified_answer(
     *,
     prompt: str,
@@ -315,6 +357,14 @@ def generate_unified_answer(
         "target_building_content": target_building_content or "",
         "other_buildings_content": other_buildings_content or ""
     }
+
+    try:
+        actual_complete_prompt = get_actual_prompt_from_template(
+            prompt_template, chain_input, mode
+        )
+    except Exception as e:
+        logger.error(f"❌ Prompt extraction failed: {e}")
+        actual_complete_prompt = f"=== SYSTEM ===\n{final_prompt}\n\n=== HUMAN ===\n{question}"
     
     # チェーン実行と結果の整形
     try:
@@ -327,14 +377,14 @@ def generate_unified_answer(
                 "answer": response.get("answer", "応答の取得に失敗しました。"),
                 "title": response.get("title"),
                 "langchain_used": True,
-                "complete_prompt": "（JSONモード）"
+                "complete_prompt": actual_complete_prompt
             }
         else:
             return {
                 "answer": str(response),
                 "title": None,
                 "langchain_used": True,
-                "complete_prompt": "（通常モード）"
+                "complete_prompt": actual_complete_prompt
             }
         
     except Exception as e:
