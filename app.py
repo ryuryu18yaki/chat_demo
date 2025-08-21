@@ -8,10 +8,102 @@ from src.logging_utils import init_logger
 from src.sheets_manager import log_to_sheets, get_sheets_manager, send_prompt_to_model_comparison
 from src.langchain_chains import generate_smart_answer_with_langchain
 from src.building_manager import get_building_manager
+from src.firestore_manager import log_to_firestore, send_prompt_to_firestore_comparison
 
 import yaml
 import streamlit_authenticator as stauth
 import uuid
+
+# === Chat Store (SID 主キー) 基盤 ===
+import unicodedata as _ud
+import re
+
+def _sanitize_title(s: str) -> str:
+    if not isinstance(s, str):
+        s = str(s)
+    t = _ud.normalize("NFC", s).strip()
+    t = t.replace("\r", " ").replace("\n", " ")
+    t = re.sub(r"\s+", " ", t)
+    # 両端のカギや引用符を剥がす（LLMの癖対策）
+    if (t.startswith("「") and t.endswith("」")) or (t.startswith("『") and t.endswith("』")):
+        t = t[1:-1].strip()
+    if (t.startswith('"') and t.endswith('"')) or (t.startswith("'") and t.endswith("'")):
+        t = t[1:-1].strip()
+    return t[:60] or "Chat"
+
+# === 🔥 改良版：統合されたタイトル更新システム ===
+def ensure_chat_store():
+    """
+    chat_store を初期化またはミラー状態を同期
+    🔥 改良版：タイトル更新処理との競合を回避
+    """
+    ss = st.session_state
+    
+    # タイトル更新中の場合は、ミラー同期をスキップ
+    if ss.get("_title_update_pending"):
+        logger.info("📄 Skipping chat_store sync during title update")
+        # 🔥 フラグをリセットしない（rerun後の最初の呼び出しでリセット）
+        return
+    
+    # 🔥 rerun後の最初の呼び出しでフラグをリセット
+    if "_title_update_pending" in ss:
+        logger.info("🔥 Resetting _title_update_pending flag after rerun")
+        del ss["_title_update_pending"]
+    
+    if "chat_store" not in ss:
+        # 初期化処理（既存と同じ）
+        logger.info("🔥 Initializing new chat_store")
+        by_id, order, current_sid = {}, [], None
+
+        if "chat_sids" in ss and "chats" in ss and ss["chat_sids"]:
+            # 旧構造からマイグレーション
+            for title, sid in ss["chat_sids"].items():
+                by_id[sid] = {"title": _sanitize_title(title),
+                              "messages": ss.get("chats", {}).get(title, [])}
+                order.append(sid)
+            
+            cur_title = ss.get("current_chat") or "Chat 1"
+            current_sid = next((sid for t, sid in ss["chat_sids"].items()
+                                if _sanitize_title(t) == _sanitize_title(cur_title)),
+                               (order[0] if order else None))
+        else:
+            # 新規作成
+            import uuid
+            sid = str(uuid.uuid4())
+            by_id[sid] = {"title": "Chat 1", "messages": []}
+            order = [sid]
+            current_sid = sid
+
+        ss.chat_store = {"by_id": by_id, "order": order, "current_sid": current_sid}
+
+    # 🔥 ミラー同期（改良版）
+    s = ss.chat_store
+    by_id, order, current_sid = s["by_id"], s["order"], s["current_sid"]
+
+    # より安全なミラー再生成
+    try:
+        # 🔥 デバッグ: 同期前の状態
+        logger.info(f"🔄 Before sync - current_chat='{ss.get('current_chat', 'NONE')}'")
+        
+        chat_sids = {by_id[sid]["title"]: sid for sid in order if sid in by_id}
+        chats = {by_id[sid]["title"]: by_id[sid]["messages"] for sid in order if sid in by_id}
+        current_title = by_id[current_sid]["title"] if current_sid in by_id else "Chat 1"
+
+        ss.chat_sids = chat_sids
+        ss.chats = chats
+        ss.current_chat = current_title
+        ss.sid = current_sid
+
+        # 🔥 デバッグ: 同期後の状態
+        logger.info(f"🔄 After sync - current_chat='{current_title}'")
+        logger.info("🧱 chat_store synced - current_sid=%s title=%r titles=%s",
+                    current_sid, current_title, list(chat_sids.keys()))
+                    
+    except KeyError as e:
+        logger.error(f"❌ chat_store sync failed: {e}", exc_info=True)
+        # フォールバック：chat_store を削除して次回に再初期化
+        if "chat_store" in ss:
+            del ss["chat_store"]
 
 import threading
 import queue
@@ -167,6 +259,107 @@ def post_log(
                 
         except Exception as e:
             logger.error("❌ post_log outer error — %s", e, exc_info=True)
+
+# 🔥 新しいFirestore用の非同期ログ関数を追加（既存のpost_log_asyncは変更しない）
+def post_log_firestore_async(input_text: str, output_text: str, prompt: str, 
+                             send_to_model_comparison: bool = False):
+    """Firestore専用の非同期ログ投稿関数"""
+    try:
+        logger.info("🔥 Firestore logging start...")
+        
+        # セッション状態から必要な情報を取得
+        username = st.session_state.get("username") or st.session_state.get("name")
+        design_mode = st.session_state.get("design_mode")
+        session_id = st.session_state.get("sid")
+        claude_model = st.session_state.get("claude_model")
+        temperature = st.session_state.get("temperature", 0.0)
+        max_tokens = st.session_state.get("max_tokens")
+        use_rag = st.session_state.get("use_rag", False)
+        chat_title = st.session_state.get("current_chat", "未設定")
+        
+        logger.info(f"🔥 Session data - user: {username}, mode: {design_mode}, model: {claude_model}")
+        
+        # メタデータ準備
+        metadata = {
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "use_rag": use_rag,
+            "app_version": "2.0",
+            "log_source": "firestore",
+            "timestamp": time.time()
+        }
+        
+        # 🔥 Firestoreに会話ログを保存
+        firestore_success = log_to_firestore(
+            input_text=input_text,
+            output_text=output_text,
+            prompt=prompt,
+            chat_title=chat_title,
+            user_id=username or "unknown",
+            session_id=session_id or "unknown",
+            mode=design_mode or "unknown",
+            model=claude_model or "unknown",
+            temperature=temperature,
+            max_tokens=max_tokens,
+            use_rag=use_rag
+        )
+        
+        if firestore_success:
+            logger.info("✅ Firestore conversation log saved")
+        else:
+            logger.warning("⚠️ Firestore conversation log failed")
+        
+        # 🔥 モデル比較への送信（オプション）
+        if send_to_model_comparison:
+            try:
+                # チャットメッセージを取得
+                current_chat = st.session_state.get("current_chat", "New Chat")
+                chats_dict = st.session_state.get("chats", {})
+                msgs = chats_dict.get(current_chat, [])
+                
+                if msgs:
+                    # 完全なプロンプトを構築
+                    full_prompt_parts = []
+                    
+                    # システムプロンプト
+                    if prompt:
+                        full_prompt_parts.append(f"System: {prompt}")
+                    
+                    # 会話履歴（最後のメッセージ以外）
+                    for msg in msgs[:-1]:
+                        role = msg.get("role", "")
+                        content = msg.get("content", "")
+                        if role == "user":
+                            full_prompt_parts.append(f"Human: {content}")
+                        elif role == "assistant":
+                            full_prompt_parts.append(f"Assistant: {content}")
+                    
+                    # 現在のユーザー入力
+                    full_prompt_parts.append(f"Human: {input_text}")
+                    
+                    # 完全なプロンプトを作成
+                    comparison_prompt = "\n\n".join(full_prompt_parts)
+                    
+                    # モデル比較に送信
+                    model_success = send_prompt_to_firestore_comparison(
+                        prompt_text=comparison_prompt,
+                        user_note=f"User: {username}, Mode: {design_mode}, Model: {claude_model}"
+                    )
+                    
+                    if model_success:
+                        logger.info("✅ Firestore model comparison saved")
+                    else:
+                        logger.warning("⚠️ Firestore model comparison failed")
+                        
+            except Exception as comparison_error:
+                logger.error(f"❌ Firestore model comparison save failed: {comparison_error}")
+        
+        logger.info("🔥 Firestore logging completed")
+        return firestore_success
+        
+    except Exception as e:
+        logger.error(f"❌ Firestore logging failed: {e}")
+        return False
 
 # ===== StreamlitAsyncLogger（変更なし） =====
 class StreamlitAsyncLogger:
@@ -400,13 +593,21 @@ def post_log_async(input_text: str, output_text: str, prompt: str,
             logger.error("❌ Fallback logging also failed — %s", fallback_error)
 
 # =====  ログインUIの表示  ============================================================
-authenticator.login()
+# 🔥 ログイン状態をチェックしてから login() を呼ぶ
+if st.session_state.get("authentication_status") is None:
+    authenticator.login()
+elif st.session_state.get("authentication_status") is False:
+    authenticator.login()
+else:
+    # 既にログイン済みの場合はlogin()を呼ばない
+    pass
 
 if st.session_state["authentication_status"]:
     name = st.session_state["name"]
     username = st.session_state["username"]
 
     logger.info("🔐 login success — user=%s  username=%s", name, username)
+    logger.info("🧭 STATE@ENTRY — current=%r keys=%s", st.session_state.get("current_chat"), list(st.session_state.get("chat_sids", {}).keys()))
 
     # 設備データを input_data から自動初期化
     # 設備データ初期化
@@ -483,6 +684,7 @@ if st.session_state["authentication_status"]:
     ## 【回答方針】
     **重要：以下の各事項は「代表的なビル（丸の内ビルディング）」を想定して記載しています。他のビルでは仕様や基準が異なる可能性があることを、回答時には必ず言及してください。**
     **注意：過度に込み入った条件の詳細説明をユーザーに求めることは避け、一般的な設計基準に基づく実務的な回答を心がけてください。**
+
     ### ■ 暗黙知情報不足時の対応プロセス
     現在保有している暗黙知情報では適切な回答ができない場合は、以下の手順で対応してください：
     1. **現状把握の明示**
@@ -502,21 +704,26 @@ if st.session_state["authentication_status"]:
     4. **情報活用とフィードバック**
     - 得られた暗黙知情報を元に、改めて適切な回答を提供する
     - 「この情報は今後の設計業務改善に活用させていただきます」と感謝の意を示す
+
     ────────────────────────────────
     ## 【工事区分について】
     - **B工事**：本システムが対象とする工事。入居者負担でビル側が施工する工事
     - **C工事**：入居者が独自に施工する工事（電話・LAN・防犯設備など）
     - 本システムでは、C工事設備については配管類の数量算出のみを行います
+
     ────────────────────────────────
     ## 【消防署事前相談の指針】
     ### ■ 事前相談が必要な状況
     法令のルールが競合する場合や細かな仕様で判断が分かれる場合は、**必ず消防署への事前相談を行う**ことを推奨してください。
+
     ### ■ 事前相談のタイミング
     - **着工届出書提出時**：通常の手続きの中で相談
     - **軽微な工事で着工届が不要な場合**：別途消防署に出向いて相談
+
     ### ■ 法令競合の典型例
     1. **自火報（煙感知器）関連**
     - 狭い部屋内で「吹き出しから離して設置」「吸込口付近に設置」「入口付近に設置」を同時に満たす場所がない場合
+
     ### ■ 細かな仕様判断の典型例
     1. **自火報（煙感知器）関連**
     - 欄間オープン内に侵入防止バーがあって面積が阻害されている場合
@@ -524,6 +731,7 @@ if st.session_state["authentication_status"]:
     2. **避難口誘導灯関連**
     - 扉の直上扱いとして矢印シンボルなしを設置してよい範囲（扉周辺3m程度が目安だが、最終的には担当者判断）
     - パーテーション等による視認阻害の程度と補完誘導灯設置の要否
+
     ────────────────────────────────
     ## 【重要な注意事項】
     1. **ビル仕様の違い**：上記の内容は丸の内ビルディングを基準としています。他のビルでは異なる仕様・基準が適用される可能性があります。
@@ -533,6 +741,42 @@ if st.session_state["authentication_status"]:
     5. **判断困難時の対応**：法令競合や細かな仕様判断で迷いが生じた場合は、必ず消防署への事前相談を推奨し、一般的な傾向は示しつつも最終判断は消防署見解に委ねることを明記してください。
     6. **暗黙知収集**：現在の知識で対応できない質問については、積極的にユーザーの実務経験を活用し、将来の暗黙知データベース拡充に貢献してください。
     7. **資料からの原文抜粋の禁止**：ユーザーから提供された資料や図面からの原文抜粋は行わず、必ず自分の言葉で説明してください。
+
+    ────────────────────────────────
+    ## 【文字数制限と回答作成プロセス】
+    ### 回答は{MAX_CHARS}文字以内で作成してください
+
+    以下のPythonコードを参考に文字数を意識して回答を作成してください：
+
+    ```python
+    def validate_answer_length(answer, max_chars={MAX_CHARS}):
+        char_count = len(answer)
+        
+        print(f"文字数チェック結果:")
+        print(f"- 現在の文字数: {{char_count}}")
+        print(f"- 制限文字数: {{max_chars}}")
+        
+        if char_count > max_chars:
+            excess = char_count - max_chars
+            print(f"- 超過文字数: {{excess}}")
+            print("⚠️ 文字数制限を超過しています")
+            print("→ 以下の方針で要約してください：")
+            print("  1. 重要でない詳細を削除")
+            print("  2. 冗長な表現を簡潔に")
+            print("  3. 例示を減らす")
+            return False
+        else:
+            print("✅ 文字数制限内です")
+            return True
+    ```
+
+    **重要な指示:**
+    1. 回答作成時に文字数を意識する
+    2. 冗長な表現を避ける  
+    3. 要点を簡潔にまとめる
+    4. 回答末尾に「（回答文字数：XXX文字）」を必ず記載
+
+    最大{MAX_CHARS}文字以内で、簡潔かつ的確な回答を心がけてください。
     """,
 
         "質疑応答書添削モード": """
@@ -620,14 +864,7 @@ if st.session_state["authentication_status"]:
     }
 
     # =====  セッション変数  =======================================================
-    if "chats" not in st.session_state:
-        st.session_state.chats = {}
-    if "chat_sids"   not in st.session_state:
-        st.session_state.chat_sids = {"New Chat": str(uuid.uuid4())}
-    if "current_chat" not in st.session_state:
-        st.session_state.current_chat = "New Chat"
-    if "sid"         not in st.session_state:
-        st.session_state.sid = st.session_state.chat_sids["New Chat"]
+    ensure_chat_store()
     if "edit_target" not in st.session_state:
         st.session_state.edit_target = None
     if "rag_files" not in st.session_state:
@@ -647,46 +884,36 @@ if st.session_state["authentication_status"]:
 
     # =====  ヘルパー  ============================================================
     def get_messages() -> List[Dict[str, str]]:
-        title = st.session_state.current_chat
-        return st.session_state.chats.setdefault(title, [])
-    
+        s = st.session_state.chat_store
+        return s["by_id"][s["current_sid"]]["messages"]
+
     def new_chat():
-        title = f"Chat {len(st.session_state.chats) + 1}"
-        st.session_state.chats[title] = []
-        st.session_state.chat_sids[title] = str(uuid.uuid4())
-        st.session_state.current_chat = title
-        st.session_state.sid = st.session_state.chat_sids[title]
-        logger.info("➕ new_chat — sid=%s  title='%s'", st.session_state.sid, title)
+        import uuid
+        s = st.session_state.chat_store
+        sid = str(uuid.uuid4())
+        idx = len(s["by_id"]) + 1
+        s["by_id"][sid] = {"title": f"Chat {idx}", "messages": []}
+        s["order"].insert(0, sid)     # 新しいものを先頭に（任意）
+        s["current_sid"] = sid
+        ensure_chat_store()           # ミラー再生成
+        logger.info("➕ new_chat — sid=%s  title='%s'", sid, st.session_state.current_chat)
         st.rerun()
 
     def switch_chat(title: str):
-        if title not in st.session_state.chat_sids:
-            st.session_state.chat_sids[title] = str(uuid.uuid4())
-        st.session_state.current_chat = title
-        st.session_state.sid = st.session_state.chat_sids[title]
-        logger.info("🔀 switch_chat — sid=%s  title='%s'", st.session_state.sid, title)
+        """タイトルからSIDを引いて切替（互換用）"""
+        sid = st.session_state.chat_sids.get(title)
+        if not sid:
+            # 念のためタイトル探索
+            for _sid, row in st.session_state.chat_store["by_id"].items():
+                if row["title"] == title:
+                    sid = _sid; break
+        if not sid:
+            logger.warning("⚠️ switch_chat: title %r not found", title)
+            return
+        st.session_state.chat_store["current_sid"] = sid
+        ensure_chat_store()
+        logger.info("🔀 switch_chat — sid=%s  title='%s'", sid, st.session_state.current_chat)
         st.rerun()
-
-    def generate_chat_title(messages):
-        """🔥 LangChain対応版のチャットタイトル生成"""
-        if len(messages) >= 2:
-            prompt = f"以下の会話の内容を25文字以内の簡潔なタイトルにしてください:\n{messages[0]['content'][:200]}"
-            try:
-                # 🔥 LangChainを使用してタイトル生成
-                result = generate_smart_answer_with_langchain(
-                    prompt="簡潔で分かりやすいタイトルを生成してください。",
-                    question=prompt,
-                    model=st.session_state.claude_model,
-                    equipment_data=None,  # タイトル生成では設備データ不要
-                    chat_history=None,    # タイトル生成では履歴不要
-                    temperature=0.0,
-                    max_tokens=30
-                )
-                return result["answer"].strip('"').strip()
-            except Exception as e:
-                logger.error(f"Chat title generation failed: {e}")
-                return f"Chat {len(st.session_state.chats) + 1}"
-        return f"Chat {len(st.session_state.chats) + 1}"
     
     # =====  データ準備関数（新規追加）  ===============================================
     def prepare_prompt_data():
@@ -695,6 +922,8 @@ if st.session_state["authentication_status"]:
         
         equipment_content = None
         building_content = None
+        target_building_content = None  # 🔥 新規追加
+        other_buildings_content = None  # 🔥 新規追加
         
         # 設備資料の取得（暗黙知モードのみ）
         if current_mode == "暗黙知法令チャットモード":
@@ -715,10 +944,11 @@ if st.session_state["authentication_status"]:
                     if equipment_texts:
                         equipment_content = "\n\n".join(equipment_texts)
         
-        # ビル情報の取得
+        # 🔥 修正: ビル情報の取得（新しいbuilding_mode対応）
         if current_mode in ["暗黙知法令チャットモード", "ビルマスタ質問モード"]:
             include_building = st.session_state.get("include_building_info", False)
             
+            # ビルマスタモードは常にビル情報を使用、暗黙知モードはチェックボックス次第
             if (current_mode == "ビルマスタ質問モード") or \
             (current_mode == "暗黙知法令チャットモード" and include_building):
                 
@@ -728,17 +958,55 @@ if st.session_state["authentication_status"]:
                 try:
                     building_manager = get_building_manager()
                     if building_manager and building_manager.available:
-                        if building_mode == "specific" and selected_building:
+                        
+                        if building_mode == "specific_only" and selected_building:
+                            # 特定ビルのみ（従来の動作）
                             building_content = building_manager.format_building_info_for_prompt(selected_building)
+                            target_building_content = building_content
+                            other_buildings_content = None
+                            
+                        elif building_mode == "specific_with_others" and selected_building:
+                            # 🔥 新機能: 特定ビル + 他のビル
+                            target_building_content = building_manager.format_building_info_for_prompt(selected_building)
+                            
+                            # 他のビル情報を取得（選択したビル以外）
+                            all_buildings = building_manager.get_building_list()
+                            other_buildings = [b for b in all_buildings if b != selected_building]
+                            
+                            if other_buildings:
+                                other_building_parts = []
+                                for other_building in other_buildings:
+                                    other_info = building_manager.format_building_info_for_prompt(other_building)
+                                    other_building_parts.append(other_info)
+                                other_buildings_content = "\n\n".join(other_building_parts)
+                            else:
+                                other_buildings_content = "他のビル情報はありません。"
+                            
+                            # 従来のbuilding_contentも設定（後方互換性のため）
+                            building_content = target_building_content + "\n\n" + other_buildings_content
+                            
                         elif building_mode == "all":
+                            # 全ビル情報（従来の動作）
                             building_content = building_manager.format_building_info_for_prompt()
+                            target_building_content = None
+                            other_buildings_content = building_content
+                            
+                        elif building_mode in ["specific", "specific_only"]:
+                            # 🔥 後方互換性: 既存のspecificモードを specific_only として処理
+                            if selected_building:
+                                building_content = building_manager.format_building_info_for_prompt(selected_building)
+                                target_building_content = building_content
+                                other_buildings_content = None
+                            
                 except Exception as e:
                     logger.warning(f"⚠️ ビル情報取得失敗: {e}")
         
         return {
             "mode": current_mode,
             "equipment_content": equipment_content,
-            "building_content": building_content
+            "building_content": building_content,  # 従来の統合版（後方互換性）
+            "target_building_content": target_building_content,  # 🔥 新規: 対象ビル
+            "other_buildings_content": other_buildings_content,   # 🔥 新規: その他ビル
         }
         
     # =====  編集機能用のヘルパー関数（変更なし）  ==============================================
@@ -932,7 +1200,7 @@ if st.session_state["authentication_status"]:
             available_buildings = get_available_buildings()
 
             if not available_buildings:
-                st.error("❌ ビル情報が読み込まれていません")
+                st.error("⚠️ ビル情報が読み込まれていません")
                 st.session_state["selected_building"] = None
                 st.session_state["include_building_info"] = False
                 return
@@ -984,26 +1252,56 @@ if st.session_state["authentication_status"]:
                         st.warning("⚠️ 検索条件に一致するビルが見つかりません")
                         selected_building = None
                     
+                    # 🔥 新規追加: 他のビルも参考にするオプション
+                    if selected_building:
+                        include_other_buildings = st.checkbox(
+                            "他のビルも参考にする",
+                            value=st.session_state.get("include_other_buildings", False),
+                            help="選択したビル以外の情報も比較・参考のために使用します"
+                        )
+                        st.session_state["include_other_buildings"] = include_other_buildings
+                        
+                        # building_mode の設定
+                        if include_other_buildings:
+                            st.session_state["building_mode"] = "specific_with_others"
+                        else:
+                            st.session_state["building_mode"] = "specific_only"
+                    else:
+                        st.session_state["include_other_buildings"] = False
+                        st.session_state["building_mode"] = "specific_only"
+                    
                     st.session_state["selected_building"] = selected_building if selected_building else None
-                    st.session_state["building_mode"] = "specific"
                     
                 elif building_selection_mode == "全ビル情報を使用":
                     st.info("🏢 全ビルの情報を使用して回答します")
                     st.session_state["selected_building"] = None
                     st.session_state["building_mode"] = "all"
+                    st.session_state["include_other_buildings"] = False  # 全ビル使用時は無効
             
             else:
                 st.session_state["selected_building"] = None
                 st.session_state["building_mode"] = "none"
+                st.session_state["include_other_buildings"] = False
             
-            # 現在の選択状態を表示
+            # 現在の選択状況を表示
             if include_building:
                 current_building = st.session_state.get("selected_building")
                 building_mode = st.session_state.get("building_mode", "none")
+                include_others = st.session_state.get("include_other_buildings", False)
                 
-                if building_mode == "specific" and current_building:
-                    st.success(f"✅ 選択中: **{current_building}**")
+                if building_mode == "specific_only" and current_building:
+                    st.success(f"✅ 選択中: **{current_building}** (単独)")
                     
+                elif building_mode == "specific_with_others" and current_building:
+                    other_count = len(available_buildings) - 1
+                    st.success(f"✅ 基準ビル: **{current_building}**")
+                    st.info(f"ℹ️ 他のビルも参考: {other_count}件のビル情報も使用")
+                    
+                elif building_mode == "all":
+                    st.success("✅ 全ビル情報を使用")
+                    
+                # ビル詳細プレビュー
+                if current_building:
                     with st.expander("🏢 ビル詳細情報", expanded=False):
                         building_info_text = get_building_info_for_prompt(current_building)
                         st.text_area(
@@ -1012,10 +1310,7 @@ if st.session_state["authentication_status"]:
                             height=300,
                             key=f"building_preview_{current_building}"
                         )
-                        
                 elif building_mode == "all":
-                    st.success("✅ 全ビル情報を使用")
-                    
                     with st.expander("🏢 全ビル情報プレビュー", expanded=False):
                         all_building_info = get_building_info_for_prompt()
                         st.text_area(
@@ -1137,6 +1432,78 @@ if st.session_state["authentication_status"]:
                     mime="text/plain",
                     key=f"download_{selected_equipment_for_view}_{file_name}"
                 )
+    
+    def render_char_limit_setting():
+        """文字数制限設定UIを描画"""
+        st.markdown("### ✏️ 文字数制限設定")
+        
+        # セッション状態の初期化
+        if "char_limit" not in st.session_state:
+            st.session_state.char_limit = 1500  # デフォルト値
+        
+        # スライダーで文字数制限を設定
+        char_limit = st.slider(
+            "回答の最大文字数",
+            min_value=100,
+            max_value=5000,
+            value=st.session_state.char_limit,
+            step=100,
+            help="暗黙知法令チャットモードでの回答文字数上限を設定します"
+        )
+        
+        # 値が変更された場合の処理
+        if char_limit != st.session_state.char_limit:
+            st.session_state.char_limit = char_limit
+            # プロンプトを動的に更新
+            update_prompts_with_char_limit(char_limit)
+            st.success(f"文字数制限を{char_limit}文字に設定しました")
+        
+        # 現在の設定値を表示
+        st.markdown(f"**🔢 現在の設定:** {st.session_state.char_limit}文字")
+        
+        # プリセットボタン
+        st.markdown("#### ⚡ プリセット")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            if st.button("簡潔\n(800)", key="preset_800"):
+                st.session_state.char_limit = 800
+                update_prompts_with_char_limit(800)
+                st.rerun()
+        
+        with col2:
+            if st.button("標準\n(1500)", key="preset_1500"):
+                st.session_state.char_limit = 1500
+                update_prompts_with_char_limit(1500)
+                st.rerun()
+        
+        with col3:
+            if st.button("詳細\n(2500)", key="preset_2500"):
+                st.session_state.char_limit = 2500
+                update_prompts_with_char_limit(2500)
+                st.rerun()
+        
+        with col4:
+            if st.button("詳細+\n(4000)", key="preset_4000"):
+                st.session_state.char_limit = 4000
+                update_prompts_with_char_limit(4000)
+                st.rerun()
+
+    def update_prompts_with_char_limit(char_limit):
+        """文字数制限に基づいてプロンプトを更新"""
+        # 暗黙知法令チャットモードのプロンプトを更新
+        if "暗黙知法令チャットモード" in st.session_state.prompts:
+            original_prompt = DEFAULT_PROMPTS["暗黙知法令チャットモード"]
+            updated_prompt = original_prompt.replace("{MAX_CHARS}", str(char_limit))
+            st.session_state.prompts["暗黙知法令チャットモード"] = updated_prompt
+    
+    if "char_limit" not in st.session_state:
+        st.session_state.char_limit = 1500
+    
+    # 初回起動時にプロンプトを文字数制限で更新
+    if "prompts_initialized" not in st.session_state:
+        update_prompts_with_char_limit(st.session_state.char_limit)
+        st.session_state.prompts_initialized = True
 
     # =====  サイドバー  ==========================================================
     with st.sidebar:
@@ -1145,11 +1512,25 @@ if st.session_state["authentication_status"]:
 
         st.divider()
 
-        # ------- チャット履歴 -------
         st.header("💬 チャット履歴")
-        for title in list(st.session_state.chats.keys()):
-            if st.button(title, key=f"hist_{title}"):
+        
+        # 🔥 デバッグ情報をサイドバーにも表示（開発時のみ）
+        if st.checkbox("🔍 デバッグ表示", value=False):
+            st.json({
+                "current_chat": st.session_state.current_chat,
+                "chat_sids_count": len(st.session_state.chat_sids),
+                "chat_sids_keys": list(st.session_state.chat_sids.keys())
+            })
+        
+        # 🔥 チャット履歴ボタンの改良（キーにタイトルも含める）
+        for title, sid in st.session_state.chat_sids.items():
+            # より一意なキーを生成（タイトル変更時の問題を回避）
+            button_key = f"hist_{sid}_{hash(title) % 10000}"
+            
+            if st.button(title, key=button_key):
+                st.session_state.chats.setdefault(title, [])
                 switch_chat(title)
+                logger.info("🔥 SIDEBAR CLICK - title=%r sid=%s", title, sid)
 
         if st.button("➕ 新しいチャット"):
             new_chat()
@@ -1265,6 +1646,11 @@ if st.session_state["authentication_status"]:
             render_building_selection(expanded=False)
 
             st.divider()
+            
+            # 🔥 文字数制限設定を追加
+            render_char_limit_setting()
+            
+            st.divider()
 
             # 資料内容確認
             render_data_viewer()
@@ -1312,6 +1698,7 @@ if st.session_state["authentication_status"]:
     # =====  メイン画面表示  ==========================================================
     else:
         st.title("💬 Claude + 設備資料チャットボット")
+
         st.subheader(f"🗣️ {st.session_state.current_chat}")
         st.markdown(f"**モデル:** {st.session_state.claude_model} | **モード:** {st.session_state.design_mode}")
 
@@ -1391,7 +1778,9 @@ if st.session_state["authentication_status"]:
                 # 🔥 LangChainによる統一回答生成
                 st.info("🚀 LangChainで最適化された回答を生成中...")
                 
-                import time
+                is_first_message = len(msgs) == 1
+                is_default_title = st.session_state.current_chat.startswith("Chat ")
+                should_generate_title = is_first_message and is_default_title
                 t_api = time.perf_counter()
                 
                 result = generate_smart_answer_with_langchain(
@@ -1401,14 +1790,18 @@ if st.session_state["authentication_status"]:
                     mode=prompt_data["mode"],
                     equipment_content=prompt_data["equipment_content"],
                     building_content=prompt_data["building_content"],
+                    target_building_content=prompt_data.get("target_building_content"),
+                    other_buildings_content=prompt_data.get("other_buildings_content"),
                     chat_history=msgs,
                     temperature=st.session_state.get("temperature", 0.0),
-                    max_tokens=st.session_state.get("max_tokens")
+                    max_tokens=st.session_state.get("max_tokens"),
+                    generate_title=should_generate_title # ★このフラグを追加
                 )
                 
                 api_elapsed = time.perf_counter() - t_api
                 
-                assistant_reply = result["answer"]
+                assistant_reply = result.get("answer", "エラー：応答がありません。")
+                new_title = result.get("title") # 初回以外はNoneになる
                 complete_prompt = result.get("complete_prompt", prompt)
                 
                 # 使用した設備・ファイル情報の記録
@@ -1467,36 +1860,32 @@ if st.session_state["authentication_status"]:
 
             msgs.append(msg_to_save)
 
+            if new_title:
+                try:
+                    # 以前のコードにあったサニタイズと重複回避のロジックをそのまま流用
+                    sanitized_title = _sanitize_title(new_title)
+                    if sanitized_title:
+                        s = st.session_state.chat_store
+                        sid = s["current_sid"]
+                        existing_titles = {v["title"] for v in s["by_id"].values() if v.get("title") and v.get("title") != s["by_id"][sid].get("title")}
+                        
+                        final_title = sanitized_title
+                        counter = 2
+                        while final_title in existing_titles:
+                            final_title = f"{sanitized_title} ({counter})"
+                            counter += 1
+                        
+                        s["by_id"][sid]["title"] = final_title
+                        logger.info(f"✅ 新しいタイトルを保存しました: '{final_title}'")
+                except Exception as e:
+                    logger.error(f"💥 タイトル保存処理でエラー: {e}", exc_info=True)
+
             # ログ保存
-            logger.info("📝 Executing post_log before any other operations")
+            logger.info("📝 Executing post_log operations")
             post_log_async(user_prompt, assistant_reply, complete_prompt, send_to_model_comparison=True) 
+            post_log_firestore_async(user_prompt, assistant_reply, complete_prompt, send_to_model_comparison=True)
 
-            # チャットタイトル生成（LangChain対応版）
-            try:
-                # 🔥 LangChainを使用してタイトル生成も最適化
-                title_result = generate_smart_answer_with_langchain(
-                    prompt="簡潔で分かりやすいタイトルを生成してください。",
-                    question=f"以下の会話の内容を25文字以内の簡潔なタイトルにしてください:\n{msgs[0]['content'][:200]}",
-                    model=st.session_state.claude_model,
-                    equipment_data=None,
-                    chat_history=None,
-                    temperature=0.0,
-                    max_tokens=30
-                )
-                new_title = title_result["answer"].strip('"').strip()
-                
-                if new_title and new_title != st.session_state.current_chat:
-                    old_title = st.session_state.current_chat
-                    st.session_state.chats[new_title] = st.session_state.chats[old_title]
-                    del st.session_state.chats[old_title]
-                    st.session_state.current_chat = new_title
-                    logger.info("📝 Chat title updated: %s -> %s", old_title, new_title)
-            except Exception as e:
-                logger.warning("⚠️ Chat title generation failed (non-critical): %s", e)
-                # フォールバック: シンプルなタイトル生成
-                new_title = f"Chat {len(st.session_state.chats) + 1}"
-
-            time.sleep(2) 
+            # 通常のrerun（タイトル更新時以外）
             st.rerun()
 
 elif st.session_state["authentication_status"] is False:

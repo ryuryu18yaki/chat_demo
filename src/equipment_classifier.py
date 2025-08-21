@@ -49,7 +49,8 @@ def extract_equipment_from_filename(filename: str) -> Optional[str]:
             r"UNI-PEX 非常放送設備",
             r"スピーカ",
             r"放送設備",
-            r"暗黙知メモ_非常放送設備"
+            r"暗黙知メモ_非常放送設備",
+            r"非常放送",
         ],
         
         # 誘導灯設備
@@ -107,7 +108,9 @@ def extract_equipment_from_filename(filename: str) -> Optional[str]:
         ],
 
         "照明制御設備(センサー)": [
-            r"照明センサ"
+            r"照明センサ",
+            r"センサー",
+            r"センサ"
         ],
 
         "テレビ共聴設備": [

@@ -64,22 +64,22 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
     logger.info(f"\n🔄 設備ごと全文結合処理開始...")
     equipment_data = preprocess_files(file_dicts)
 
-    # ✅ fixes フォルダから補正ファイルを取得（任意）
-    logger.info(f"\n🔄 fixフォルダの探索開始")
-    fixes_files = {}  # 🔥 初期化を確実に
+    # # ✅ fixes フォルダから補正ファイルを取得（任意）
+    # logger.info(f"\n🔄 fixフォルダの探索開始")
+    # fixes_files = {}  # 🔥 初期化を確実に
     
-    try:  # 念のため再確認（Streamlit Cloud用）
-        fixes_folder_id = secrets.get("FIXES_DRIVE_FOLDER_ID")
-        if fixes_folder_id:
-            logger.info(f"\n📦 fixes フォルダから補正ファイル取得中...（ID: {fixes_folder_id}）")
-            fixes_files = download_fix_files_from_drive(fixes_folder_id)
-            logger.info(f"✅ 補正ファイル取得完了: {len(fixes_files)} 件")
+    # try:  # 念のため再確認（Streamlit Cloud用）
+    #     fixes_folder_id = secrets.get("FIXES_DRIVE_FOLDER_ID")
+    #     if fixes_folder_id:
+    #         logger.info(f"\n📦 fixes フォルダから補正ファイル取得中...（ID: {fixes_folder_id}）")
+    #         fixes_files = download_fix_files_from_drive(fixes_folder_id)
+    #         logger.info(f"✅ 補正ファイル取得完了: {len(fixes_files)} 件")
             
-            # 👇 補正適用処理をここで呼び出し
-            equipment_data = apply_text_replacements_from_fixmap(equipment_data, fixes_files)
+    #         # 👇 補正適用処理をここで呼び出し
+    #         equipment_data = apply_text_replacements_from_fixmap(equipment_data, fixes_files)
             
-    except Exception as fix_err:
-        logger.warning(f"⚠️ 補正ファイル取得に失敗: {fix_err}")
+    # except Exception as fix_err:
+    #     logger.warning(f"⚠️ 補正ファイル取得に失敗: {fix_err}")
 
     # 🔥 ビル情報マネージャーを初期化（file_dictsを使用）
     logger.info(f"\n🏢 ビル情報マネージャー初期化中...")
@@ -129,7 +129,7 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
         "file_list": file_dicts,
         "equipment_list": sorted(equipment_list),
         "category_list": sorted(category_list),
-        "fixes_files": fixes_files,  # ← 既存
+        # "fixes_files": fixes_files,  # ← 既存
         "building_manager": building_manager if 'building_manager' in locals() else None  # 🔥 新規追加
     }
 
