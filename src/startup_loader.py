@@ -1,4 +1,4 @@
-# src/startup_loader.py (最新コードベース + 管轄統合版)
+# src/startup_loader.py (シンプル管轄版)
 from streamlit import secrets
 from pathlib import Path
 
@@ -88,79 +88,11 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
             "消防関連総数": 0
         }
 
-    # 🔥 階層的な設備データ構築
-    # 1. 基本設備データ（一般設備のみ）
-    base_files = jurisdiction_classified["equipment_files"]
-    base_equipment_data = preprocess_files(base_files)
-    
-    # 2. 一般消防資料を独立設備として追加
-    general_fire_files = jurisdiction_classified["general_fire"]
-    if general_fire_files:
-        general_fire_processed = preprocess_files(general_fire_files)
-        # 一般消防資料をまとめて一つの設備として扱う
-        if general_fire_processed:
-            combined_general_fire = {
-                "equipment_category": "消防設備",
-                "total_files": sum(data["total_files"] for data in general_fire_processed.values()),
-                "total_pages": sum(data["total_pages"] for data in general_fire_processed.values()),
-                "total_chars": sum(data["total_chars"] for data in general_fire_processed.values()),
-                "sources": [],
-                "files": {}
-            }
-            for equipment_name, data in general_fire_processed.items():
-                combined_general_fire["sources"].extend(data["sources"])
-                combined_general_fire["files"].update(data["files"])
-            
-            base_equipment_data["一般消防資料"] = combined_general_fire
+    # 🔥 シンプル版: 基本設備データのみ作成（管轄統合なし）
+    # 管轄関係なく、全ファイルから設備データを作成
+    equipment_data = preprocess_files(file_dicts)
 
-    # 3. 🔥東京消防庁の階層的設備作成
-    tokyo_files = jurisdiction_classified["jurisdictions"]["東京消防庁"]
-    if tokyo_files:
-        # 基本設備 + 一般消防 + 東京消防庁
-        combined_files = base_files + general_fire_files + tokyo_files
-        tokyo_all_data = preprocess_files(combined_files)
-        
-        if tokyo_all_data:
-            combined_tokyo = {
-                "equipment_category": "消防設備",
-                "total_files": sum(data["total_files"] for data in tokyo_all_data.values()),
-                "total_pages": sum(data["total_pages"] for data in tokyo_all_data.values()),
-                "total_chars": sum(data["total_chars"] for data in tokyo_all_data.values()),
-                "sources": [],
-                "files": {}
-            }
-            for equipment_name, data in tokyo_all_data.items():
-                combined_tokyo["sources"].extend(data["sources"])
-                combined_tokyo["files"].update(data["files"])
-            
-            base_equipment_data["🔥東京消防庁"] = combined_tokyo
-
-    # 4. 🔥丸の内消防署の階層的設備作成
-    marunouchi_files = jurisdiction_classified["jurisdictions"]["丸の内消防署"]
-    if marunouchi_files:
-        # 基本設備 + 一般消防 + 東京消防庁 + 丸の内
-        combined_files = base_files + general_fire_files + tokyo_files + marunouchi_files
-        marunouchi_all_data = preprocess_files(combined_files)
-        
-        if marunouchi_all_data:
-            combined_marunouchi = {
-                "equipment_category": "消防設備",
-                "total_files": sum(data["total_files"] for data in marunouchi_all_data.values()),
-                "total_pages": sum(data["total_pages"] for data in marunouchi_all_data.values()),
-                "total_chars": sum(data["total_chars"] for data in marunouchi_all_data.values()),
-                "sources": [],
-                "files": {}
-            }
-            for equipment_name, data in marunouchi_all_data.items():
-                combined_marunouchi["sources"].extend(data["sources"])
-                combined_marunouchi["files"].update(data["files"])
-            
-            base_equipment_data["🔥丸の内消防署"] = combined_marunouchi
-
-    # 最終的な設備データ
-    equipment_data = base_equipment_data
-
-    # 🔥 ビル情報マネージャーを初期化（file_dictsを使用）
+    # ビル情報マネージャーを初期化
     logger.info(f"\n🏢 ビル情報マネージャー初期化中...")
     logger.info("🔍 file_dicts 詳細情報:")
     logger.info("   - file_dicts 型: %s", type(file_dicts))
@@ -185,7 +117,7 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
     equipment_list = list(equipment_data.keys())
     category_list = list(set(data["equipment_category"] for data in equipment_data.values()))
 
-    print(f"\n✅ 初期化完了（管轄統合版）")
+    print(f"\n✅ 初期化完了（シンプル管轄版）")
     print(f"📊 統計情報:")
     print(f"   - 処理ファイル数: {len(file_dicts)}")
     print(f"   - 設備数: {len(equipment_list)}")
@@ -203,7 +135,7 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
     if building_manager and building_manager.available:
         building_count = len(building_manager.get_building_list())
         print(f"   - ビル情報数: {building_count}")
-        print(f"   - 利用可能ビル: {', '.join(building_manager.get_building_list()[:5])}...")  # 最初の5件のみ表示
+        print(f"   - 利用可能ビル: {', '.join(building_manager.get_building_list()[:5])}...")
     
     for equipment_name in sorted(equipment_list):
         data = equipment_data[equipment_name]
@@ -211,15 +143,74 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
         print(f"   - {equipment_name}: {data['total_files']}ファイル, {data['total_pages']}ページ, {total_chars}文字")
 
     return {
-        "equipment_data": equipment_data,
+        "equipment_data": equipment_data,  # 🔥 通常の設備データ（管轄統合なし）
         "file_list": file_dicts,
         "equipment_list": sorted(equipment_list),
         "category_list": sorted(category_list),
         "building_manager": building_manager if 'building_manager' in locals() else None,
-        # 🔥 管轄関連データを追加
+        # 🔥 管轄関連データを追加（プロンプト生成時に使用）
         "jurisdiction_classified": jurisdiction_classified,
         "jurisdiction_stats": jurisdiction_stats
     }
+
+# 🔥 新規追加: プロンプト生成時に管轄資料を取得する関数
+def get_jurisdiction_content_for_equipment(equipment_name: str, selected_jurisdiction: str = None) -> str:
+    """
+    指定された設備と管轄に応じて、追加すべき管轄資料のテキストを取得
+    
+    Args:
+        equipment_name: 選択された設備名
+        selected_jurisdiction: 選択された管轄 ("東京消防庁" | "丸の内消防署" | None)
+        
+    Returns:
+        管轄固有の資料テキスト（ない場合は空文字）
+    """
+    if not selected_jurisdiction:
+        return ""
+    
+    import streamlit as st
+    jurisdiction_classified = st.session_state.get("jurisdiction_classified", {})
+    
+    if not jurisdiction_classified:
+        return ""
+    
+    # 階層的に取得
+    jurisdiction_files = []
+    
+    if selected_jurisdiction == "東京消防庁":
+        # 一般消防資料 + 東京消防庁資料
+        jurisdiction_files.extend(jurisdiction_classified.get("general_fire", []))
+        jurisdiction_files.extend(jurisdiction_classified.get("jurisdictions", {}).get("東京消防庁", []))
+        
+    elif selected_jurisdiction == "丸の内消防署":
+        # 一般消防資料 + 東京消防庁資料 + 丸の内資料
+        jurisdiction_files.extend(jurisdiction_classified.get("general_fire", []))
+        jurisdiction_files.extend(jurisdiction_classified.get("jurisdictions", {}).get("東京消防庁", []))
+        jurisdiction_files.extend(jurisdiction_classified.get("jurisdictions", {}).get("丸の内消防署", []))
+    
+    if not jurisdiction_files:
+        return ""
+    
+    # 選択された設備に関連する管轄ファイルのみフィルタリング
+    relevant_files = []
+    for file_dict in jurisdiction_files:
+        file_equipment = file_dict.get("equipment_name", "")
+        # 設備名が一致するか、またはその他の場合は含める
+        if file_equipment == equipment_name or file_equipment == "その他":
+            relevant_files.append(file_dict)
+    
+    if not relevant_files:
+        return ""
+    
+    # ファイルからテキストを抽出して結合
+    # 注意: ここでは簡易的な処理。実際にはpreprocess_filesと同様の処理が必要
+    jurisdiction_texts = []
+    for file_dict in relevant_files:
+        file_name = file_dict.get("name", "")
+        jurisdiction_texts.append(f"=== {file_name} ===")
+        # 実際のテキスト抽出処理は省略（必要に応じて実装）
+    
+    return "\n\n".join(jurisdiction_texts)
 
 def _create_empty_result() -> dict:
     """空の結果を返す"""
@@ -228,8 +219,8 @@ def _create_empty_result() -> dict:
         "file_list": [],
         "equipment_list": [],
         "category_list": [],
-        "fixes_files": {},  # 🔥 追加
-        "building_manager": None,  # 🔥 追加
+        "fixes_files": {},
+        "building_manager": None,
         # 🔥 管轄関連の空データを追加
         "jurisdiction_classified": {
             "jurisdictions": {"東京消防庁": [], "丸の内消防署": []},
@@ -245,7 +236,7 @@ def _create_empty_result() -> dict:
         }
     }
 
-# 🔥 ビル情報関連の便利関数を追加
+# 既存の関数は変更なし
 def get_available_buildings() -> list:
     """利用可能なビル一覧を取得"""
     manager = get_building_manager()
@@ -258,7 +249,6 @@ def get_building_info_for_prompt(building_name: str = None) -> str:
         return manager.format_building_info_for_prompt(building_name)
     return "【ビル情報】利用可能なビル情報がありません。"
 
-# 既存の関数は変更なし
 def get_equipment_names(equipment_data: dict) -> list:
     """利用可能な設備名一覧を取得"""
     return sorted(equipment_data.keys())
@@ -332,5 +322,5 @@ def initialize_chroma_from_input(input_dir: str, persist_dir: str | None, collec
     return {
         "collection": None,  # 使用しない
         "rag_files": result["file_list"],
-        "equipment_data": result["equipment_data"]  # 新しく追加
+        "equipment_data": result["equipment_data"]
     }
