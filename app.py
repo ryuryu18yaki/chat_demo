@@ -1512,7 +1512,11 @@ if st.session_state["authentication_status"]:
         
         jurisdiction_stats = st.session_state.get("jurisdiction_stats", {})
         
-        if jurisdiction_stats and jurisdiction_stats.get("消防関連総数", 0) > 0:
+        tokyo_files = jurisdiction_stats.get('東京消防庁_ファイル数', 0)
+        marunouchi_files = jurisdiction_stats.get('丸の内消防署_ファイル数', 0)
+        general_fire_files = jurisdiction_stats.get('一般消防資料_ファイル数', 0)
+
+        if tokyo_files > 0 or marunouchi_files > 0 or general_fire_files > 0:
             
             # 階層的な説明
             with st.expander("ℹ️ 管轄の階層について", expanded=False):
