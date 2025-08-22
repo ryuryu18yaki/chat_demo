@@ -3,7 +3,7 @@ import streamlit as st
 from typing import List, Dict, Any
 import time
 
-from src.startup_loader import initialize_equipment_data, get_available_buildings, get_building_info_for_prompt
+from src.startup_loader import initialize_equipment_data, get_available_buildings, get_building_info_for_prompt, get_filtered_files_by_jurisdiction
 from src.logging_utils import init_logger
 from src.sheets_manager import log_to_sheets, get_sheets_manager, send_prompt_to_model_comparison
 from src.langchain_chains import generate_smart_answer_with_langchain
@@ -659,6 +659,7 @@ if st.session_state["authentication_status"]:
             st.session_state.equipment_list = res["equipment_list"]
             st.session_state.category_list = res["category_list"]
             st.session_state.rag_files = res["file_list"]
+            st.session_state.tag_stats = res["tag_stats"]
             logger.info("🔍🔍🔍 セッション状態更新完了")
 
             logger.info("📂 設備データ初期化完了 — 設備数=%d  ファイル数=%d",
@@ -1069,9 +1070,49 @@ if st.session_state["authentication_status"]:
     # =====  サイドバー用ヘルパー関数  ==================================================
     
     def render_equipment_selection():
-        """設備選択UIを描画（共通関数）"""
+        """設備選択UI（管轄プルダウン付き）"""
         st.markdown("### 🔧 対象設備選択")
         
+        # 🔥 管轄選択プルダウンを追加
+        st.markdown("#### 🏷️ 管轄選択")
+        
+        tag_stats = st.session_state.get("tag_stats", {})
+        
+        # 利用可能な管轄オプション
+        jurisdiction_options = [""]  # 指定なし
+        
+        if tag_stats.get("🔥東京消防庁", 0) > 0:
+            jurisdiction_options.append("🔥東京消防庁")
+        if tag_stats.get("🔥丸の内消防署", 0) > 0:
+            jurisdiction_options.append("🔥丸の内消防署")
+        
+        selected_jurisdiction = st.selectbox(
+            "管轄を選択（ファイルフィルター）",
+            options=jurisdiction_options,
+            format_func=lambda x: {
+                "": "指定しない（一般設備資料のみ）",
+                "🔥東京消防庁": f"🔥東京消防庁 ({tag_stats.get('🔥東京消防庁', 0)}ファイル)",
+                "🔥丸の内消防署": f"🔥丸の内消防署 ({tag_stats.get('🔥丸の内消防署', 0)}ファイル)"
+            }.get(x, x),
+            help="選択した管轄に応じて、利用するファイルが動的に変更されます"
+        )
+        
+        # セッション状態に保存
+        st.session_state["selected_jurisdiction"] = selected_jurisdiction if selected_jurisdiction else None
+        
+        # 現在の管轄選択状態を表示
+        if selected_jurisdiction:
+            st.success(f"✅ 管轄: **{selected_jurisdiction}**")
+            if selected_jurisdiction == "🔥東京消防庁":
+                st.info("📄 利用資料: 一般設備 + 一般消防 + 東京消防庁")
+            elif selected_jurisdiction == "🔥丸の内消防署":
+                st.info("📄 利用資料: 一般設備 + 一般消防 + 東京消防庁 + 丸の内")
+        else:
+            st.info("📄 利用資料: 一般設備資料のみ")
+        
+        st.divider()
+        
+        # 既存の設備選択UI（変更なし）
         available_equipment = st.session_state.get("equipment_list", [])
         available_categories = st.session_state.get("category_list", [])
 
@@ -1124,7 +1165,7 @@ if st.session_state["authentication_status"]:
             st.session_state["selection_mode"] = "category"
 
     def render_file_selection(current_equipment):
-        """ファイル選択UIを描画（共通関数）"""
+        """ファイル選択UI（管轄フィルタリング対応版）"""
         if not current_equipment:
             return
             
@@ -1132,40 +1173,64 @@ if st.session_state["authentication_status"]:
         st.success(f"✅ 選択中: **{current_equipment}**")
         
         st.markdown("#### 📄 使用ファイル選択")
-        available_files = eq_info['sources']
         
-        # セッション状態でファイル選択を管理
-        selected_files_key = f"selected_files_{current_equipment}"
+        # 🔥 管轄に基づいてファイルリストをフィルタリング
+        selected_jurisdiction = st.session_state.get("selected_jurisdiction")
+        filtered_files = get_filtered_files_by_jurisdiction(current_equipment, selected_jurisdiction)
+        
+        if not filtered_files:
+            st.warning("⚠️ 選択された管轄に該当するファイルがありません")
+            return
+        
+        # セッション状態でファイル選択を管理（管轄フィルタリング対応）
+        selected_files_key = f"selected_files_{current_equipment}_{selected_jurisdiction or 'none'}"
         if selected_files_key not in st.session_state:
-            st.session_state[selected_files_key] = available_files.copy()
+            st.session_state[selected_files_key] = filtered_files.copy()
+        
+        # 🔥 管轄変更時にファイル選択をリセット
+        if set(st.session_state[selected_files_key]) - set(filtered_files):
+            st.session_state[selected_files_key] = filtered_files.copy()
         
         # ファイル選択UI
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("🔄 全選択", key=f"select_all_{current_equipment}"):
-                st.session_state[selected_files_key] = available_files.copy()
+            if st.button("📄 全選択", key=f"select_all_{current_equipment}_{selected_jurisdiction or 'none'}"):
+                st.session_state[selected_files_key] = filtered_files.copy()
                 st.rerun()
         with col2:
-            if st.button("❌ 全解除", key=f"deselect_all_{current_equipment}"):
+            if st.button("❌ 全解除", key=f"deselect_all_{current_equipment}_{selected_jurisdiction or 'none'}"):
                 st.session_state[selected_files_key] = []
                 st.rerun()
         
-        # 各ファイルのチェックボックス
-        for file in available_files:
-            checked = st.checkbox(
-                file,
-                value=file in st.session_state[selected_files_key],
-                key=f"file_{current_equipment}_{file}"
-            )
-            
-            if checked and file not in st.session_state[selected_files_key]:
-                st.session_state[selected_files_key].append(file)
-            elif not checked and file in st.session_state[selected_files_key]:
-                st.session_state[selected_files_key].remove(file)
+        # 🔥 タグ別にファイルを表示
+        tagged_sources = eq_info.get("tagged_sources", [])
+        tags_in_filtered = {}
+        
+        for source in tagged_sources:
+            if source["name"] in filtered_files:
+                tag = source["tag"]
+                if tag not in tags_in_filtered:
+                    tags_in_filtered[tag] = []
+                tags_in_filtered[tag].append(source["name"])
+        
+        # タグ別にチェックボックス表示
+        for tag, files in tags_in_filtered.items():
+            with st.expander(f"{tag} ({len(files)}ファイル)", expanded=True):
+                for file in files:
+                    checked = st.checkbox(
+                        file,
+                        value=file in st.session_state[selected_files_key],
+                        key=f"file_{current_equipment}_{selected_jurisdiction or 'none'}_{file}"
+                    )
+                    
+                    if checked and file not in st.session_state[selected_files_key]:
+                        st.session_state[selected_files_key].append(file)
+                    elif not checked and file in st.session_state[selected_files_key]:
+                        st.session_state[selected_files_key].remove(file)
         
         # 選択状況の表示
         selected_count = len(st.session_state[selected_files_key])
-        total_count = len(available_files)
+        total_count = len(filtered_files)
         
         if selected_count == 0:
             st.error("⚠️ ファイルが選択されていません")
@@ -1177,22 +1242,16 @@ if st.session_state["authentication_status"]:
         # 設備詳細（折りたたみ）
         with st.expander("📋 設備詳細", expanded=False):
             st.markdown(f"- **カテゴリ**: {eq_info['equipment_category']}")
-            st.markdown(f"- **総ファイル数**: {eq_info['total_files']}")
-            st.markdown(f"- **総ページ数**: {eq_info['total_pages']}")
-            st.markdown(f"- **総文字数**: {eq_info['total_chars']:,}")
+            st.markdown(f"- **管轄フィルタ**: {selected_jurisdiction or '指定なし'}")
+            st.markdown(f"- **フィルタ後ファイル数**: {len(filtered_files)}")
             
             if selected_count > 0:
                 st.markdown("- **選択中のファイル**:")
                 for file in st.session_state[selected_files_key]:
+                    # タグ情報も表示
+                    file_tag = next((s["tag"] for s in tagged_sources if s["name"] == file), "不明")
                     file_chars = len(eq_info['files'].get(file, ''))
-                    st.markdown(f"  - ✅ {file} ({file_chars:,}文字)")
-                
-                if selected_count < total_count:
-                    selected_chars = sum(len(eq_info['files'].get(f, '')) for f in st.session_state[selected_files_key])
-                    char_ratio = 100 * selected_chars / eq_info['total_chars'] if eq_info['total_chars'] > 0 else 0
-                    st.markdown(f"- **選択ファイル統計**:")
-                    st.markdown(f"  - ファイル数: {selected_count}/{total_count} ({100*selected_count/total_count:.1f}%)")
-                    st.markdown(f"  - 文字数: {selected_chars:,}/{eq_info['total_chars']:,} ({char_ratio:.1f}%)")
+                    st.markdown(f"  - ✅ {file} `{file_tag}` ({file_chars:,}文字)")
 
     def render_building_selection(expanded=False):
         """ビル選択UIを描画（共通関数）"""
@@ -1206,121 +1265,105 @@ if st.session_state["authentication_status"]:
                 return
 
             st.info(f"📊 利用可能ビル数: {len(available_buildings)}")
+            st.session_state["include_building_info"] = True
             
-            include_building = st.checkbox(
-                "ビル情報をプロンプトに含める",
-                value=st.session_state.get("include_building_info", False),
-                help="チェックを入れると、選択されたビルの詳細情報が回答生成時に使用されます"
+            building_selection_mode = st.radio(
+                "ビル選択方式",
+                ["特定ビルを選択", "全ビル情報を使用"],
+                index=st.session_state.get("building_selection_mode_index", 0),
+                help="質問に使用するビル情報の選択方法"
             )
-            st.session_state["include_building_info"] = include_building
-            
-            if include_building:
-                building_selection_mode = st.radio(
-                    "ビル選択方式",
-                    ["特定ビルを選択", "全ビル情報を使用"],
-                    index=st.session_state.get("building_selection_mode_index", 0),
-                    help="質問に使用するビル情報の選択方法"
-                )
 
-                mode_options = ["特定ビルを選択", "全ビル情報を使用"]
-                st.session_state["building_selection_mode_index"] = mode_options.index(building_selection_mode)
+            mode_options = ["特定ビルを選択", "全ビル情報を使用"]
+            st.session_state["building_selection_mode_index"] = mode_options.index(building_selection_mode)
+            
+            if building_selection_mode == "特定ビルを選択":
+                search_query = st.text_input(
+                    "🔍 ビル名で検索",
+                    placeholder="ビル名の一部を入力...",
+                    help="入力した文字でビル一覧をフィルタリングできます"
+                )
                 
-                if building_selection_mode == "特定ビルを選択":
-                    search_query = st.text_input(
-                        "🔍 ビル名で検索",
-                        placeholder="ビル名の一部を入力...",
-                        help="入力した文字でビル一覧をフィルタリングできます"
+                if search_query:
+                    filtered_buildings = [
+                        building for building in available_buildings 
+                        if search_query.lower() in building.lower()
+                    ]
+                    st.info(f"🔍 検索結果: {len(filtered_buildings)}件")
+                else:
+                    filtered_buildings = available_buildings
+                
+                if filtered_buildings:
+                    selected_building = st.selectbox(
+                        "ビルを選択してください",
+                        options=[""] + filtered_buildings,
+                        index=0,
+                        help="上の検索ボックスで絞り込むか、直接選択してください"
                     )
-                    
-                    if search_query:
-                        filtered_buildings = [
-                            building for building in available_buildings 
-                            if search_query.lower() in building.lower()
-                        ]
-                        st.info(f"🔍 検索結果: {len(filtered_buildings)}件")
-                    else:
-                        filtered_buildings = available_buildings
-                    
-                    if filtered_buildings:
-                        selected_building = st.selectbox(
-                            "ビルを選択してください",
-                            options=[""] + filtered_buildings,
-                            index=0,
-                            help="上の検索ボックスで絞り込むか、直接選択してください"
-                        )
-                    else:
-                        st.warning("⚠️ 検索条件に一致するビルが見つかりません")
-                        selected_building = None
-                    
-                    # 🔥 新規追加: 他のビルも参考にするオプション
-                    if selected_building:
-                        include_other_buildings = st.checkbox(
-                            "他のビルも参考にする",
-                            value=st.session_state.get("include_other_buildings", False),
-                            help="選択したビル以外の情報も比較・参考のために使用します"
-                        )
-                        st.session_state["include_other_buildings"] = include_other_buildings
-                        
-                        # building_mode の設定
-                        if include_other_buildings:
-                            st.session_state["building_mode"] = "specific_with_others"
-                        else:
-                            st.session_state["building_mode"] = "specific_only"
-                    else:
-                        st.session_state["include_other_buildings"] = False
-                        st.session_state["building_mode"] = "specific_only"
-                    
-                    st.session_state["selected_building"] = selected_building if selected_building else None
-                    
-                elif building_selection_mode == "全ビル情報を使用":
-                    st.info("🏢 全ビルの情報を使用して回答します")
-                    st.session_state["selected_building"] = None
-                    st.session_state["building_mode"] = "all"
-                    st.session_state["include_other_buildings"] = False  # 全ビル使用時は無効
-            
-            else:
-                st.session_state["selected_building"] = None
-                st.session_state["building_mode"] = "none"
-                st.session_state["include_other_buildings"] = False
-            
-            # 現在の選択状況を表示
-            if include_building:
-                current_building = st.session_state.get("selected_building")
-                building_mode = st.session_state.get("building_mode", "none")
-                include_others = st.session_state.get("include_other_buildings", False)
+                else:
+                    st.warning("⚠️ 検索条件に一致するビルが見つかりません")
+                    selected_building = None
                 
-                if building_mode == "specific_only" and current_building:
-                    st.success(f"✅ 選択中: **{current_building}** (単独)")
+                # 🔥 新規追加: 他のビルも参考にするオプション
+                if selected_building:
+                    include_other_buildings = st.checkbox(
+                        "他のビルも参考にする",
+                        value=st.session_state.get("include_other_buildings", False),
+                        help="選択したビル以外の情報も比較・参考のために使用します"
+                    )
+                    st.session_state["include_other_buildings"] = include_other_buildings
                     
-                elif building_mode == "specific_with_others" and current_building:
-                    other_count = len(available_buildings) - 1
-                    st.success(f"✅ 基準ビル: **{current_building}**")
-                    st.info(f"ℹ️ 他のビルも参考: {other_count}件のビル情報も使用")
-                    
-                elif building_mode == "all":
-                    st.success("✅ 全ビル情報を使用")
-                    
-                # ビル詳細プレビュー
-                if current_building:
-                    with st.expander("🏢 ビル詳細情報", expanded=False):
-                        building_info_text = get_building_info_for_prompt(current_building)
-                        st.text_area(
-                            "ビル情報プレビュー",
-                            value=building_info_text,
-                            height=300,
-                            key=f"building_preview_{current_building}"
-                        )
-                elif building_mode == "all":
-                    with st.expander("🏢 全ビル情報プレビュー", expanded=False):
-                        all_building_info = get_building_info_for_prompt()
-                        st.text_area(
-                            "全ビル情報プレビュー",
-                            value=all_building_info,
-                            height=400,
-                            key="all_buildings_preview"
-                        )
-            else:
-                st.info("ℹ️ ビル情報は使用しません")
+                    # building_mode の設定
+                    if include_other_buildings:
+                        st.session_state["building_mode"] = "specific_with_others"
+                    else:
+                        st.session_state["building_mode"] = "specific_only"
+                else:
+                    st.session_state["include_other_buildings"] = False
+                    st.session_state["building_mode"] = "specific_only"
+                
+                st.session_state["selected_building"] = selected_building if selected_building else None
+                
+            elif building_selection_mode == "全ビル情報を使用":
+                st.info("🏢 全ビルの情報を使用して回答します")
+                st.session_state["selected_building"] = None
+                st.session_state["building_mode"] = "all"
+                st.session_state["include_other_buildings"] = False  # 全ビル使用時は無効
+        
+            current_building = st.session_state.get("selected_building")
+            building_mode = st.session_state.get("building_mode", "none")
+            include_others = st.session_state.get("include_other_buildings", False)
+            
+            if building_mode == "specific_only" and current_building:
+                st.success(f"✅ 選択中: **{current_building}** (単独)")
+                
+            elif building_mode == "specific_with_others" and current_building:
+                other_count = len(available_buildings) - 1
+                st.success(f"✅ 基準ビル: **{current_building}**")
+                st.info(f"ℹ️ 他のビルも参考: {other_count}件のビル情報も使用")
+                
+            elif building_mode == "all":
+                st.success("✅ 全ビル情報を使用")
+                
+            # ビル詳細プレビュー
+            if current_building:
+                with st.expander("🏢 ビル詳細情報", expanded=False):
+                    building_info_text = get_building_info_for_prompt(current_building)
+                    st.text_area(
+                        "ビル情報プレビュー",
+                        value=building_info_text,
+                        height=300,
+                        key=f"building_preview_{current_building}"
+                    )
+            elif building_mode == "all":
+                with st.expander("🏢 全ビル情報プレビュー", expanded=False):
+                    all_building_info = get_building_info_for_prompt()
+                    st.text_area(
+                        "全ビル情報プレビュー",
+                        value=all_building_info,
+                        height=400,
+                        key="all_buildings_preview"
+                    )
 
     def render_data_viewer():
         """資料内容確認UIを描画（共通関数）"""
@@ -1505,7 +1548,7 @@ if st.session_state["authentication_status"]:
         update_prompts_with_char_limit(st.session_state.char_limit)
         st.session_state.prompts_initialized = True
 
-    # =====  サイドバー  ==========================================================
+    # 🔥 サイドバーでの使用（最新コードベースに統合）
     with st.sidebar:
         st.markdown(f"👤 ログインユーザー: `{name}`")
         authenticator.logout('ログアウト', 'sidebar')
@@ -1514,15 +1557,16 @@ if st.session_state["authentication_status"]:
 
         st.header("💬 チャット履歴")
         
-        # 🔥 デバッグ情報をサイドバーにも表示（開発時のみ）
+        # デバッグ情報をサイドバーにも表示（開発時のみ）
         if st.checkbox("🔍 デバッグ表示", value=False):
             st.json({
                 "current_chat": st.session_state.current_chat,
                 "chat_sids_count": len(st.session_state.chat_sids),
-                "chat_sids_keys": list(st.session_state.chat_sids.keys())
+                "chat_sids_keys": list(st.session_state.chat_sids.keys()),
+                "selected_equipment": st.session_state.get("selected_equipment")
             })
         
-        # 🔥 チャット履歴ボタンの改良（キーにタイトルも含める）
+        # チャット履歴ボタンの改良（キーにタイトルも含める）
         for title, sid in st.session_state.chat_sids.items():
             # より一意なキーを生成（タイトル変更時の問題を回避）
             button_key = f"hist_{sid}_{hash(title) % 10000}"
@@ -1564,58 +1608,27 @@ if st.session_state["authentication_status"]:
                     help="値が高いほど創造的、低いほど一貫した回答になります（Claudeデフォルト: 0.0）")
 
             # max_tokensのキーボード自由入力欄
-            col1, col2 = st.columns([3, 1])
-            
+            col1, col2 = st.columns(2)
             with col1:
-                if "max_tokens" not in st.session_state or st.session_state.get("max_tokens") is None:
-                    st.session_state["max_tokens"] = 4096
-                
-                max_tokens_text = st.text_input(
-                    "最大応答長（トークン数）",
-                    value=str(st.session_state.get("max_tokens", 4096)),
-                    placeholder="例: 4096, 8000, 16000 （空欄=モデル上限使用）",
-                    key="max_tokens_text",
-                    help="数値を入力してください。空欄にするとモデルの上限値を使用します。"
+                custom_max_tokens = st.number_input(
+                    "最大トークン数",
+                    min_value=100,
+                    max_value=8192,
+                    value=st.session_state.get("max_tokens", 4096),
+                    step=100,
+                    help="生成する回答の最大長さ"
                 )
+                st.session_state["max_tokens"] = custom_max_tokens
             
             with col2:
-                st.markdown("<br>", unsafe_allow_html=True)
-                apply_button = st.button("✅ 適用", key="apply_max_tokens")
-            
-            current_max_tokens = st.session_state.get("max_tokens")
-            if current_max_tokens is None:
-                st.info("💡 現在の設定: モデル上限値を使用")
-            else:
-                st.info(f"💡 現在の設定: {current_max_tokens:,} トークン")
-            
-            if apply_button:
-                if max_tokens_text.strip() == "":
-                    st.session_state["max_tokens"] = None
-                    st.success("✅ モデル上限値に設定しました")
-                    st.rerun()
-                else:
-                    try:
-                        max_tokens_value = int(max_tokens_text.strip())
-                        
-                        if max_tokens_value <= 0:
-                            st.error("❌ 1以上の数値を入力してください")
-                        elif max_tokens_value > 200000:
-                            st.warning("⚠️ 200,000を超える値ですが設定しました")
-                            st.session_state["max_tokens"] = max_tokens_value
-                            st.success(f"✅ 最大トークン数を {max_tokens_value:,} に設定しました")
-                            st.rerun()
-                        else:
-                            st.session_state["max_tokens"] = max_tokens_value
-                            st.success(f"✅ 最大トークン数を {max_tokens_value:,} に設定しました")
-                            st.rerun()
-                            
-                    except ValueError:
-                        st.error("❌ 有効な数値を入力してください（例: 4096）")
+                st.markdown("**現在の設定**")
+                st.markdown(f"トークン: {custom_max_tokens}")
+                st.markdown(f"温度: {st.session_state.get('temperature', 0.0)}")
 
         st.divider()
 
-        # ------- モード選択 -------
-        st.markdown("### ⚙️ 設計対象モード")
+        # ------- 応答モード選択 -------
+        st.markdown("### 🎛️ 応答モード選択")
         st.session_state.design_mode = st.radio(
             "対象設備を選択",
             options=list(st.session_state.prompts.keys()),
@@ -1630,11 +1643,12 @@ if st.session_state["authentication_status"]:
 
         st.divider()
 
-        # ========== モード別のサイドバー表示（リファクタリング済み） ==========
+        # ========== モード別のサイドバー表示（管轄統合版） ==========
         current_mode = st.session_state.design_mode
         
         if current_mode == "暗黙知法令チャットモード":
-            # 設備選択
+            
+            # 設備選択（管轄と独立）
             render_equipment_selection()
             
             # ファイル選択（設備が選択されている場合のみ）
@@ -1647,7 +1661,7 @@ if st.session_state["authentication_status"]:
 
             st.divider()
             
-            # 🔥 文字数制限設定を追加
+            # 文字数制限設定を追加
             render_char_limit_setting()
             
             st.divider()
@@ -1658,9 +1672,14 @@ if st.session_state["authentication_status"]:
         elif current_mode == "質疑応答書添削モード":
             st.info("📝 質疑応答書添削モード用のサイドバーは後で実装予定")
             
-        elif current_mode == "ビルマスタ質問モード":
+        elif current_mode == "ビルマス質問モード":
             # ビル情報選択（そのまま表示）
             render_building_selection(expanded=True)
+
+            st.divider()
+            
+            # 文字数制限設定を追加
+            render_char_limit_setting()
         
         else:
             st.warning(f"⚠️ 未対応のモード: {current_mode}")
