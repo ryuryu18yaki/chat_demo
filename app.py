@@ -659,6 +659,7 @@ if st.session_state["authentication_status"]:
             st.session_state.equipment_list = res["equipment_list"]
             st.session_state.category_list = res["category_list"]
             st.session_state.rag_files = res["file_list"]
+            st.session_state.tag_stats = res["tag_stats"]
             logger.info("🔍🔍🔍 セッション状態更新完了")
 
             logger.info("📂 設備データ初期化完了 — 設備数=%d  ファイル数=%d",
