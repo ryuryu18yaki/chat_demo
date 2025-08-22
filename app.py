@@ -659,8 +659,6 @@ if st.session_state["authentication_status"]:
             st.session_state.equipment_list = res["equipment_list"]
             st.session_state.category_list = res["category_list"]
             st.session_state.rag_files = res["file_list"]
-            st.session_state.jurisdiction_stats = res["jurisdiction_stats"]
-            st.session_state.jurisdiction_classified = res["jurisdiction_classified"]
             logger.info("🔍🔍🔍 セッション状態更新完了")
 
             logger.info("📂 設備データ初期化完了 — 設備数=%d  ファイル数=%d",
@@ -1580,8 +1578,7 @@ if st.session_state["authentication_status"]:
                 "current_chat": st.session_state.current_chat,
                 "chat_sids_count": len(st.session_state.chat_sids),
                 "chat_sids_keys": list(st.session_state.chat_sids.keys()),
-                "selected_equipment": st.session_state.get("selected_equipment"),
-                "jurisdiction_stats": st.session_state.get("jurisdiction_stats", {})
+                "selected_equipment": st.session_state.get("selected_equipment")
             })
         
         # チャット履歴ボタンの改良（キーにタイトルも含める）
