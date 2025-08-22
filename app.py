@@ -659,6 +659,8 @@ if st.session_state["authentication_status"]:
             st.session_state.equipment_list = res["equipment_list"]
             st.session_state.category_list = res["category_list"]
             st.session_state.rag_files = res["file_list"]
+            st.session_state.jurisdiction_stats = res["jurisdiction_stats"]
+            st.session_state.jurisdiction_classified = res["jurisdiction_classified"]
             logger.info("🔍🔍🔍 セッション状態更新完了")
 
             logger.info("📂 設備データ初期化完了 — 設備数=%d  ファイル数=%d",
@@ -1512,11 +1514,7 @@ if st.session_state["authentication_status"]:
         
         jurisdiction_stats = st.session_state.get("jurisdiction_stats", {})
         
-        tokyo_files = jurisdiction_stats.get('東京消防庁_ファイル数', 0)
-        marunouchi_files = jurisdiction_stats.get('丸の内消防署_ファイル数', 0)
-        general_fire_files = jurisdiction_stats.get('一般消防資料_ファイル数', 0)
-
-        if tokyo_files > 0 or marunouchi_files > 0 or general_fire_files > 0:
+        if jurisdiction_stats and jurisdiction_stats.get("消防関連総数", 0) > 0:
             
             # 階層的な説明
             with st.expander("ℹ️ 管轄の階層について", expanded=False):
