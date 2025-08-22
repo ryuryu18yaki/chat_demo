@@ -930,7 +930,8 @@ if st.session_state["authentication_status"]:
         if current_mode == "暗黙知法令チャットモード":
             selected_equipment = st.session_state.get("selected_equipment")
             if selected_equipment:
-                selected_files_key = f"selected_files_{selected_equipment}"
+                selected_jurisdiction = st.session_state.get("selected_jurisdiction")
+                selected_files_key = f"selected_files_{selected_equipment}_{selected_jurisdiction or 'none'}"
                 selected_files = st.session_state.get(selected_files_key, [])
                 
                 if selected_files:
