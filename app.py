@@ -1505,7 +1505,236 @@ if st.session_state["authentication_status"]:
         update_prompts_with_char_limit(st.session_state.char_limit)
         st.session_state.prompts_initialized = True
 
-    # =====  サイドバー  ==========================================================
+    # 🔥 管轄クイック選択UIを追加
+    def render_jurisdiction_quick_select():
+        """管轄クイック選択UI"""
+        st.markdown("### 🔥 消防管轄クイック選択")
+        
+        jurisdiction_stats = st.session_state.get("jurisdiction_stats", {})
+        
+        if jurisdiction_stats and jurisdiction_stats.get("消防関連総数", 0) > 0:
+            
+            # 階層的な説明
+            with st.expander("ℹ️ 管轄の階層について", expanded=False):
+                st.markdown("""
+                **階層的な資料包含関係：**
+                - 🔥**東京消防庁**: 一般設備 + 東京消防庁資料
+                - 🔥**丸の内消防署**: 一般設備 + 東京消防庁資料 + 丸の内資料
+                - **選択なし**: 一般設備資料のみ
+                """)
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if jurisdiction_stats.get('東京消防庁_ファイル数', 0) > 0:
+                    tokyo_total = (
+                        jurisdiction_stats.get('設備ファイル数', 0) + 
+                        jurisdiction_stats.get('東京消防庁_ファイル数', 0)
+                    )
+                    if st.button(f"🔥東京消防庁\n(計{tokyo_total}ファイル)", key="quick_tokyo"):
+                        st.session_state["selected_equipment"] = "🔥東京消防庁"
+                        st.session_state["selection_mode"] = "jurisdiction"
+                        st.rerun()
+            
+            with col2:
+                if jurisdiction_stats.get('丸の内消防署_ファイル数', 0) > 0:
+                    marunouchi_total = (
+                        jurisdiction_stats.get('設備ファイル数', 0) + 
+                        jurisdiction_stats.get('東京消防庁_ファイル数', 0) + 
+                        jurisdiction_stats.get('丸の内消防署_ファイル数', 0)
+                    )
+                    if st.button(f"🔥丸の内消防署\n(計{marunouchi_total}ファイル)", key="quick_marunouchi"):
+                        st.session_state["selected_equipment"] = "🔥丸の内消防署"
+                        st.session_state["selection_mode"] = "jurisdiction"
+                        st.rerun()
+            
+            # 現在の選択状態を表示
+            current_selection = st.session_state.get("selected_equipment")
+            if current_selection == "🔥東京消防庁":
+                st.success("✅ **東京消防庁管轄**で回答します")
+                st.info(f"📄 利用資料: 一般設備 + 東京消防庁資料")
+            elif current_selection == "🔥丸の内消防署":
+                st.success("✅ **丸の内消防署管轄**で回答します")
+                st.info(f"📄 利用資料: 一般設備 + 東京消防庁 + 丸の内資料")
+            elif current_selection and not current_selection.startswith("🔥"):
+                st.info("📄 個別設備選択中（管轄指定なし）")
+            else:
+                st.info("📄 一般設備資料のみ使用")
+            
+            # 管轄解除ボタン
+            if current_selection and current_selection.startswith("🔥"):
+                if st.button("❌ 管轄選択を解除", key="clear_jurisdiction"):
+                    st.session_state["selected_equipment"] = None
+                    st.session_state["selection_mode"] = "manual"
+                    st.rerun()
+        
+        else:
+            st.info("ℹ️ 消防関連資料が見つかりません")
+
+    def render_equipment_selection():
+        """設備選択UI（管轄統合版）"""
+        st.markdown("### 🔧 個別設備選択")
+        
+        available_equipment = st.session_state.get("equipment_list", [])
+        available_categories = st.session_state.get("category_list", [])
+
+        if not available_equipment:
+            st.error("❌ 設備データが読み込まれていません")
+            st.session_state["selected_equipment"] = None
+            return
+
+        # 🔥 管轄設備を除いた一般設備のみ表示
+        general_equipment = [eq for eq in available_equipment if not eq.startswith("🔥") and eq != "一般消防資料"]
+        
+        # 現在の選択状態を表示
+        current_selection = st.session_state.get("selected_equipment")
+        if current_selection and current_selection.startswith("🔥"):
+            st.info(f"ℹ️ 管轄選択中: {current_selection}")
+            st.info("⬆️ 上記の管轄選択で変更可能")
+        elif current_selection and current_selection in general_equipment:
+            st.success(f"✅ 選択中: **{current_selection}**")
+        elif current_selection == "一般消防資料":
+            st.success(f"✅ 選択中: **{current_selection}**")
+        else:
+            st.info("ℹ️ 個別設備が選択されていません")
+
+        st.info(f"📊 利用可能設備数: {len(available_equipment)}")
+        
+        # 設備選択モード
+        selection_mode = st.radio(
+            "選択方式",
+            ["設備名で選択", "カテゴリから選択"],
+            index=0,
+            help="個別設備の選択方法"
+        )
+        
+        if selection_mode == "設備名で選択":
+            selected_equipment = st.selectbox(
+                "設備を選択してください",
+                options=[""] + available_equipment,
+                index=0,
+                help="この設備の資料のみを使用して回答を生成します"
+            )
+            if selected_equipment != st.session_state.get("selected_equipment"):
+                st.session_state["selected_equipment"] = selected_equipment if selected_equipment else None
+                st.session_state["selection_mode"] = "manual"
+                if selected_equipment:
+                    st.rerun()
+                
+        elif selection_mode == "カテゴリから選択":
+            # 全設備のカテゴリ
+            all_categories = list(set(
+                st.session_state.equipment_data[eq]["equipment_category"] 
+                for eq in available_equipment
+            ))
+            
+            selected_category = st.selectbox(
+                "カテゴリを選択してください",
+                options=[""] + sorted(all_categories),
+                index=0
+            )
+            
+            if selected_category:
+                category_equipment = [
+                    eq for eq in available_equipment 
+                    if st.session_state.equipment_data[eq]["equipment_category"] == selected_category
+                ]
+                
+                selected_equipment = st.selectbox(
+                    f"「{selected_category}」内の設備を選択",
+                    options=[""] + category_equipment,
+                    index=0
+                )
+                if selected_equipment != st.session_state.get("selected_equipment"):
+                    st.session_state["selected_equipment"] = selected_equipment if selected_equipment else None
+                    st.session_state["selection_mode"] = "category"
+                    if selected_equipment:
+                        st.rerun()
+            else:
+                if st.session_state.get("selected_equipment") and not st.session_state.get("selected_equipment", "").startswith("🔥"):
+                    st.session_state["selected_equipment"] = None
+
+    def render_file_selection(current_equipment):
+        """ファイル選択UI（管轄対応版）"""
+        if not current_equipment:
+            return
+        
+        if current_equipment not in st.session_state.equipment_data:
+            st.error(f"❌ 設備 '{current_equipment}' が見つかりません")
+            return
+            
+        eq_info = st.session_state.equipment_data[current_equipment]
+        
+        # 🔥 管轄設備の場合は特別表示
+        if current_equipment.startswith("🔥"):
+            st.success(f"✅ 選択中: **{current_equipment}** (管轄)")
+        else:
+            st.success(f"✅ 選択中: **{current_equipment}**")
+        
+        st.markdown("#### 📄 使用ファイル選択")
+        available_files = eq_info['sources']
+        
+        # セッション状態でファイル選択を管理
+        selected_files_key = f"selected_files_{current_equipment}"
+        if selected_files_key not in st.session_state:
+            st.session_state[selected_files_key] = available_files.copy()
+        
+        # ファイル選択UI
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("📄 全選択", key=f"select_all_{current_equipment}"):
+                st.session_state[selected_files_key] = available_files.copy()
+                st.rerun()
+        with col2:
+            if st.button("❌ 全解除", key=f"deselect_all_{current_equipment}"):
+                st.session_state[selected_files_key] = []
+                st.rerun()
+        
+        # 各ファイルのチェックボックス
+        for file in available_files:
+            checked = st.checkbox(
+                file,
+                value=file in st.session_state[selected_files_key],
+                key=f"file_{current_equipment}_{file}"
+            )
+            
+            if checked and file not in st.session_state[selected_files_key]:
+                st.session_state[selected_files_key].append(file)
+            elif not checked and file in st.session_state[selected_files_key]:
+                st.session_state[selected_files_key].remove(file)
+        
+        # 選択状況の表示
+        selected_count = len(st.session_state[selected_files_key])
+        total_count = len(available_files)
+        
+        if selected_count == 0:
+            st.error("⚠️ ファイルが選択されていません")
+        elif selected_count == total_count:
+            st.info(f"📊 全ファイル使用: {selected_count}/{total_count}")
+        else:
+            st.info(f"📊 選択ファイル: {selected_count}/{total_count}")
+        
+        # 設備詳細（折りたたみ）
+        with st.expander("📋 設備詳細", expanded=False):
+            st.markdown(f"- **カテゴリ**: {eq_info['equipment_category']}")
+            st.markdown(f"- **総ファイル数**: {eq_info['total_files']}")
+            st.markdown(f"- **総ページ数**: {eq_info['total_pages']}")
+            st.markdown(f"- **総文字数**: {eq_info['total_chars']:,}")
+            
+            if selected_count > 0:
+                st.markdown("- **選択中のファイル**:")
+                for file in st.session_state[selected_files_key]:
+                    file_chars = len(eq_info['files'].get(file, ''))
+                    st.markdown(f"  - ✅ {file} ({file_chars:,}文字)")
+                
+                if selected_count < total_count:
+                    selected_chars = sum(len(eq_info['files'].get(f, '')) for f in st.session_state[selected_files_key])
+                    char_ratio = 100 * selected_chars / eq_info['total_chars'] if eq_info['total_chars'] > 0 else 0
+                    st.markdown(f"- **選択ファイル統計**:")
+                    st.markdown(f"  - ファイル数: {selected_count}/{total_count} ({100*selected_count/total_count:.1f}%)")
+                    st.markdown(f"  - 文字数: {selected_chars:,}/{eq_info['total_chars']:,} ({char_ratio:.1f}%)")
+
+    # 🔥 サイドバーでの使用（最新コードベースに統合）
     with st.sidebar:
         st.markdown(f"👤 ログインユーザー: `{name}`")
         authenticator.logout('ログアウト', 'sidebar')
@@ -1514,15 +1743,17 @@ if st.session_state["authentication_status"]:
 
         st.header("💬 チャット履歴")
         
-        # 🔥 デバッグ情報をサイドバーにも表示（開発時のみ）
+        # デバッグ情報をサイドバーにも表示（開発時のみ）
         if st.checkbox("🔍 デバッグ表示", value=False):
             st.json({
                 "current_chat": st.session_state.current_chat,
                 "chat_sids_count": len(st.session_state.chat_sids),
-                "chat_sids_keys": list(st.session_state.chat_sids.keys())
+                "chat_sids_keys": list(st.session_state.chat_sids.keys()),
+                "selected_equipment": st.session_state.get("selected_equipment"),
+                "jurisdiction_stats": st.session_state.get("jurisdiction_stats", {})
             })
         
-        # 🔥 チャット履歴ボタンの改良（キーにタイトルも含める）
+        # チャット履歴ボタンの改良（キーにタイトルも含める）
         for title, sid in st.session_state.chat_sids.items():
             # より一意なキーを生成（タイトル変更時の問題を回避）
             button_key = f"hist_{sid}_{hash(title) % 10000}"
@@ -1564,58 +1795,27 @@ if st.session_state["authentication_status"]:
                     help="値が高いほど創造的、低いほど一貫した回答になります（Claudeデフォルト: 0.0）")
 
             # max_tokensのキーボード自由入力欄
-            col1, col2 = st.columns([3, 1])
-            
+            col1, col2 = st.columns(2)
             with col1:
-                if "max_tokens" not in st.session_state or st.session_state.get("max_tokens") is None:
-                    st.session_state["max_tokens"] = 4096
-                
-                max_tokens_text = st.text_input(
-                    "最大応答長（トークン数）",
-                    value=str(st.session_state.get("max_tokens", 4096)),
-                    placeholder="例: 4096, 8000, 16000 （空欄=モデル上限使用）",
-                    key="max_tokens_text",
-                    help="数値を入力してください。空欄にするとモデルの上限値を使用します。"
+                custom_max_tokens = st.number_input(
+                    "最大トークン数",
+                    min_value=100,
+                    max_value=8192,
+                    value=st.session_state.get("max_tokens", 4096),
+                    step=100,
+                    help="生成する回答の最大長さ"
                 )
+                st.session_state["max_tokens"] = custom_max_tokens
             
             with col2:
-                st.markdown("<br>", unsafe_allow_html=True)
-                apply_button = st.button("✅ 適用", key="apply_max_tokens")
-            
-            current_max_tokens = st.session_state.get("max_tokens")
-            if current_max_tokens is None:
-                st.info("💡 現在の設定: モデル上限値を使用")
-            else:
-                st.info(f"💡 現在の設定: {current_max_tokens:,} トークン")
-            
-            if apply_button:
-                if max_tokens_text.strip() == "":
-                    st.session_state["max_tokens"] = None
-                    st.success("✅ モデル上限値に設定しました")
-                    st.rerun()
-                else:
-                    try:
-                        max_tokens_value = int(max_tokens_text.strip())
-                        
-                        if max_tokens_value <= 0:
-                            st.error("❌ 1以上の数値を入力してください")
-                        elif max_tokens_value > 200000:
-                            st.warning("⚠️ 200,000を超える値ですが設定しました")
-                            st.session_state["max_tokens"] = max_tokens_value
-                            st.success(f"✅ 最大トークン数を {max_tokens_value:,} に設定しました")
-                            st.rerun()
-                        else:
-                            st.session_state["max_tokens"] = max_tokens_value
-                            st.success(f"✅ 最大トークン数を {max_tokens_value:,} に設定しました")
-                            st.rerun()
-                            
-                    except ValueError:
-                        st.error("❌ 有効な数値を入力してください（例: 4096）")
+                st.markdown("**現在の設定**")
+                st.markdown(f"トークン: {custom_max_tokens}")
+                st.markdown(f"温度: {st.session_state.get('temperature', 0.0)}")
 
         st.divider()
 
-        # ------- モード選択 -------
-        st.markdown("### ⚙️ 設計対象モード")
+        # ------- 応答モード選択 -------
+        st.markdown("### 🎛️ 応答モード選択")
         st.session_state.design_mode = st.radio(
             "対象設備を選択",
             options=list(st.session_state.prompts.keys()),
@@ -1630,11 +1830,16 @@ if st.session_state["authentication_status"]:
 
         st.divider()
 
-        # ========== モード別のサイドバー表示（リファクタリング済み） ==========
+        # ========== モード別のサイドバー表示（管轄統合版） ==========
         current_mode = st.session_state.design_mode
         
         if current_mode == "暗黙知法令チャットモード":
-            # 設備選択
+            # 🔥 管轄クイック選択（新規追加）
+            render_jurisdiction_quick_select()
+            
+            st.divider()
+            
+            # 設備選択（管轄と独立）
             render_equipment_selection()
             
             # ファイル選択（設備が選択されている場合のみ）
@@ -1647,7 +1852,7 @@ if st.session_state["authentication_status"]:
 
             st.divider()
             
-            # 🔥 文字数制限設定を追加
+            # 文字数制限設定を追加
             render_char_limit_setting()
             
             st.divider()
@@ -1658,7 +1863,7 @@ if st.session_state["authentication_status"]:
         elif current_mode == "質疑応答書添削モード":
             st.info("📝 質疑応答書添削モード用のサイドバーは後で実装予定")
             
-        elif current_mode == "ビルマスタ質問モード":
+        elif current_mode == "ビルマス質問モード":
             # ビル情報選択（そのまま表示）
             render_building_selection(expanded=True)
         
