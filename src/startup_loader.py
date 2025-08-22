@@ -4,7 +4,7 @@ from pathlib import Path
 
 from src.rag_preprocess import preprocess_files, apply_text_replacements_from_fixmap
 from src.equipment_classifier import extract_equipment_from_filename, get_equipment_category
-from src.fire_department_classifier import classify_files_by_jurisdiction, get_jurisdiction_stats  # 🔥 追加
+from src.fire_department_classifier import classify_files_by_jurisdiction, get_jurisdiction_stats, extract_fire_department_info  # 🔥 追加
 from src.gdrive_simple import download_files_from_drive, download_fix_files_from_drive
 from src.building_manager import initialize_building_manager, get_building_manager
 from src.logging_utils import init_logger
@@ -141,17 +141,106 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
         data = equipment_data[equipment_name]
         total_chars = data.get('total_chars', 0)
         print(f"   - {equipment_name}: {data['total_files']}ファイル, {data['total_pages']}ページ, {total_chars}文字")
-
+    
+    # 🔥 各ファイルにタグを付与
+    logger.info("🏷️ ファイルタグ付け処理開始...")
+    
+    for file_dict in file_dicts:
+        filename = file_dict.get("name", "")
+        
+        # 管轄タグの決定
+        fire_info = extract_fire_department_info(filename)  # fire_department_classifier.py使用
+        
+        if fire_info["jurisdiction"] == "丸の内消防署":
+            file_dict["jurisdiction_tag"] = "🔥丸の内消防署"
+        elif fire_info["jurisdiction"] == "東京消防庁":
+            file_dict["jurisdiction_tag"] = "🔥東京消防庁"
+        elif fire_info["is_general"]:
+            file_dict["jurisdiction_tag"] = "📄一般消防資料"
+        else:
+            file_dict["jurisdiction_tag"] = "📄一般設備資料"  # デフォルト
+        
+        logger.info(f"🏷️ {filename} → タグ: {file_dict['jurisdiction_tag']}")
+    
+    # 既存の設備データ作成処理（変更なし）
+    equipment_data = preprocess_files(file_dicts)
+    
+    # 🔥 設備データの各ファイルにもタグ情報を追加
+    for equipment_name, eq_data in equipment_data.items():
+        # ファイルソース情報にタグを追加
+        tagged_sources = []
+        for source_file in eq_data["sources"]:
+            # 元のファイルからタグ情報を取得
+            original_file = next((f for f in file_dicts if f["name"] == source_file), None)
+            if original_file:
+                tag = original_file.get("jurisdiction_tag", "📄一般設備資料")
+                tagged_sources.append({
+                    "name": source_file,
+                    "tag": tag
+                })
+        
+        eq_data["tagged_sources"] = tagged_sources
+    
+    # 既存の戻り値に加えて、タグ統計も追加
+    tag_stats = get_tag_statistics(file_dicts)
+    
     return {
-        "equipment_data": equipment_data,  # 🔥 通常の設備データ（管轄統合なし）
+        "equipment_data": equipment_data,
         "file_list": file_dicts,
         "equipment_list": sorted(equipment_list),
         "category_list": sorted(category_list),
-        "building_manager": building_manager if 'building_manager' in locals() else None,
-        # 🔥 管轄関連データを追加（プロンプト生成時に使用）
-        "jurisdiction_classified": jurisdiction_classified,
-        "jurisdiction_stats": jurisdiction_stats
+        "building_manager": building_manager,
+        "tag_stats": tag_stats  # 🔥 タグ統計を追加
     }
+
+def get_tag_statistics(file_dicts: list) -> dict:
+    """ファイルのタグ統計を取得"""
+    stats = {}
+    for file_dict in file_dicts:
+        tag = file_dict.get("jurisdiction_tag", "📄一般設備資料")
+        stats[tag] = stats.get(tag, 0) + 1
+    return stats
+
+# 🔥 新規関数: 管轄に基づいてフィルタされたファイルリストを取得
+def get_filtered_files_by_jurisdiction(equipment_name: str, selected_jurisdiction: str = None) -> list:
+    """
+    指定された管轄に基づいて、設備のファイルリストをフィルタリング
+    
+    Args:
+        equipment_name: 設備名
+        selected_jurisdiction: 選択された管轄 ("🔥東京消防庁" | "🔥丸の内消防署" | None)
+        
+    Returns:
+        フィルタされたファイル名リスト
+    """
+    import streamlit as st
+    
+    equipment_data = st.session_state.get("equipment_data", {})
+    if equipment_name not in equipment_data:
+        return []
+    
+    eq_data = equipment_data[equipment_name]
+    tagged_sources = eq_data.get("tagged_sources", [])
+    
+    if not selected_jurisdiction:
+        # 管轄指定なし → 一般設備資料のみ
+        allowed_tags = ["📄一般設備資料"]
+    elif selected_jurisdiction == "🔥東京消防庁":
+        # 東京消防庁 → 一般設備資料 + 一般消防資料 + 東京消防庁
+        allowed_tags = ["📄一般設備資料", "📄一般消防資料", "🔥東京消防庁"]
+    elif selected_jurisdiction == "🔥丸の内消防署":
+        # 丸の内消防署 → 一般設備資料 + 一般消防資料 + 東京消防庁 + 丸の内消防署
+        allowed_tags = ["📄一般設備資料", "📄一般消防資料", "🔥東京消防庁", "🔥丸の内消防署"]
+    else:
+        allowed_tags = ["📄一般設備資料"]
+    
+    # フィルタリング
+    filtered_files = []
+    for source in tagged_sources:
+        if source["tag"] in allowed_tags:
+            filtered_files.append(source["name"])
+    
+    return filtered_files
 
 # 🔥 新規追加: プロンプト生成時に管轄資料を取得する関数
 def get_jurisdiction_content_for_equipment(equipment_name: str, selected_jurisdiction: str = None) -> str:

@@ -3,7 +3,7 @@ import streamlit as st
 from typing import List, Dict, Any
 import time
 
-from src.startup_loader import initialize_equipment_data, get_available_buildings, get_building_info_for_prompt
+from src.startup_loader import initialize_equipment_data, get_available_buildings, get_building_info_for_prompt, get_filtered_files_by_jurisdiction
 from src.logging_utils import init_logger
 from src.sheets_manager import log_to_sheets, get_sheets_manager, send_prompt_to_model_comparison
 from src.langchain_chains import generate_smart_answer_with_langchain
@@ -1071,9 +1071,49 @@ if st.session_state["authentication_status"]:
     # =====  サイドバー用ヘルパー関数  ==================================================
     
     def render_equipment_selection():
-        """設備選択UIを描画（共通関数）"""
+        """設備選択UI（管轄プルダウン付き）"""
         st.markdown("### 🔧 対象設備選択")
         
+        # 🔥 管轄選択プルダウンを追加
+        st.markdown("#### 🏷️ 管轄選択")
+        
+        tag_stats = st.session_state.get("tag_stats", {})
+        
+        # 利用可能な管轄オプション
+        jurisdiction_options = [""]  # 指定なし
+        
+        if tag_stats.get("🔥東京消防庁", 0) > 0:
+            jurisdiction_options.append("🔥東京消防庁")
+        if tag_stats.get("🔥丸の内消防署", 0) > 0:
+            jurisdiction_options.append("🔥丸の内消防署")
+        
+        selected_jurisdiction = st.selectbox(
+            "管轄を選択（ファイルフィルター）",
+            options=jurisdiction_options,
+            format_func=lambda x: {
+                "": "指定しない（一般設備資料のみ）",
+                "🔥東京消防庁": f"🔥東京消防庁 ({tag_stats.get('🔥東京消防庁', 0)}ファイル)",
+                "🔥丸の内消防署": f"🔥丸の内消防署 ({tag_stats.get('🔥丸の内消防署', 0)}ファイル)"
+            }.get(x, x),
+            help="選択した管轄に応じて、利用するファイルが動的に変更されます"
+        )
+        
+        # セッション状態に保存
+        st.session_state["selected_jurisdiction"] = selected_jurisdiction if selected_jurisdiction else None
+        
+        # 現在の管轄選択状態を表示
+        if selected_jurisdiction:
+            st.success(f"✅ 管轄: **{selected_jurisdiction}**")
+            if selected_jurisdiction == "🔥東京消防庁":
+                st.info("📄 利用資料: 一般設備 + 一般消防 + 東京消防庁")
+            elif selected_jurisdiction == "🔥丸の内消防署":
+                st.info("📄 利用資料: 一般設備 + 一般消防 + 東京消防庁 + 丸の内")
+        else:
+            st.info("📄 利用資料: 一般設備資料のみ")
+        
+        st.divider()
+        
+        # 既存の設備選択UI（変更なし）
         available_equipment = st.session_state.get("equipment_list", [])
         available_categories = st.session_state.get("category_list", [])
 
@@ -1126,7 +1166,7 @@ if st.session_state["authentication_status"]:
             st.session_state["selection_mode"] = "category"
 
     def render_file_selection(current_equipment):
-        """ファイル選択UIを描画（共通関数）"""
+        """ファイル選択UI（管轄フィルタリング対応版）"""
         if not current_equipment:
             return
             
@@ -1134,40 +1174,64 @@ if st.session_state["authentication_status"]:
         st.success(f"✅ 選択中: **{current_equipment}**")
         
         st.markdown("#### 📄 使用ファイル選択")
-        available_files = eq_info['sources']
         
-        # セッション状態でファイル選択を管理
-        selected_files_key = f"selected_files_{current_equipment}"
+        # 🔥 管轄に基づいてファイルリストをフィルタリング
+        selected_jurisdiction = st.session_state.get("selected_jurisdiction")
+        filtered_files = get_filtered_files_by_jurisdiction(current_equipment, selected_jurisdiction)
+        
+        if not filtered_files:
+            st.warning("⚠️ 選択された管轄に該当するファイルがありません")
+            return
+        
+        # セッション状態でファイル選択を管理（管轄フィルタリング対応）
+        selected_files_key = f"selected_files_{current_equipment}_{selected_jurisdiction or 'none'}"
         if selected_files_key not in st.session_state:
-            st.session_state[selected_files_key] = available_files.copy()
+            st.session_state[selected_files_key] = filtered_files.copy()
+        
+        # 🔥 管轄変更時にファイル選択をリセット
+        if set(st.session_state[selected_files_key]) - set(filtered_files):
+            st.session_state[selected_files_key] = filtered_files.copy()
         
         # ファイル選択UI
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("🔄 全選択", key=f"select_all_{current_equipment}"):
-                st.session_state[selected_files_key] = available_files.copy()
+            if st.button("📄 全選択", key=f"select_all_{current_equipment}_{selected_jurisdiction or 'none'}"):
+                st.session_state[selected_files_key] = filtered_files.copy()
                 st.rerun()
         with col2:
-            if st.button("❌ 全解除", key=f"deselect_all_{current_equipment}"):
+            if st.button("❌ 全解除", key=f"deselect_all_{current_equipment}_{selected_jurisdiction or 'none'}"):
                 st.session_state[selected_files_key] = []
                 st.rerun()
         
-        # 各ファイルのチェックボックス
-        for file in available_files:
-            checked = st.checkbox(
-                file,
-                value=file in st.session_state[selected_files_key],
-                key=f"file_{current_equipment}_{file}"
-            )
-            
-            if checked and file not in st.session_state[selected_files_key]:
-                st.session_state[selected_files_key].append(file)
-            elif not checked and file in st.session_state[selected_files_key]:
-                st.session_state[selected_files_key].remove(file)
+        # 🔥 タグ別にファイルを表示
+        tagged_sources = eq_info.get("tagged_sources", [])
+        tags_in_filtered = {}
+        
+        for source in tagged_sources:
+            if source["name"] in filtered_files:
+                tag = source["tag"]
+                if tag not in tags_in_filtered:
+                    tags_in_filtered[tag] = []
+                tags_in_filtered[tag].append(source["name"])
+        
+        # タグ別にチェックボックス表示
+        for tag, files in tags_in_filtered.items():
+            with st.expander(f"{tag} ({len(files)}ファイル)", expanded=True):
+                for file in files:
+                    checked = st.checkbox(
+                        file,
+                        value=file in st.session_state[selected_files_key],
+                        key=f"file_{current_equipment}_{selected_jurisdiction or 'none'}_{file}"
+                    )
+                    
+                    if checked and file not in st.session_state[selected_files_key]:
+                        st.session_state[selected_files_key].append(file)
+                    elif not checked and file in st.session_state[selected_files_key]:
+                        st.session_state[selected_files_key].remove(file)
         
         # 選択状況の表示
         selected_count = len(st.session_state[selected_files_key])
-        total_count = len(available_files)
+        total_count = len(filtered_files)
         
         if selected_count == 0:
             st.error("⚠️ ファイルが選択されていません")
@@ -1179,22 +1243,16 @@ if st.session_state["authentication_status"]:
         # 設備詳細（折りたたみ）
         with st.expander("📋 設備詳細", expanded=False):
             st.markdown(f"- **カテゴリ**: {eq_info['equipment_category']}")
-            st.markdown(f"- **総ファイル数**: {eq_info['total_files']}")
-            st.markdown(f"- **総ページ数**: {eq_info['total_pages']}")
-            st.markdown(f"- **総文字数**: {eq_info['total_chars']:,}")
+            st.markdown(f"- **管轄フィルタ**: {selected_jurisdiction or '指定なし'}")
+            st.markdown(f"- **フィルタ後ファイル数**: {len(filtered_files)}")
             
             if selected_count > 0:
                 st.markdown("- **選択中のファイル**:")
                 for file in st.session_state[selected_files_key]:
+                    # タグ情報も表示
+                    file_tag = next((s["tag"] for s in tagged_sources if s["name"] == file), "不明")
                     file_chars = len(eq_info['files'].get(file, ''))
-                    st.markdown(f"  - ✅ {file} ({file_chars:,}文字)")
-                
-                if selected_count < total_count:
-                    selected_chars = sum(len(eq_info['files'].get(f, '')) for f in st.session_state[selected_files_key])
-                    char_ratio = 100 * selected_chars / eq_info['total_chars'] if eq_info['total_chars'] > 0 else 0
-                    st.markdown(f"- **選択ファイル統計**:")
-                    st.markdown(f"  - ファイル数: {selected_count}/{total_count} ({100*selected_count/total_count:.1f}%)")
-                    st.markdown(f"  - 文字数: {selected_chars:,}/{eq_info['total_chars']:,} ({char_ratio:.1f}%)")
+                    st.markdown(f"  - ✅ {file} `{file_tag}` ({file_chars:,}文字)")
 
     def render_building_selection(expanded=False):
         """ビル選択UIを描画（共通関数）"""
