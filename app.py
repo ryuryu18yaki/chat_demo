@@ -930,7 +930,8 @@ if st.session_state["authentication_status"]:
         if current_mode == "暗黙知法令チャットモード":
             selected_equipment = st.session_state.get("selected_equipment")
             if selected_equipment:
-                selected_files_key = f"selected_files_{selected_equipment}"
+                selected_jurisdiction = st.session_state.get("selected_jurisdiction")
+                selected_files_key = f"selected_files_{selected_equipment}_{selected_jurisdiction or 'none'}"
                 selected_files = st.session_state.get(selected_files_key, [])
                 
                 if selected_files:
@@ -1672,7 +1673,7 @@ if st.session_state["authentication_status"]:
         elif current_mode == "質疑応答書添削モード":
             st.info("📝 質疑応答書添削モード用のサイドバーは後で実装予定")
             
-        elif current_mode == "ビルマス質問モード":
+        elif current_mode == "ビルマスタ質問モード":
             # ビル情報選択（そのまま表示）
             render_building_selection(expanded=True)
 
