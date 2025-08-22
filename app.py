@@ -1265,121 +1265,105 @@ if st.session_state["authentication_status"]:
                 return
 
             st.info(f"📊 利用可能ビル数: {len(available_buildings)}")
+            st.session_state["include_building_info"] = True
             
-            include_building = st.checkbox(
-                "ビル情報をプロンプトに含める",
-                value=st.session_state.get("include_building_info", False),
-                help="チェックを入れると、選択されたビルの詳細情報が回答生成時に使用されます"
+            building_selection_mode = st.radio(
+                "ビル選択方式",
+                ["特定ビルを選択", "全ビル情報を使用"],
+                index=st.session_state.get("building_selection_mode_index", 0),
+                help="質問に使用するビル情報の選択方法"
             )
-            st.session_state["include_building_info"] = include_building
-            
-            if include_building:
-                building_selection_mode = st.radio(
-                    "ビル選択方式",
-                    ["特定ビルを選択", "全ビル情報を使用"],
-                    index=st.session_state.get("building_selection_mode_index", 0),
-                    help="質問に使用するビル情報の選択方法"
-                )
 
-                mode_options = ["特定ビルを選択", "全ビル情報を使用"]
-                st.session_state["building_selection_mode_index"] = mode_options.index(building_selection_mode)
+            mode_options = ["特定ビルを選択", "全ビル情報を使用"]
+            st.session_state["building_selection_mode_index"] = mode_options.index(building_selection_mode)
+            
+            if building_selection_mode == "特定ビルを選択":
+                search_query = st.text_input(
+                    "🔍 ビル名で検索",
+                    placeholder="ビル名の一部を入力...",
+                    help="入力した文字でビル一覧をフィルタリングできます"
+                )
                 
-                if building_selection_mode == "特定ビルを選択":
-                    search_query = st.text_input(
-                        "🔍 ビル名で検索",
-                        placeholder="ビル名の一部を入力...",
-                        help="入力した文字でビル一覧をフィルタリングできます"
+                if search_query:
+                    filtered_buildings = [
+                        building for building in available_buildings 
+                        if search_query.lower() in building.lower()
+                    ]
+                    st.info(f"🔍 検索結果: {len(filtered_buildings)}件")
+                else:
+                    filtered_buildings = available_buildings
+                
+                if filtered_buildings:
+                    selected_building = st.selectbox(
+                        "ビルを選択してください",
+                        options=[""] + filtered_buildings,
+                        index=0,
+                        help="上の検索ボックスで絞り込むか、直接選択してください"
                     )
-                    
-                    if search_query:
-                        filtered_buildings = [
-                            building for building in available_buildings 
-                            if search_query.lower() in building.lower()
-                        ]
-                        st.info(f"🔍 検索結果: {len(filtered_buildings)}件")
-                    else:
-                        filtered_buildings = available_buildings
-                    
-                    if filtered_buildings:
-                        selected_building = st.selectbox(
-                            "ビルを選択してください",
-                            options=[""] + filtered_buildings,
-                            index=0,
-                            help="上の検索ボックスで絞り込むか、直接選択してください"
-                        )
-                    else:
-                        st.warning("⚠️ 検索条件に一致するビルが見つかりません")
-                        selected_building = None
-                    
-                    # 🔥 新規追加: 他のビルも参考にするオプション
-                    if selected_building:
-                        include_other_buildings = st.checkbox(
-                            "他のビルも参考にする",
-                            value=st.session_state.get("include_other_buildings", False),
-                            help="選択したビル以外の情報も比較・参考のために使用します"
-                        )
-                        st.session_state["include_other_buildings"] = include_other_buildings
-                        
-                        # building_mode の設定
-                        if include_other_buildings:
-                            st.session_state["building_mode"] = "specific_with_others"
-                        else:
-                            st.session_state["building_mode"] = "specific_only"
-                    else:
-                        st.session_state["include_other_buildings"] = False
-                        st.session_state["building_mode"] = "specific_only"
-                    
-                    st.session_state["selected_building"] = selected_building if selected_building else None
-                    
-                elif building_selection_mode == "全ビル情報を使用":
-                    st.info("🏢 全ビルの情報を使用して回答します")
-                    st.session_state["selected_building"] = None
-                    st.session_state["building_mode"] = "all"
-                    st.session_state["include_other_buildings"] = False  # 全ビル使用時は無効
-            
-            else:
-                st.session_state["selected_building"] = None
-                st.session_state["building_mode"] = "none"
-                st.session_state["include_other_buildings"] = False
-            
-            # 現在の選択状況を表示
-            if include_building:
-                current_building = st.session_state.get("selected_building")
-                building_mode = st.session_state.get("building_mode", "none")
-                include_others = st.session_state.get("include_other_buildings", False)
+                else:
+                    st.warning("⚠️ 検索条件に一致するビルが見つかりません")
+                    selected_building = None
                 
-                if building_mode == "specific_only" and current_building:
-                    st.success(f"✅ 選択中: **{current_building}** (単独)")
+                # 🔥 新規追加: 他のビルも参考にするオプション
+                if selected_building:
+                    include_other_buildings = st.checkbox(
+                        "他のビルも参考にする",
+                        value=st.session_state.get("include_other_buildings", False),
+                        help="選択したビル以外の情報も比較・参考のために使用します"
+                    )
+                    st.session_state["include_other_buildings"] = include_other_buildings
                     
-                elif building_mode == "specific_with_others" and current_building:
-                    other_count = len(available_buildings) - 1
-                    st.success(f"✅ 基準ビル: **{current_building}**")
-                    st.info(f"ℹ️ 他のビルも参考: {other_count}件のビル情報も使用")
-                    
-                elif building_mode == "all":
-                    st.success("✅ 全ビル情報を使用")
-                    
-                # ビル詳細プレビュー
-                if current_building:
-                    with st.expander("🏢 ビル詳細情報", expanded=False):
-                        building_info_text = get_building_info_for_prompt(current_building)
-                        st.text_area(
-                            "ビル情報プレビュー",
-                            value=building_info_text,
-                            height=300,
-                            key=f"building_preview_{current_building}"
-                        )
-                elif building_mode == "all":
-                    with st.expander("🏢 全ビル情報プレビュー", expanded=False):
-                        all_building_info = get_building_info_for_prompt()
-                        st.text_area(
-                            "全ビル情報プレビュー",
-                            value=all_building_info,
-                            height=400,
-                            key="all_buildings_preview"
-                        )
-            else:
-                st.info("ℹ️ ビル情報は使用しません")
+                    # building_mode の設定
+                    if include_other_buildings:
+                        st.session_state["building_mode"] = "specific_with_others"
+                    else:
+                        st.session_state["building_mode"] = "specific_only"
+                else:
+                    st.session_state["include_other_buildings"] = False
+                    st.session_state["building_mode"] = "specific_only"
+                
+                st.session_state["selected_building"] = selected_building if selected_building else None
+                
+            elif building_selection_mode == "全ビル情報を使用":
+                st.info("🏢 全ビルの情報を使用して回答します")
+                st.session_state["selected_building"] = None
+                st.session_state["building_mode"] = "all"
+                st.session_state["include_other_buildings"] = False  # 全ビル使用時は無効
+        
+            current_building = st.session_state.get("selected_building")
+            building_mode = st.session_state.get("building_mode", "none")
+            include_others = st.session_state.get("include_other_buildings", False)
+            
+            if building_mode == "specific_only" and current_building:
+                st.success(f"✅ 選択中: **{current_building}** (単独)")
+                
+            elif building_mode == "specific_with_others" and current_building:
+                other_count = len(available_buildings) - 1
+                st.success(f"✅ 基準ビル: **{current_building}**")
+                st.info(f"ℹ️ 他のビルも参考: {other_count}件のビル情報も使用")
+                
+            elif building_mode == "all":
+                st.success("✅ 全ビル情報を使用")
+                
+            # ビル詳細プレビュー
+            if current_building:
+                with st.expander("🏢 ビル詳細情報", expanded=False):
+                    building_info_text = get_building_info_for_prompt(current_building)
+                    st.text_area(
+                        "ビル情報プレビュー",
+                        value=building_info_text,
+                        height=300,
+                        key=f"building_preview_{current_building}"
+                    )
+            elif building_mode == "all":
+                with st.expander("🏢 全ビル情報プレビュー", expanded=False):
+                    all_building_info = get_building_info_for_prompt()
+                    st.text_area(
+                        "全ビル情報プレビュー",
+                        value=all_building_info,
+                        height=400,
+                        key="all_buildings_preview"
+                    )
 
     def render_data_viewer():
         """資料内容確認UIを描画（共通関数）"""
@@ -1663,8 +1647,6 @@ if st.session_state["authentication_status"]:
         current_mode = st.session_state.design_mode
         
         if current_mode == "暗黙知法令チャットモード":
-
-            st.divider()
             
             # 設備選択（管轄と独立）
             render_equipment_selection()
@@ -1693,6 +1675,11 @@ if st.session_state["authentication_status"]:
         elif current_mode == "ビルマス質問モード":
             # ビル情報選択（そのまま表示）
             render_building_selection(expanded=True)
+
+            st.divider()
+            
+            # 文字数制限設定を追加
+            render_char_limit_setting()
         
         else:
             st.warning(f"⚠️ 未対応のモード: {current_mode}")
