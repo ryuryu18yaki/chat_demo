@@ -112,17 +112,32 @@ st.set_page_config(page_title="Claude + RAG Chatbot", page_icon="💬", layout="
 
 logger = init_logger()
 
-# =====  認証設定の読み込み ============================================================
-with open('./config.yaml') as file:
-    config = yaml.safe_load(file)
+def build_auth_from_secrets():
+    if "auth" not in st.secrets:
+        st.error("secrets.toml に [auth] セクションがありません"); st.stop()
+    auth_conf = st.secrets["auth"]
+    users_conf = auth_conf.get("users", {})
+    if not users_conf:
+        st.error("secrets.toml の [auth.users] が空です"); st.stop()
 
-# 認証インスタンスの作成
-authenticator = stauth.Authenticate(
-    config['credentials'],
-    config['cookie']['name'],
-    config['cookie']['key'],
-    config['cookie']['expiry_days']
-)
+    # credentials を辞書で構築（password = ハッシュ文字列）
+    credentials = {"usernames": {}}
+    for uname, info in users_conf.items():
+        credentials["usernames"][uname] = {
+            "name":  info.get("name") or uname,
+            "email": info.get("email", ""),
+            "password": info.get("password_hash"),
+        }
+
+    # auto_hash は渡さない（バージョン差で未対応のことがあるため）
+    return stauth.Authenticate(
+        credentials,
+        auth_conf.get("cookie_name", "app-auth"),
+        auth_conf.get("cookie_key", "change-me"),
+        int(auth_conf.get("cookie_expiry_days", 3)),
+    )
+
+authenticator = build_auth_from_secrets()
 
 # ===== post_log関数（変更なし） =====
 def post_log(
