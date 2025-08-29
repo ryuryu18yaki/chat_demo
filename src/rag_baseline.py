@@ -7,7 +7,7 @@ from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
-from langchain_community.embeddings import HuggingFaceBgeEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 
 # ========== 1) 文書読み込み・分割 =================================
 def _bytes_to_text(data: bytes, file_name: str) -> str:
@@ -204,17 +204,33 @@ def split_documents(
 
 # ========== 2) 埋め込み・インメモリFAISS ==========================
 
-def make_embeddings(model="BAAI/bge-small-ja-v1.5"):
-    return HuggingFaceBgeEmbeddings(
+def make_embeddings(model: str = "intfloat/multilingual-e5-small"):
+    """
+    CPU 前提。E5 系は query/passsage の接頭辞を自動付与。
+    他モデル（bge-m3 / MiniLM など）はそのまま。
+    """
+    emb = HuggingFaceEmbeddings(
         model_name=model,
-        model_kwargs={
-            "device": "cpu",
-            "low_cpu_mem_usage": False,  # Cloudでは必須
-            "device_map": None,
-            "trust_remote_code": True,
-        },
-        encode_kwargs={"normalize_embeddings": True},
+        model_kwargs={"device": "cpu"},                  # CPUで確実に動かす
+        encode_kwargs={"normalize_embeddings": True},    # 余弦類似に最適
     )
+
+    # --- E5 系モデルなら接頭辞を自動付与（公式推奨） ---
+    if "e5" in model.lower():
+        _orig_eq = emb.embed_query
+        _orig_ed = emb.embed_documents
+
+        def _e5_embed_query(q: str):
+            return _orig_eq(f"query: {q}")
+
+        def _e5_embed_documents(texts):
+            # FAISS.from_documents() からはリストで来る
+            return _orig_ed([f"passage: {t}" for t in texts])
+
+        emb.embed_query = _e5_embed_query
+        emb.embed_documents = _e5_embed_documents
+
+    return emb
 
 def build_faiss_in_memory(chunks: List[Document], embeddings):
     """FAISS をメモリ上に構築（保存しない）。"""
