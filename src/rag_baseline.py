@@ -212,10 +212,7 @@ def make_embeddings(model: str = "/models/embeddings/bge-m3"):
     return HuggingFaceBgeEmbeddings(
         model_name=model,                 # ローカルディレクトリを指定
         model_kwargs={"device": "cpu"},   # GPUなら "cuda"
-        encode_kwargs={"normalize_embeddings": True},
-        # BGEの推奨インストラクション（多言語OK）
-        query_instruction="Represent this sentence for searching relevant passages:",
-        passage_instruction="Represent this sentence for retrieving relevant documents:"
+        encode_kwargs={"normalize_embeddings": True}
     )
 
 def build_faiss_in_memory(chunks: List[Document], embeddings):
