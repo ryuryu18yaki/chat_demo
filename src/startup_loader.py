@@ -8,6 +8,7 @@ from src.fire_department_classifier import classify_files_by_jurisdiction, get_j
 from src.gdrive_simple import download_files_from_drive, download_fix_files_from_drive
 from src.building_manager import initialize_building_manager, get_building_manager
 from src.logging_utils import init_logger
+from rag_baseline import filter_file_dicts_by_name, build_rag_retriever_from_file_dicts
 logger = init_logger()
 
 def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
@@ -183,6 +184,47 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
     
     # 既存の戻り値に加えて、タグ統計も追加
     tag_stats = get_tag_statistics(file_dicts)
+
+    try:
+        # secrets で ON/OFF したい場合（なければデフォルト True）
+        rag_enabled = True
+        try:
+            rag_enabled = bool(secrets.get("RAG_MODE", True))
+        except Exception:
+            pass
+
+        rag_retriever = None
+        rag_stats = {}
+
+        if rag_enabled and file_dicts:
+            # ファイルをフィルタリング（「ビルマスター」を除外）
+            filtered_file_dicts = filter_file_dicts_by_name(
+                file_dicts,
+                exclude=["ビルマスター"]
+            )
+            
+            logger.info(f"📂 フィルタリング前: {len(file_dicts)}ファイル -> フィルタリング後: {len(filtered_file_dicts)}ファイル")
+
+            if filtered_file_dicts:
+                rag_retriever, rag_stats = build_rag_retriever_from_file_dicts(
+                    filtered_file_dicts,
+                    chunk_size=1000,
+                    chunk_overlap=200,
+                    embed_model="text-embedding-3-small",
+                    k=3,
+                    use_mmr=False,
+                )
+
+                logger.info("✅ RAG retriever 構築完了: %s", rag_stats)
+            else:
+                logger.info("ℹ️ フィルタリング後にファイルが0件のため RAG 構築をスキップ")
+
+        else:
+            logger.info("ℹ️ RAGは無効化または file_dicts が空のためスキップ")
+
+    except Exception as e:
+        logger.error("❌ RAG 構築に失敗しました: %s", e, exc_info=True)
+        rag_retriever, rag_stats = None, {}
     
     return {
         "equipment_data": equipment_data,
@@ -190,7 +232,9 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
         "equipment_list": sorted(equipment_list),
         "category_list": sorted(category_list),
         "building_manager": building_manager,
-        "tag_stats": tag_stats  # 🔥 タグ統計を追加
+        "tag_stats": tag_stats,
+        "rag_retriever": rag_retriever,
+        "rag_stats": rag_stats,
     }
 
 def get_tag_statistics(file_dicts: list) -> dict:

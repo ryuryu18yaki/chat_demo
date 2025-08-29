@@ -1,5 +1,6 @@
 # src/langchain_chains.py (最小限の変更を加えた最終版)
-
+import streamlit as st  # retrieverをsession_stateから参照
+  # ★ 追加: 検索文脈を生成するヘルパ
 from typing import List, Dict, Any, Optional
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnableLambda
@@ -9,6 +10,7 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 from src.langchain_models import get_chat_model
 from src.logging_utils import init_logger
+from src.rag_baseline import get_context_text
 logger = init_logger()
 
 class ChainManager:
@@ -392,6 +394,153 @@ def generate_unified_answer(
         # 既存のコードに合わせてエラーを再発生させる
         raise
 
+def generate_unified_answer_rag(
+    *,
+    prompt: str,
+    question: str,
+    model: str = "claude-4-sonnet",
+    mode: str = "暗黙知法令チャットモード",
+    equipment_content: Optional[str] = None,
+    building_content: Optional[str] = None,
+    target_building_content: Optional[str] = None,
+    other_buildings_content: Optional[str] = None,
+    chat_history: Optional[List[Dict[str, str]]] = None,
+    temperature: float = 0.0,
+    max_tokens: Optional[int] = None,
+    generate_title: bool = False
+) -> Dict[str, Any]:
+    """
+    RAG版：全文投入の代わりに retriever から得た検索文脈（retrieval_context）を
+    プロンプトへ差し込む点だけが差分。その他の挙動・出力形式は元関数と同一。
+    """
+    logger.info(f"🔎 RAG回答生成開始: model={model}, mode={mode}, generate_title={generate_title}")
+
+    # ---- RAG文脈の生成（既存の retriever + get_context_text を利用） ----
+    try:
+        retriever = st.session_state.get("rag_retriever")
+        if retriever is None:
+            logger.warning("RAG retriever が未設定です")
+            retrieval_context = "（検索結果なし: retriever未初期化）"
+        else:
+            # k / max_chars は必要なら後で設定化（ここでは固定）
+            retrieval_context = get_context_text(retriever, question, k=8, max_chars=3500)
+    except Exception as e:
+        logger.error(f"❌ RAG検索エラー: {e}", exc_info=True)
+        retrieval_context = "（検索処理に失敗しました）"
+
+    # ===== 以降は generate_unified_answer の流儀を忠実に再現 =====
+    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+    from langchain_core.runnables import RunnableLambda
+    from langchain_core.output_parsers import StrOutputParser, JsonOutputParser
+    from src.langchain_models import get_chat_model
+
+    # ★ generate_title のときだけ JSON 指示を“元関数と同じ形で”追記
+    final_prompt = prompt
+    output_parser = StrOutputParser()
+    if generate_title:
+        json_instruction = """
+【重要：出力形式】
+あなたの回答と、この会話のタイトルを考え、必ず以下のJSON形式で出力してください。他のテキストは一切含めないでください。
+{
+  "answer": "ここにユーザーへの回答本文を入れてください。",
+  "title": "ここに30文字程度の会話のタイトルを入れてください。"
+}"""
+        final_prompt = prompt + "\n\n" + json_instruction
+        output_parser = JsonOutputParser()
+
+    # ★ サブモード別テンプレ（全文→RAG文脈に置換した以外は元と同じ）
+    if mode == "質疑応答書添削モード":
+        prompt_template = ChatPromptTemplate.from_messages([
+            ("system", final_prompt),
+            MessagesPlaceholder(variable_name="chat_history", optional=True),
+            ("human", "=== 参考資料（RAG検索） ===\n{retrieval_context}"),
+            ("human", "【添削依頼】\n{question}\n\n上記の引用を根拠に、質疑応答書として適切な形式で添削・改善提案をお願いします。")
+        ])
+        chain = (
+            {
+                "question": lambda x: x["question"],
+                "retrieval_context": lambda x: x["retrieval_context"],
+                "chat_history": lambda x: ChainManager.create_chat_history_messages(x.get("chat_history"))
+            }
+            | prompt_template
+            | get_chat_model(model, temperature, max_tokens)
+            | output_parser
+        )
+
+    elif mode == "ビルマスタ質問モード":
+        prompt_template = ChatPromptTemplate.from_messages([
+            ("system", final_prompt),
+            ("human", "=== ビルマスター情報（RAG検索） ===\n{retrieval_context}"),
+            MessagesPlaceholder(variable_name="chat_history", optional=True),
+            ("human", "【ビル情報に関する質問】\n{question}\n\nビルマスターデータの引用（上記）を根拠に、正確に回答してください。")
+        ])
+        chain = (
+            {
+                "question": lambda x: x["question"],
+                "retrieval_context": lambda x: x["retrieval_context"],
+                "chat_history": lambda x: ChainManager.create_chat_history_messages(x.get("chat_history"))
+            }
+            | prompt_template
+            | get_chat_model(model, temperature, max_tokens)
+            | output_parser
+        )
+
+    else:
+        # デフォルト：暗黙知法令チャットモード等
+        prompt_template = ChatPromptTemplate.from_messages([
+            ("system", final_prompt),
+            ("human", "=== RAG検索文脈 ===\n{retrieval_context}"),
+            MessagesPlaceholder(variable_name="chat_history", optional=True),
+            ("human", "【技術的質問】\n{question}\n\n上記の引用に基づいて、日本語で正確に回答してください。")
+        ])
+        chain = (
+            {
+                "question": lambda x: x["question"],
+                "retrieval_context": lambda x: x["retrieval_context"],
+                "chat_history": lambda x: ChainManager.create_chat_history_messages(x.get("chat_history"))
+            }
+            | prompt_template
+            | get_chat_model(model, temperature, max_tokens)
+            | output_parser
+        )
+
+    # ---- 入力を元関数と同じ形で用意 --------------------------------
+    chain_input = {
+        "question": question,
+        "chat_history": chat_history[:-1] if chat_history and len(chat_history) > 1 else None,
+        "retrieval_context": retrieval_context
+    }
+
+    # ---- complete_prompt も元と同じユーティリティで生成 -------------
+    try:
+        actual_complete_prompt = get_actual_prompt_from_template(
+            prompt_template, chain_input, mode
+        )
+    except Exception as e:
+        logger.error(f"❌ Prompt extraction failed: {e}")
+        actual_complete_prompt = f"=== SYSTEM ===\n{final_prompt}\n\n=== HUMAN ===\n{question}"
+
+    # ---- 実行＆戻り値の形も完全踏襲 ---------------------------------
+    try:
+        response = chain.invoke(chain_input)
+        if generate_title:
+            return {
+                "answer": response.get("answer", "応答の取得に失敗しました。"),
+                "title": response.get("title"),
+                "langchain_used": True,
+                "complete_prompt": actual_complete_prompt
+            }
+        else:
+            return {
+                "answer": str(response),
+                "title": None,
+                "langchain_used": True,
+                "complete_prompt": actual_complete_prompt
+            }
+    except Exception as e:
+        logger.error(f"❌ RAGチェーン実行エラー: {e}", exc_info=True)
+        raise
+
 def generate_smart_answer_with_langchain(
     *,
     prompt: str,
@@ -405,43 +554,39 @@ def generate_smart_answer_with_langchain(
     chat_history: Optional[List[Dict[str, str]]] = None,
     temperature: float = 0.0,
     max_tokens: Optional[int] = None,
-    generate_title: bool = False # ★app.pyから渡されるフラグ
+    generate_title: bool = False,
+    use_rag: bool = False  # ★ 追加：RAGトグル
 ) -> Dict[str, Any]:
     """
-    既存のapp.pyから呼び出される関数（後方互換性のため）
-    ★ generate_title フラグを下の関数に渡す役割を追加
+    既存のapp.pyから呼び出される関数（後方互換）。use_rag=TrueならRAG版へ委譲。
     """
-    # 既存のコードでは generate_unified_answer を呼び出しているので、その構造を維持
-    # generate_title フラグを渡すように変更
-    response_dict = generate_unified_answer(
-        prompt=prompt,
-        question=question,
-        model=model,
-        mode=mode,
-        equipment_content=equipment_content,
-        building_content=building_content,
-        target_building_content=target_building_content,
-        other_buildings_content=other_buildings_content,
-        chat_history=chat_history,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        generate_title=generate_title # ★フラグを渡す
-    )
-    
-    # 既存のコードは generate_unified_answer の戻り値をそのまま返していたので、
-    # その構造を模倣するが、新しいキー 'title' を含める
-    return response_dict
-
-# =================================================================
-# ▼ 変更点
-# この関数は不要になるため、完全に削除します。
-# =================================================================
-# def generate_chat_title_with_llm(...):
-
-# =================================================================
-# ▼ 変更点
-# このテスト関数は古い構成に基づいているため、一旦コメントアウトするか削除します。
-# =================================================================
-# def test_chain_creation():
-# if __name__ == "__main__":
-#     test_chain_creation()
+    if use_rag:
+        return generate_unified_answer_rag(
+            prompt=prompt,
+            question=question,
+            model=model,
+            mode=mode,
+            equipment_content=equipment_content,
+            building_content=building_content,
+            target_building_content=target_building_content,
+            other_buildings_content=other_buildings_content,
+            chat_history=chat_history,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            generate_title=generate_title
+        )
+    else:
+        return generate_unified_answer(
+            prompt=prompt,
+            question=question,
+            model=model,
+            mode=mode,
+            equipment_content=equipment_content,
+            building_content=building_content,
+            target_building_content=target_building_content,
+            other_buildings_content=other_buildings_content,
+            chat_history=chat_history,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            generate_title=generate_title
+        )

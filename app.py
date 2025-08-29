@@ -675,6 +675,8 @@ if st.session_state["authentication_status"]:
             st.session_state.category_list = res["category_list"]
             st.session_state.rag_files = res["file_list"]
             st.session_state.tag_stats = res["tag_stats"]
+            st.session_state.rag_retriever  = res.get("rag_retriever")
+            st.session_state.rag_stats      = res.get("rag_stats", {})
             logger.info("🔍🔍🔍 セッション状態更新完了")
 
             logger.info("📂 設備データ初期化完了 — 設備数=%d  ファイル数=%d",
@@ -895,6 +897,8 @@ if st.session_state["authentication_status"]:
         st.session_state.selected_equipment = None
     if "selection_mode" not in st.session_state:
         st.session_state.selection_mode = "manual"
+    if "use_rag" not in st.session_state:
+        st.session_state.use_rag = False
     
     user_prompt: str | None = None
 
@@ -1643,6 +1647,17 @@ if st.session_state["authentication_status"]:
 
         st.divider()
 
+        # ★ 追加: RAG のON/OFF
+        st.markdown("### 🔎 検索方式")
+        st.toggle(
+            "RAGを使用する",
+            value=st.session_state.get("use_rag", False),
+            key="use_rag",
+            help="オン：ベクトル検索（RAG）で抽出した文脈を使用 / オフ：現行の全文投入"
+        )
+
+        st.divider()
+
         # ------- 応答モード選択 -------
         st.markdown("### 🎛️ 応答モード選択")
         st.session_state.design_mode = st.radio(
@@ -1830,7 +1845,8 @@ if st.session_state["authentication_status"]:
                     chat_history=msgs,
                     temperature=st.session_state.get("temperature", 0.0),
                     max_tokens=st.session_state.get("max_tokens"),
-                    generate_title=should_generate_title # ★このフラグを追加
+                    generate_title=should_generate_title,  # ★既存
+                    use_rag=st.session_state.get("use_rag", False)  # ★ 追加
                 )
                 
                 api_elapsed = time.perf_counter() - t_api
