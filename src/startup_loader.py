@@ -8,7 +8,7 @@ from src.fire_department_classifier import classify_files_by_jurisdiction, get_j
 from src.gdrive_simple import download_files_from_drive, download_fix_files_from_drive
 from src.building_manager import initialize_building_manager, get_building_manager
 from src.logging_utils import init_logger
-from rag_baseline import filter_file_dicts_by_name, build_rag_retriever_from_file_dicts
+from src.rag_baseline import filter_file_dicts_by_name, build_rag_retriever_from_file_dicts
 logger = init_logger()
 
 def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
