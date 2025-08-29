@@ -204,15 +204,16 @@ def split_documents(
 
 # ========== 2) 埋め込み・インメモリFAISS ==========================
 
-def make_embeddings(model: str = "/models/embeddings/bge-m3"):
-    """
-    ローカル配置した BGE を使用（トークン不要）。
-    例: /models/embeddings/bge-m3 に BAAI/bge-m3 を事前ダウンロード。
-    """
+def make_embeddings(model="BAAI/bge-small-ja-v1.5"):
     return HuggingFaceBgeEmbeddings(
-        model_name=model,                 # ローカルディレクトリを指定
-        model_kwargs={"device": "cpu"},   # GPUなら "cuda"
-        encode_kwargs={"normalize_embeddings": True}
+        model_name=model,
+        model_kwargs={
+            "device": "cpu",
+            "low_cpu_mem_usage": False,  # Cloudでは必須
+            "device_map": None,
+            "trust_remote_code": True,
+        },
+        encode_kwargs={"normalize_embeddings": True},
     )
 
 def build_faiss_in_memory(chunks: List[Document], embeddings):

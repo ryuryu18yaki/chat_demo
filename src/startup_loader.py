@@ -210,7 +210,6 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
                     filtered_file_dicts,
                     chunk_size=1000,
                     chunk_overlap=200,
-                    embed_model="BAAI/bge-m3",
                     k=3,
                     use_mmr=False,
                 )
