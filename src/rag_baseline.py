@@ -209,7 +209,12 @@ def split_documents(
 
 def make_embeddings(model: str = "text-embedding-3-small") -> OpenAIEmbeddings:
     """OpenAIの多言語埋め込み（日本語OK）。"""
-    return OpenAIEmbeddings(model=model)
+    return OpenAIEmbeddings(
+        model=model,
+        chunk_size=64,   # ★これを追加（デフォルトは大きめなので上限超過しやすい）
+        max_retries=3,
+        timeout=60,
+    )
 
 def build_faiss_in_memory(chunks: List[Document], embeddings):
     """FAISS をメモリ上に構築（保存しない）。"""
@@ -247,7 +252,7 @@ def make_retriever(
 def build_rag_retriever_from_file_dicts(
     file_dicts: list[dict],
     *,
-    chunk_size: int = 1000,
+    chunk_size: int = 800,
     chunk_overlap: int = 200,
     k: int = 3,
     use_mmr: bool = False,

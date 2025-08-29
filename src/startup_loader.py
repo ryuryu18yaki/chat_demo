@@ -208,7 +208,7 @@ def initialize_equipment_data(input_dir: str = "rag_data") -> dict:
             if filtered_file_dicts:
                 rag_retriever, rag_stats = build_rag_retriever_from_file_dicts(
                     filtered_file_dicts,
-                    chunk_size=1000,
+                    chunk_size=800,
                     chunk_overlap=200,
                     k=3,
                     use_mmr=False,
