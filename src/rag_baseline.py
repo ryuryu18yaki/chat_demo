@@ -270,7 +270,6 @@ def build_rag_retriever_from_file_dicts(
     *,
     chunk_size: int = 1000,
     chunk_overlap: int = 200,
-    embed_model: str = "/models/embeddings/bge-m3",
     k: int = 3,
     use_mmr: bool = False,
 ) -> Tuple[any, dict]:
@@ -281,7 +280,7 @@ def build_rag_retriever_from_file_dicts(
     docs = file_dicts_to_documents(file_dicts)
     # チャンク切りを最適化
     chunks = split_documents(docs, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-    emb = make_embeddings(embed_model)
+    emb = make_embeddings()
     vs = build_faiss_in_memory(chunks, emb)
     # ここまでが妥当では？
     retriever = make_retriever(vs, k=k, use_mmr=use_mmr)
