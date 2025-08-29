@@ -256,7 +256,7 @@ def build_rag_retriever_from_file_dicts(
     *,
     chunk_size: int = 1000,
     chunk_overlap: int = 200,
-    embed_model: str = "text-embedding-3-small",
+    embed_model: str = "/models/embeddings/bge-m3",
     k: int = 3,
     use_mmr: bool = False,
 ) -> Tuple[any, dict]:
